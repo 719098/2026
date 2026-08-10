@@ -1,0 +1,6 @@
+{
+  "name": "華語教學中心教師點名系統",
+  "description": "專為華語教學中心授課教師設計的點名系統，支援日期導覽、調課與補課追蹤、三節課獨立分節點名與即時出席統計。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
