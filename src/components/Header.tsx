@@ -10,7 +10,8 @@ import {
   GraduationCap,
   Building2,
   Check,
-  Sparkles
+  Sparkles,
+  Menu
 } from 'lucide-react';
 import { Teacher } from '../types';
 import { TODAY_DATE } from '../utils/quarterScheduler';
@@ -24,6 +25,7 @@ interface HeaderProps {
   currentTeacher: Teacher;
   teachers: Teacher[];
   onSelectTeacher: (teacher: Teacher) => void;
+  onOpenMobileMenu?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -35,6 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
   currentTeacher,
   teachers,
   onSelectTeacher,
+  onOpenMobileMenu,
 }) => {
   const [isTeacherMenuOpen, setIsTeacherMenuOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -51,25 +54,39 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   return (
-    <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0 shadow-xs z-20 relative">
-      {/* Left Title & Status */}
-      <div className="flex items-center space-x-4">
-        <div>
-          <h2 className="text-lg font-bold text-slate-800 flex items-center space-x-2">
-            <span>{title}</span>
+    <header className="h-16 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between shrink-0 shadow-xs z-20 relative">
+      {/* Left Title, Hamburger & Status */}
+      <div className="flex items-center space-x-3 sm:space-x-4 min-w-0">
+        {/* Mobile Hamburger Menu Button (visible on < lg) */}
+        {onOpenMobileMenu && (
+          <button
+            id="btn-mobile-menu-toggle"
+            type="button"
+            onClick={onOpenMobileMenu}
+            className="lg:hidden p-2 -ml-1 rounded-xl text-slate-700 hover:text-slate-950 hover:bg-slate-100 focus:outline-hidden focus:ring-2 focus:ring-teal-500 shrink-0 transition-colors"
+            aria-label="開啟功能選單"
+            title="開啟功能選單"
+          >
+            <Menu className="w-6 h-6" />
+          </button>
+        )}
+
+        <div className="min-w-0">
+          <h2 className="text-base sm:text-lg font-bold text-slate-800 flex items-center flex-wrap gap-2">
+            <span className="truncate">{title}</span>
             {pendingAttendanceCount > 0 ? (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 shrink-0">
                 <Clock className="w-3 h-3 mr-1 text-amber-500" />
                 {pendingAttendanceCount} 堂課待點名
               </span>
             ) : (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
                 <CheckCircle2 className="w-3 h-3 mr-1 text-emerald-500" />
-                今日點名全數完成
+                今日全數完成
               </span>
             )}
           </h2>
-          {subtitle && <p className="text-xs text-slate-500">{subtitle}</p>}
+          {subtitle && <p className="text-xs text-slate-500 truncate hidden md:block">{subtitle}</p>}
         </div>
       </div>
 

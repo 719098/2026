@@ -50,6 +50,9 @@ export default function App() {
   // Navigation active tab
   const [activeTab, setActiveTab] = useState<NavigationTab>('today');
 
+  // Mobile sidebar drawer state
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
+
   // Active selected date (Anchor: 2026-08-11)
   const [selectedDate, setSelectedDate] = useState<string>(TODAY_DATE);
 
@@ -262,18 +265,21 @@ export default function App() {
         />
       )}
 
-      {/* Fixed Left Sidebar */}
+      {/* Responsive Left Sidebar */}
       <Sidebar
         activeTab={activeTab}
         onTabChange={(tab) => {
           setActiveTab(tab);
           setActiveAttendanceCourse(null);
+          setIsMobileSidebarOpen(false);
         }}
         onResetData={handleResetData}
         pendingAttendanceCount={pendingCountForHeader}
         currentTeacher={currentTeacher}
         teachers={TEACHERS}
         onSelectTeacher={handleSelectTeacher}
+        isOpenMobile={isMobileSidebarOpen}
+        onCloseMobile={() => setIsMobileSidebarOpen(false)}
       />
 
       {/* Main Content Area */}
@@ -308,10 +314,11 @@ export default function App() {
           currentTeacher={currentTeacher}
           teachers={TEACHERS}
           onSelectTeacher={handleSelectTeacher}
+          onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
         />
 
         {/* Content Container */}
-        <main className="p-6 max-w-7xl w-full mx-auto flex-1">
+        <main className="p-3.5 sm:p-6 max-w-7xl w-full mx-auto flex-1">
           {activeAttendanceCourse ? (
             /* Attendance Sheet Component (2-Hour vs 3-Hour Dynamic) */
             <AttendanceSheet
