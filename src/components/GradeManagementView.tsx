@@ -15,8 +15,8 @@ import {
   UserX
 } from 'lucide-react';
 import { Student, StudentGrade, CourseSession } from '../types';
-import { ALL_STUDENTS_MAP } from '../data/mockData';
 import { GRADE_WEIGHTS, calculateTotalGrade, getLetterGrade } from '../utils/gradeUtils';
+import { StudentAvatar } from './StudentAvatar';
 
 interface GradeManagementViewProps {
   students: Student[];
@@ -57,11 +57,9 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
     }
   }, [availableClasses, currentClassName, onSelectClass]);
 
-  // Filter students by selected class with fallback to all students database
+  // Filter students by selected class
   const classStudents = useMemo(() => {
-    const list = students.filter((s) => s.className === currentClassName);
-    if (list.length > 0) return list;
-    return Object.values(ALL_STUDENTS_MAP).filter((s) => s.className === currentClassName);
+    return students.filter((s) => s.className === currentClassName || s.classId === currentClassName);
   }, [students, currentClassName]);
 
   // Filter by search query
@@ -414,10 +412,11 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                         onClick={() => onSelectStudentForDetail(student)}
                         className="flex items-center space-x-3 cursor-pointer group"
                       >
-                        <img
-                          src={student.avatarUrl}
-                          alt={student.name}
-                          className="w-9 h-9 rounded-full object-cover border border-slate-200 shrink-0 group-hover:ring-2 group-hover:ring-teal-500 transition-all"
+                        <StudentAvatar 
+                          avatarUrl={student.avatarUrl} 
+                          name={student.name} 
+                          sizeClassName="w-9 h-9" 
+                          className="group-hover:ring-2 group-hover:ring-teal-500 transition-all"
                         />
                         <div>
                           <div className="flex items-center space-x-1.5">

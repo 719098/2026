@@ -1,12 +1,4 @@
 import { Student, StudentGrade } from '../types';
-import { 
-  STUDENTS_LEVEL1, 
-  STUDENTS_LEVEL2, 
-  STUDENTS_LEVEL3, 
-  STUDENTS_CHEN_CONVERSATION, 
-  STUDENTS_CHEN_BUSINESS, 
-  STUDENTS_CHEN_CULTURE 
-} from '../data/mockData';
 
 export const GRADE_WEIGHTS = {
   attendance: 0.20, // 20% 出席
@@ -35,6 +27,48 @@ export function calculateTotalGrade(
     attitudeScore * GRADE_WEIGHTS.attitude;
 
   return Math.round(total * 100) / 100;
+}
+
+// Calculate comprehensive final grade: 40% Listening/Speaking + 40% Reading/Writing + 20% Performance (50% attendance + 50% daily)
+export function calculatePerformanceScore(dailyPerformance: number, attendanceRate: number): number {
+  return dailyPerformance * 0.5 + attendanceRate * 0.5;
+}
+
+export function calculateFinalGrade(
+  listeningSpeaking: number,
+  readingWriting: number,
+  dailyPerformance: number,
+  attendanceRate: number
+): number {
+  const performance = calculatePerformanceScore(dailyPerformance, attendanceRate);
+  const total = listeningSpeaking * 0.4 + readingWriting * 0.4 + performance * 0.2;
+  return Math.round(total * 10) / 10;
+}
+
+// Safely retrieve or calculate student component scores
+export function getStudentScores(student?: Student | null): {
+  listeningSpeaking: number;
+  readingWriting: number;
+  dailyPerformance: number;
+} {
+  if (!student) {
+    return { listeningSpeaking: 85, readingWriting: 82, dailyPerformance: 88 };
+  }
+  if ((student as any).grades?.listeningSpeaking !== undefined) {
+    return (student as any).grades;
+  }
+  // Deterministic score based on student id and attendance
+  const seed = (student.id || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  const base = Math.min(96, Math.max(68, 82 + (seed % 14) - 5));
+  const listening = Math.min(99, Math.max(60, base + (seed % 7) - 3));
+  const reading = Math.min(99, Math.max(60, base + ((seed * 3) % 9) - 4));
+  const daily = Math.min(100, Math.max(65, Math.round((student.overallAttendanceRate || 90) * 0.85 + 12)));
+
+  return {
+    listeningSpeaking: listening,
+    readingWriting: reading,
+    dailyPerformance: daily,
+  };
 }
 
 // Convert numeric total score to letter grade
@@ -119,13 +153,39 @@ export function generateInitialGradesForStudents(students: Student[], className:
 }
 
 // Generate all initial grades
-export function generateAllInitialGrades(): Record<string, StudentGrade> {
-  return {
-    ...generateInitialGradesForStudents(STUDENTS_LEVEL1, '初級華語一'),
-    ...generateInitialGradesForStudents(STUDENTS_LEVEL2, '中級華語二'),
-    ...generateInitialGradesForStudents(STUDENTS_LEVEL3, '高級華語三'),
-    ...generateInitialGradesForStudents(STUDENTS_CHEN_CONVERSATION, '生活會話一班'),
-    ...generateInitialGradesForStudents(STUDENTS_CHEN_BUSINESS, '商務華語實務'),
-    ...generateInitialGradesForStudents(STUDENTS_CHEN_CULTURE, '台灣文化與影視欣賞'),
-  };
+export function generateAllInitialGrades(students: Student[] = []): Record<string, StudentGrade> {
+  if (!students || students.length === 0) return {};
+  const grades: Record<string, StudentGrade> = {};
+  students.forEach((student) => {
+    const attendanceScore = student.overallAttendanceRate || 100;
+    const quizScore = 85;
+    const midtermScore = 80;
+    const finalScore = 85;
+    const homeworkScore = 90;
+    const attitudeScore = 90;
+
+    const totalScore = calculateTotalGrade(
+      attendanceScore,
+      quizScore,
+      midtermScore,
+      finalScore,
+      homeworkScore,
+      attitudeScore
+    );
+
+    grades[student.id] = {
+      studentId: student.id,
+      studentName: student.name,
+      className: student.className || '未設定班級',
+      attendanceScore,
+      quizScore,
+      midtermScore,
+      finalScore,
+      homeworkScore,
+      attitudeScore,
+      totalScore,
+      updatedAt: '2026-08-10 17:00',
+    };
+  });
+  return grades;
 }

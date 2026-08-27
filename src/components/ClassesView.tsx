@@ -1,46 +1,36 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, 
+  Search, 
   BookOpen, 
   MapPin, 
-  Search, 
+  Clock, 
+  UserCheck, 
+  AlertTriangle, 
+  Award,
+  Sparkles,
+  Download,
+  Eye,
+  BarChart3,
   GraduationCap, 
   Mail, 
   Phone, 
-  AlertTriangle,
   CheckCircle2,
   Globe,
   Building2,
-  Eye,
-  Calendar,
-  Clock,
-  Award
+  Calendar
 } from 'lucide-react';
-import { 
-  STUDENTS_LEVEL1, 
-  STUDENTS_LEVEL2, 
-  STUDENTS_LEVEL3,
-  STUDENTS_CHEN_CONVERSATION,
-  STUDENTS_CHEN_BUSINESS,
-  STUDENTS_CHEN_CULTURE
-} from '../data/mockData';
-import { Student, Teacher, CourseSession, StudentGrade } from '../types';
+import { Student, Teacher, CourseSession, StudentGrade, ClassEntity } from '../types';
 import { calculateStudentAttendanceHistory } from '../utils/attendanceUtils';
+import { StudentAvatar } from './StudentAvatar';
 
 interface ClassesViewProps {
-  currentTeacher: Teacher;
+  currentTeacher?: Teacher | null;
   allCourses: CourseSession[];
   allGrades?: Record<string, StudentGrade>;
   onSelectStudentForDetail: (student: Student) => void;
-}
-
-interface ClassDetail {
-  students: Student[];
-  textbook: string;
-  classroom: string;
-  timeSlot: string;
-  dailyHours: number;
-  description: string;
+  classes?: ClassEntity[];
+  allStudentsList?: Student[];
 }
 
 export const ClassesView: React.FC<ClassesViewProps> = ({
@@ -48,76 +38,45 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
   allCourses,
   allGrades,
   onSelectStudentForDetail,
+  classes = [],
+  allStudentsList = []
 }) => {
-  const isChenTeacher = currentTeacher.name === '陳靜宜';
+  // Filter classes for current teacher or assigned classes
+  const teacherClasses = useMemo(() => {
+    if (!classes || classes.length === 0) return [];
+    const assignedNames = new Set(currentTeacher?.assignedClasses || []);
+    return classes.filter(c => 
+      c.teacherId === currentTeacher?.id || 
+      c.teacher === currentTeacher?.name || 
+      assignedNames.has(c.className) || 
+      assignedNames.has(c.name)
+    );
+  }, [classes, currentTeacher]);
 
-  const classDataLin: Record<string, ClassDetail> = {
-    '初級華語一': {
-      students: STUDENTS_LEVEL1,
-      textbook: '《當代中文課程》第一冊',
-      classroom: '博愛大樓 302 教室',
-      timeSlot: '每週一至週五 09:00 - 12:00',
-      dailyHours: 3,
-      description: '零起點至 A2 基礎級華語班，重視生活實用對話、聲調發音與漢字筆順。',
-    },
-    '中級華語二': {
-      students: STUDENTS_LEVEL2,
-      textbook: '《當代中文課程》第二冊',
-      classroom: '博愛大樓 405 教室',
-      timeSlot: '每週一至週五 13:30 - 16:30',
-      dailyHours: 3,
-      description: 'B1 進階級華語班，著重成語語法、短篇閱讀、在地文化與專題口頭報告。',
-    },
-    '高級華語三': {
-      students: STUDENTS_LEVEL3,
-      textbook: '《新版實用視聽華語》第三冊',
-      classroom: '博愛大樓 201 教室',
-      timeSlot: '每週一至週五 18:30 - 20:30',
-      dailyHours: 2, // 2-Hour Class!
-      description: 'B2-C1 高階密集班（2小時制），著重即時新聞選讀、學術寫作與商務華語會話。',
-    },
-  };
+  const activeClasses = teacherClasses.length > 0 ? teacherClasses : classes;
 
-  const classDataChen: Record<string, ClassDetail> = {
-    '生活會話一班': {
-      students: STUDENTS_CHEN_CONVERSATION,
-      textbook: '《實用生活華語會話》第一冊',
-      classroom: '綜合大樓 308 教室',
-      timeSlot: '每週一至週五 09:00 - 12:00',
-      dailyHours: 3,
-      description: '生活實用語音情境會話班，著重台灣夜市購物、問路交通、看病租屋等日常表達。',
-    },
-    '商務華語實務': {
-      students: STUDENTS_CHEN_BUSINESS,
-      textbook: '《實用商務華語》第二冊',
-      classroom: '綜合大樓 502 教室',
-      timeSlot: '每週一至週五 13:00 - 16:00',
-      dailyHours: 3,
-      description: 'B2 級商務華語專班，著重商務電郵寫作、商務簡報演練、合約洽談與跨文化禮儀。',
-    },
-    '台灣文化與影視欣賞': {
-      students: STUDENTS_CHEN_CULTURE,
-      textbook: '《台灣影視文化專題》',
-      classroom: '博愛大樓 203 教室',
-      timeSlot: '每週一至週五 18:30 - 20:30',
-      dailyHours: 2, // 2-Hour Class!
-      description: 'C1 高階文化專題班（2小時制），透過台灣經典電影、紀錄片觀摩與在地風俗探討華語深層文化。',
-    },
-  };
+  const [selectedClassId, setSelectedClassId] = useState<string>('');
 
-  const currentClassData: Record<string, ClassDetail> = isChenTeacher ? classDataChen : classDataLin;
-  const classNames = Object.keys(currentClassData);
-
-  const [selectedClass, setSelectedClass] = useState<string>(classNames[0]);
-  const [searchQuery, setSearchQuery] = useState('');
-
-  // Reset selected class if teacher changes
   useEffect(() => {
-    setSelectedClass(classNames[0]);
-  }, [currentTeacher.id]);
+    if (activeClasses.length > 0 && !activeClasses.some(c => c.id === selectedClassId)) {
+      setSelectedClassId(activeClasses[0].id);
+    }
+  }, [activeClasses, selectedClassId]);
 
-  const currentClassInfo: ClassDetail = currentClassData[selectedClass] || currentClassData[classNames[0]];
-  const students = currentClassInfo.students;
+  const selectedClassObj = useMemo(() => {
+    return activeClasses.find(c => c.id === selectedClassId) || activeClasses[0];
+  }, [activeClasses, selectedClassId]);
+
+  const students = useMemo(() => {
+    if (!selectedClassObj) return [];
+    return allStudentsList.filter(s => 
+      s.classId === selectedClassObj.id || 
+      s.className === selectedClassObj.className || 
+      s.className === selectedClassObj.name
+    );
+  }, [allStudentsList, selectedClassObj]);
+
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Filter students
   const filteredStudents = students.filter((s) => {
@@ -127,13 +86,13 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
       s.name.toLowerCase().includes(q) ||
       s.englishName.toLowerCase().includes(q) ||
       s.studentNumber.toLowerCase().includes(q) ||
-      s.nationality.toLowerCase().includes(q)
+      (s.nationality && s.nationality.toLowerCase().includes(q))
     );
   });
 
-  const averageAttendance = Math.round(
-    (students.reduce((acc, s) => acc + s.overallAttendanceRate, 0) / students.length) * 10
-  ) / 10;
+  const averageAttendance = students.length > 0
+    ? Math.round((students.reduce((acc, s) => acc + (s.overallAttendanceRate || 100), 0) / students.length) * 10) / 10
+    : 100;
 
   return (
     <div className="space-y-6 pb-20">
@@ -143,7 +102,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
           <div>
             <div className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-teal-50 text-teal-800 border border-teal-200 mb-2">
               <Users className="w-3.5 h-3.5" />
-              <span>個別學生出席統計 • {currentTeacher.name} 老師</span>
+              <span>個別學生出席統計 • {currentTeacher?.name || ''} 老師</span>
             </div>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">
               班級學生名冊與個人出缺席統計
@@ -155,20 +114,20 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
 
           {/* Class Switcher Tabs */}
           <div className="flex items-center space-x-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200 overflow-x-auto">
-            {classNames.map((cls) => {
-              const clsObj = currentClassData[cls as keyof typeof currentClassData];
+            {activeClasses.map((cls) => {
+              const clsStudentsCount = allStudentsList.filter(s => s.classId === cls.id || s.className === cls.className || s.className === cls.name).length;
               return (
                 <button
-                  key={cls}
-                  id={`btn-select-class-${cls}`}
-                  onClick={() => setSelectedClass(cls)}
+                  key={cls.id}
+                  id={`btn-select-class-${cls.id}`}
+                  onClick={() => setSelectedClassId(cls.id)}
                   className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all shrink-0 ${
-                    selectedClass === cls
+                    selectedClassObj?.id === cls.id
                       ? 'bg-white text-teal-900 shadow-xs ring-1 ring-slate-200'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  {cls} ({clsObj.students.length}人)
+                  {cls.className || cls.name} ({clsStudentsCount}人)
                 </button>
               );
             })}
@@ -181,21 +140,21 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
             <span className="text-xs font-semibold text-slate-500">班級教材與教室</span>
             <div className="text-sm font-extrabold text-slate-900 mt-1 flex items-center">
               <BookOpen className="w-4 h-4 mr-1.5 text-teal-600 shrink-0" />
-              <span className="truncate">{currentClassInfo.textbook}</span>
+              <span className="truncate">{selectedClassObj?.textbook || '標準教材'}</span>
             </div>
             <div className="text-xs text-slate-500 mt-1 flex items-center">
               <MapPin className="w-3.5 h-3.5 mr-1 text-slate-400 shrink-0" />
-              <span>{currentClassInfo.classroom}</span>
+              <span>{selectedClassObj?.classroom || '華語中心'}</span>
             </div>
           </div>
 
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
             <span className="text-xs font-semibold text-slate-500">上課時段與制別</span>
             <div className="text-sm font-extrabold text-slate-900 mt-1 font-mono">
-              {currentClassInfo.timeSlot}
+              {selectedClassObj?.timeSlot || '09:00 - 12:00'}
             </div>
             <span className="inline-block text-[11px] font-bold text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded mt-1">
-              {currentClassInfo.dailyHours} 小時制 / 每日 {currentClassInfo.dailyHours} 節課
+              {selectedClassObj?.dailyHours || 3} 小時制 / 每日 {selectedClassObj?.dailyHours || 3} 節課
             </span>
           </div>
 
@@ -204,7 +163,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
             <div className="text-2xl font-black text-slate-900 mt-1 font-mono">
               {students.length} <span className="text-xs font-normal text-slate-500">人</span>
             </div>
-            <span className="text-xs text-slate-500">學季目標 165 小時</span>
+            <span className="text-xs text-slate-500">學季目標 {selectedClassObj?.totalTargetHours || 0} 小時</span>
           </div>
 
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
@@ -228,7 +187,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
         <div className="p-4 border-b border-slate-100 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center space-x-2 text-xs font-bold text-slate-700">
             <Users className="w-4 h-4 text-teal-600" />
-            <span>【{selectedClass}】個別學生出席名冊 ({filteredStudents.length} 人)</span>
+            <span>【{selectedClassObj?.className || selectedClassObj?.name}】個別學生出席名冊 ({filteredStudents.length} 人)</span>
           </div>
 
           <div className="w-full sm:w-72">
@@ -258,7 +217,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
                 <th className="py-3 px-3 text-center min-w-[90px] text-blue-700">請假時數</th>
                 <th className="py-3 px-3 text-center min-w-[90px] text-rose-700">缺席時數</th>
                 <th className="py-3 px-4 text-center min-w-[120px]">出席率</th>
-                <th className="py-3 px-3 text-center min-w-[90px]">簽證警示</th>
+                <th className="py-3 px-3 text-center min-w-[90px]">出席警示</th>
                 <th className="py-3 px-4 text-center w-24">個人紀錄</th>
               </tr>
             </thead>
@@ -284,10 +243,11 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
                     {/* Student Info */}
                     <td className="py-3 px-4">
                       <div className="flex items-center space-x-3">
-                        <img
-                          src={student.avatarUrl}
-                          alt={student.name}
-                          className="w-10 h-10 rounded-full object-cover border border-slate-200 shrink-0 group-hover:ring-2 group-hover:ring-teal-500 transition-all"
+                        <StudentAvatar 
+                          avatarUrl={student.avatarUrl} 
+                          name={student.name} 
+                          sizeClassName="w-10 h-10" 
+                          className="group-hover:ring-2 group-hover:ring-teal-500 transition-all"
                         />
                         <div>
                           <div className="flex items-center space-x-1.5">
@@ -353,11 +313,11 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
                       </div>
                     </td>
 
-                    {/* 簽證警示 */}
+                    {/* 出席警示 */}
                     <td className="py-3 px-3 text-center">
                       {isDanger ? (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
-                          ⚠️ 簽證危險
+                          ⚠️ 出席危險
                         </span>
                       ) : isWarning ? (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">

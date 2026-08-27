@@ -13,7 +13,6 @@ import {
   Users
 } from 'lucide-react';
 import { CourseSession, Student, Teacher } from '../types';
-import { ALL_STUDENTS_MAP } from '../data/mockData';
 import { calculateAttendanceStats } from '../utils/attendanceUtils';
 
 interface AttendanceHistoryViewProps {
@@ -158,7 +157,7 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
                 const isLocked = course.status === 'locked' || course.isLocked;
 
                 // Calculate rates
-                const studentList = course.studentIds.map((id) => ALL_STUDENTS_MAP[id]).filter(Boolean);
+                const studentList = (course.studentIds || []).map((id) => ({ id, name: id } as Student));
                 let rateBadge = null;
                 if (isCompleted && course.attendanceData) {
                   const stats = calculateAttendanceStats(studentList, course.attendanceData);

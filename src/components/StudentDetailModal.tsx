@@ -18,6 +18,7 @@ import {
 import { Student, CourseSession, StudentGrade } from '../types';
 import { calculateStudentAttendanceHistory } from '../utils/attendanceUtils';
 import { GRADE_WEIGHTS, getLetterGrade } from '../utils/gradeUtils';
+import { StudentAvatar } from './StudentAvatar';
 
 interface StudentDetailModalProps {
   student: Student | null;
@@ -67,10 +68,11 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
           </button>
 
           <div className="flex flex-col sm:flex-row sm:items-center space-y-4 sm:space-y-0 sm:space-x-5">
-            <img
-              src={student.avatarUrl}
-              alt={student.name}
-              className="w-20 h-20 rounded-2xl object-cover border-2 border-teal-400/80 shadow-md shrink-0"
+            <StudentAvatar
+              avatarUrl={student.avatarUrl}
+              name={student.name}
+              sizeClassName="w-20 h-20"
+              className="rounded-2xl border-2 border-teal-400/80 shadow-md"
             />
             <div className="flex-1">
               <div className="flex flex-wrap items-center gap-2">
@@ -111,7 +113,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                 <span>學季出席統計 (2026 夏季班)</span>
               </h3>
               <span className="text-xs font-bold text-slate-500">
-                目標總時數：165 小時
+                目標總時數：{history.requiredHours || student.totalRequiredHours || 0} 小時
               </span>
             </div>
 
@@ -162,7 +164,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                 <span className="text-[11px] font-bold">目前出席率</span>
                 <div className="text-2xl font-black mt-0.5 font-mono">{history.attendanceRate}%</div>
                 <span className="text-[10px] font-semibold">
-                  {history.attendanceRate >= 90 ? '🟢 良好 (居留簽證安全)' : history.attendanceRate >= 80 ? '🟡 接近警示線' : '🔴 居留簽證危險 (<80%)'}
+                  {history.attendanceRate >= 90 ? '🟢 良好' : history.attendanceRate >= 80 ? '🟡 接近警示線' : '🔴 出席率過低 (<80%)'}
                 </span>
               </div>
             </div>

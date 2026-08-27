@@ -1,6 +1,6 @@
 {
-  "name": "華語教學中心教師點名系統",
-  "description": "專為華語教學中心授課教師設計的點名系統，支援日期導覽、調課與補課追蹤、三節課獨立分節點名與即時出席統計。",
+  "name": "靜宜大學華語中心 點名與成績管理系統",
+  "description": "靜宜大學華語中心全方位校務系統，包含 ADMIN 行政管理端（學生學籍、分班轉班、教材定義、開班配課、全校排課與調課、請假審批、成績結算與官方結業證書）與 TEACHER 授課教師端（分節點名、調課追蹤、成績管理、出席率與簽證預警）。",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

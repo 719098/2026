@@ -6,6 +6,7 @@ export interface AttendanceCalculationResult {
   period1: { present: number; leave: number; absent: number };
   period2: { present: number; leave: number; absent: number };
   period3?: { present: number; leave: number; absent: number };
+  period4?: { present: number; leave: number; absent: number };
   totalHours: number;
   totalPresentHours: number;
   totalLeaveHours: number;
@@ -23,6 +24,7 @@ export function calculateAttendanceStats(
   const period1 = { present: 0, leave: 0, absent: 0 };
   const period2 = { present: 0, leave: 0, absent: 0 };
   const period3 = { present: 0, leave: 0, absent: 0 };
+  const period4 = { present: 0, leave: 0, absent: 0 };
 
   let totalPresentHours = 0;
   let totalLeaveHours = 0;
@@ -32,7 +34,8 @@ export function calculateAttendanceStats(
     const record = attendanceData[student.id] || {
       period1: 'present',
       period2: 'present',
-      period3: periodsCount === 3 ? 'present' : undefined,
+      period3: periodsCount >= 3 ? 'present' : undefined,
+      period4: periodsCount >= 4 ? 'present' : undefined,
     };
 
     // Period 1
@@ -51,24 +54,35 @@ export function calculateAttendanceStats(
       if (record.period2 === 'absent') totalAbsentHours++;
     }
 
-    // Period 3 (if 3-hour class)
-    if (periodsCount === 3 && record.period3) {
+    // Period 3 (if >= 3-hour class)
+    if (periodsCount >= 3 && record.period3) {
       period3[record.period3]++;
       if (record.period3 === 'present') totalPresentHours++;
       if (record.period3 === 'leave') totalLeaveHours++;
       if (record.period3 === 'absent') totalAbsentHours++;
     }
+
+    // Period 4 (if >= 4-hour class)
+    if (periodsCount >= 4 && record.period4) {
+      period4[record.period4]++;
+      if (record.period4 === 'present') totalPresentHours++;
+      if (record.period4 === 'leave') totalLeaveHours++;
+      if (record.period4 === 'absent') totalAbsentHours++;
+    }
   });
 
   const totalHours = totalStudents * periodsCount;
-  const attendanceRate = totalHours > 0 ? Math.round((totalPresentHours / totalHours) * 1000) / 10 : 100;
+  // Rule: Present = 100% (1.0), Leave = 50% (0.5), Absent = 0% (0.0)
+  const earnedHours = totalPresentHours + totalLeaveHours * 0.5;
+  const attendanceRate = totalHours > 0 ? Math.round((earnedHours / totalHours) * 1000) / 10 : 100;
 
   return {
     totalStudents,
     periodsCount,
     period1,
     period2,
-    period3: periodsCount === 3 ? period3 : undefined,
+    period3: periodsCount >= 3 ? period3 : undefined,
+    period4: periodsCount >= 4 ? period4 : undefined,
     totalHours,
     totalPresentHours,
     totalLeaveHours,
@@ -87,7 +101,8 @@ export function getDefaultAttendanceForStudents(
     initial[student.id] = {
       period1: 'present',
       period2: 'present',
-      period3: periodsCount === 3 ? 'present' : undefined,
+      period3: periodsCount >= 3 ? 'present' : undefined,
+      period4: periodsCount >= 4 ? 'present' : undefined,
     };
   });
   return initial;
@@ -116,13 +131,15 @@ export function applyApprovedLeaves(
       const existing = updated[student.id] || {
         period1: 'present',
         period2: 'present',
-        period3: periodsCount === 3 ? 'present' : undefined,
+        period3: periodsCount >= 3 ? 'present' : undefined,
+        period4: periodsCount >= 4 ? 'present' : undefined,
       };
 
       const newRecord = { ...existing };
       if (leave.periods.includes(1)) newRecord.period1 = 'leave';
       if (leave.periods.includes(2)) newRecord.period2 = 'leave';
-      if (periodsCount === 3 && leave.periods.includes(3)) newRecord.period3 = 'leave';
+      if (periodsCount >= 3 && leave.periods.includes(3)) newRecord.period3 = 'leave';
+      if (periodsCount >= 4 && leave.periods.includes(4)) newRecord.period4 = 'leave';
       newRecord.remarks = `${leave.typeName}：${leave.reason}`;
 
       updated[student.id] = newRecord;
@@ -147,8 +164,11 @@ export function getStudentIndividualHours(
   let absent = 0;
 
   const statuses = [record.period1, record.period2];
-  if (periodsCount === 3 && record.period3) {
+  if (periodsCount >= 3 && record.period3) {
     statuses.push(record.period3);
+  }
+  if (periodsCount >= 4 && record.period4) {
+    statuses.push(record.period4);
   }
 
   statuses.forEach((status) => {
@@ -241,9 +261,11 @@ export function calculateStudentAttendanceHistory(
   // Sort dailyRecords descending by date
   dailyRecords.sort((a, b) => b.date.localeCompare(a.date));
 
+  // Present = 100%, Leave = 50%, Absent = 0%
+  const earnedHours = presentHours + leaveHours * 0.5;
   const attendanceRate =
     completedHours > 0
-      ? Math.round((presentHours / completedHours) * 1000) / 10
+      ? Math.round((earnedHours / completedHours) * 1000) / 10
       : student.overallAttendanceRate;
 
   return {

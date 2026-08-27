@@ -24,6 +24,7 @@ import {
   AttendanceStatus, 
   LeaveRecord 
 } from '../types';
+import { StudentAvatar } from './StudentAvatar';
 import { 
   calculateAttendanceStats, 
   getDefaultAttendanceForStudents, 
@@ -52,7 +53,8 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
   isReadOnly: explicitReadOnly = false,
 }) => {
   const periodsCount = course.periodsCount || 3;
-  const is3H = periodsCount === 3;
+  const is3H = periodsCount >= 3;
+  const is4H = periodsCount >= 4;
 
   // Check 7-day makeup deadline:
   // If course.date < TODAY_DATE and days difference > 7 days, it's overdue
@@ -98,7 +100,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
   // Set single period status
   const handleSetPeriodStatus = (
     studentId: string, 
-    periodKey: 'period1' | 'period2' | 'period3', 
+    periodKey: 'period1' | 'period2' | 'period3' | 'period4', 
     status: AttendanceStatus
   ) => {
     if (isReadOnly) return;
@@ -106,7 +108,8 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
       const current = prev[studentId] || { 
         period1: 'present', 
         period2: 'present', 
-        period3: is3H ? 'present' : undefined 
+        period3: is3H ? 'present' : undefined,
+        period4: is4H ? 'present' : undefined,
       };
       return {
         ...prev,
@@ -125,7 +128,8 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
       const current = prev[studentId] || { 
         period1: 'present', 
         period2: 'present', 
-        period3: is3H ? 'present' : undefined 
+        period3: is3H ? 'present' : undefined,
+        period4: is4H ? 'present' : undefined,
       };
       return {
         ...prev,
@@ -134,6 +138,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
           period1: status,
           period2: status,
           period3: is3H ? status : undefined,
+          period4: is4H ? status : undefined,
           remarks: status === 'leave' ? (current.remarks || '整堂請假') : status === 'absent' ? (current.remarks || '整堂曠課缺席') : '',
         },
       };
@@ -436,6 +441,12 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                     <div className="text-[10px] font-normal text-slate-500">{course.periodTimes[2] || '11:00-11:50'}</div>
                   </th>
                 )}
+                {is4H && (
+                  <th className="py-3.5 px-3 text-center min-w-[150px]">
+                    <div>第 4 節</div>
+                    <div className="text-[10px] font-normal text-slate-500">{course.periodTimes[3] || '12:00-12:50'}</div>
+                  </th>
+                )}
                 <th className="py-3.5 px-3 text-center min-w-[140px]">整堂快捷</th>
                 <th className="py-3.5 px-4 text-center min-w-[110px]">今日統計</th>
                 <th className="py-3.5 px-4 text-right min-w-[100px]">備註</th>
@@ -471,11 +482,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                     {/* Student Info */}
                     <td className="py-3 px-4">
                       <div className="flex items-center space-x-3">
-                        <img
-                          src={student.avatarUrl}
-                          alt={student.name}
-                          className="w-10 h-10 rounded-full object-cover border border-slate-200 shrink-0"
-                        />
+                        <StudentAvatar avatarUrl={student.avatarUrl} name={student.name} sizeClassName="w-10 h-10" />
                         <div>
                           <div className="flex items-center space-x-1.5">
                             <span className="font-extrabold text-slate-900 text-sm">{student.name}</span>
@@ -575,7 +582,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                       </div>
                     </td>
 
-                    {/* Period 3 Toggle Buttons (If 3-hour class) */}
+                    {/* Period 3 Toggle Buttons (If >= 3-hour class) */}
                     {is3H && (
                       <td className="py-3 px-3">
                         <div className="flex items-center justify-center space-x-1">
@@ -606,6 +613,47 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                             onClick={() => handleSetPeriodStatus(student.id, 'period3', 'absent')}
                             className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
                               record.period3 === 'absent'
+                                ? 'bg-rose-600 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            缺席
+                          </button>
+                        </div>
+                      </td>
+                    )}
+
+                    {/* Period 4 Toggle Buttons (If >= 4-hour class) */}
+                    {is4H && (
+                      <td className="py-3 px-3">
+                        <div className="flex items-center justify-center space-x-1">
+                          <button
+                            disabled={isReadOnly}
+                            onClick={() => handleSetPeriodStatus(student.id, 'period4', 'present')}
+                            className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
+                              record.period4 === 'present'
+                                ? 'bg-emerald-600 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            出席
+                          </button>
+                          <button
+                            disabled={isReadOnly}
+                            onClick={() => handleSetPeriodStatus(student.id, 'period4', 'leave')}
+                            className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
+                              record.period4 === 'leave'
+                                ? 'bg-blue-600 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            請假
+                          </button>
+                          <button
+                            disabled={isReadOnly}
+                            onClick={() => handleSetPeriodStatus(student.id, 'period4', 'absent')}
+                            className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
+                              record.period4 === 'absent'
                                 ? 'bg-rose-600 text-white shadow-xs'
                                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                             }`}

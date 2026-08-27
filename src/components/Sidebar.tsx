@@ -14,22 +14,38 @@ import {
   ArrowRightLeft,
   Calculator,
   Award,
-  X
+  X,
+  LayoutDashboard,
+  UserPlus,
+  BookOpen,
+  Layers,
+  FileText,
+  CheckCircle2,
+  Building2,
+  LogOut
 } from 'lucide-react';
-import { Teacher } from '../types';
+import { Teacher, UserRole, AdminNavigationTab, UserProfile } from '../types';
+import { TeacherAvatar } from './TeacherAvatar';
 
 export type NavigationTab = 'today' | 'grades' | 'classes' | 'schedule' | 'history' | 'stats';
 
 interface SidebarProps {
+  currentRole: UserRole;
+  onRoleChange?: (role: UserRole) => void;
   activeTab: NavigationTab;
+  adminActiveTab: AdminNavigationTab;
   onTabChange: (tab: NavigationTab) => void;
+  onAdminTabChange: (tab: AdminNavigationTab) => void;
   onResetData: () => void;
   pendingAttendanceCount: number;
-  currentTeacher: Teacher;
+  pendingLeaveCount?: number;
+  currentTeacher?: Teacher | null;
   teachers?: Teacher[];
   onSelectTeacher?: (teacher: Teacher) => void;
   isOpenMobile?: boolean;
   onCloseMobile?: () => void;
+  adminProfile?: UserProfile | null;
+  onLogout?: () => void;
 }
 
 interface MenuItem {
@@ -40,31 +56,47 @@ interface MenuItem {
   badgeColor?: string;
 }
 
+interface AdminMenuItem {
+  id: AdminNavigationTab;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badge?: string;
+  badgeColor?: string;
+}
+
 export const Sidebar: React.FC<SidebarProps> = ({
+  currentRole,
+  onRoleChange,
   activeTab,
+  adminActiveTab,
   onTabChange,
+  onAdminTabChange,
   onResetData,
   pendingAttendanceCount,
+  pendingLeaveCount = 0,
   currentTeacher,
   teachers = [],
   onSelectTeacher,
   isOpenMobile = false,
   onCloseMobile,
+  adminProfile,
+  onLogout,
 }) => {
-  const menuItems: MenuItem[] = [
+  // Teacher navigation items
+  const teacherMenuItems: MenuItem[] = [
     {
       id: 'today',
       label: '今日點名與日程',
       icon: CalendarCheck,
       badge: pendingAttendanceCount > 0 ? `${pendingAttendanceCount} 待點` : undefined,
-      badgeColor: 'bg-amber-100 text-amber-800 border-amber-300',
+      badgeColor: 'bg-zinc-800 text-zinc-200 border-zinc-700',
     },
     {
       id: 'grades',
       label: '學生成績管理',
       icon: Calculator,
-      badge: '佔比100%',
-      badgeColor: 'bg-indigo-100 text-indigo-800 border-indigo-300',
+      badge: '100%',
+      badgeColor: 'bg-zinc-800 text-zinc-300 border-zinc-700',
     },
     {
       id: 'classes',
@@ -73,15 +105,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'stats',
-      label: '出席率與簽證預警',
+      label: '出席率預警',
       icon: BarChart3,
     },
     {
       id: 'schedule',
       label: '全季排程與調課',
       icon: CalendarDays,
-      badge: '165小時',
-      badgeColor: 'bg-teal-100 text-teal-800 border-teal-300',
+      badge: '課表',
+      badgeColor: 'bg-zinc-800 text-zinc-300 border-zinc-700',
     },
     {
       id: 'history',
@@ -90,31 +122,90 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
   ];
 
+  // Admin navigation items
+  const adminMenuItems: AdminMenuItem[] = [
+    {
+      id: 'admin_dashboard',
+      label: '行政總覽看板',
+      icon: LayoutDashboard,
+    },
+    {
+      id: 'admin_students',
+      label: '學生基本資料管理',
+      icon: Users,
+    },
+    {
+      id: 'admin_assignments',
+      label: '學生分班與轉班',
+      icon: ArrowRightLeft,
+    },
+    {
+      id: 'admin_courses',
+      label: '教材／課程定義',
+      icon: BookOpen,
+    },
+    {
+      id: 'admin_terms',
+      label: '學期期別管理',
+      icon: CalendarDays,
+    },
+    {
+      id: 'admin_classes',
+      label: '開設班級管理',
+      icon: Layers,
+    },
+    {
+      id: 'admin_teachers',
+      label: '全校教師管理',
+      icon: GraduationCap,
+    },
+    {
+      id: 'admin_schedule',
+      label: '全校排課與調課',
+      icon: CalendarDays,
+    },
+    {
+      id: 'admin_attendance',
+      label: '全校點名監控',
+      icon: CheckCircle2,
+    },
+    {
+      id: 'admin_grades',
+      label: '全校成績管理',
+      icon: Award,
+    },
+    {
+      id: 'admin_reports',
+      label: '報表與結業證書',
+      icon: BarChart3,
+    },
+  ];
+
   const handleTabSelect = (tab: NavigationTab) => {
     onTabChange(tab);
-    if (onCloseMobile) {
-      onCloseMobile();
-    }
+    if (onCloseMobile) onCloseMobile();
+  };
+
+  const handleAdminTabSelect = (tab: AdminNavigationTab) => {
+    onAdminTabChange(tab);
+    if (onCloseMobile) onCloseMobile();
   };
 
   const handleTeacherSelect = (teacher: Teacher) => {
-    if (onSelectTeacher) {
-      onSelectTeacher(teacher);
-    }
-    if (onCloseMobile) {
-      onCloseMobile();
-    }
+    if (onSelectTeacher) onSelectTeacher(teacher);
+    if (onCloseMobile) onCloseMobile();
   };
+
+  const isRoleAdmin = currentRole === 'ADMIN';
 
   return (
     <>
-      {/* Mobile Backdrop Overlay (only visible on small screens when drawer is open) */}
+      {/* Mobile Backdrop Overlay */}
       {isOpenMobile && (
         <div 
-          id="sidebar-backdrop"
+          id="sidebar-mobile-backdrop"
           onClick={onCloseMobile}
-          className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-40 lg:hidden transition-opacity duration-300 animate-in fade-in"
-          aria-hidden="true"
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-40 lg:hidden"
         />
       )}
 
@@ -122,21 +213,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <aside 
         id="main-sidebar"
         className={`
-          fixed inset-y-0 left-0 z-50 w-64 max-w-[85vw] h-full bg-slate-900 text-slate-100 flex flex-col shrink-0 border-r border-slate-800 shadow-2xl transition-transform duration-300 ease-in-out
+          fixed inset-y-0 left-0 z-50 w-64 max-w-[85vw] h-full bg-white text-slate-800 flex flex-col shrink-0 border-r border-[#DCE2E6] shadow-lg lg:shadow-none transition-transform duration-300 ease-in-out
           ${isOpenMobile ? 'translate-x-0' : '-translate-x-full'}
-          lg:static lg:translate-x-0 lg:z-auto lg:h-screen lg:shadow-none
+          lg:static lg:translate-x-0 lg:z-auto lg:h-screen
         `}
       >
         {/* Brand Header */}
-        <div className="p-5 border-b border-slate-800">
+        <div className="p-4 border-b border-[#DCE2E6] bg-[#F8FAFC]">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-lg shadow-teal-900/30">
-                <GraduationCap className="w-6 h-6" />
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center text-white bg-[#536B7A] font-bold text-sm tracking-tight shadow-2xs shrink-0">
+                PU
               </div>
               <div>
-                <div className="text-xs font-semibold text-teal-400 tracking-wider">CLC ATTENDANCE</div>
-                <h1 className="text-base font-bold text-white leading-tight">華語中心教師系統</h1>
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  {isRoleAdmin ? '行政管理中樞' : '教師教學系統'}
+                </div>
+                <h1 className="text-xs font-bold text-slate-800 leading-tight tracking-wide">
+                  靜宜大學華語中心
+                </h1>
               </div>
             </div>
             {/* Mobile Close Button */}
@@ -144,125 +239,223 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 type="button"
                 onClick={onCloseMobile}
-                className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors"
                 title="關閉選單"
-                aria-label="關閉選單"
               >
                 <X className="w-5 h-5" />
               </button>
             )}
           </div>
-          <div className="mt-3 inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 w-full justify-between">
-            <span className="truncate">{currentTeacher.term} (165小時)</span>
-            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-          </div>
         </div>
 
-        {/* Navigation */}
-        <div className="px-3 py-4 flex-1 overflow-y-auto">
-          <div className="text-xs font-semibold text-slate-400 px-3 mb-2 tracking-wider">
-            教師管理介面
-          </div>
-          <nav className="space-y-1">
-            {menuItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  id={`nav-${item.id}`}
-                  onClick={() => handleTabSelect(item.id)}
-                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                    isActive
-                      ? 'bg-teal-600 text-white shadow-md shadow-teal-900/40'
-                      : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'
-                  }`}
-                >
-                  <div className="flex items-center space-x-3">
-                    <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                    <span>{item.label}</span>
-                  </div>
-                  {item.badge && (
-                    <span
-                      className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
-                        isActive
-                          ? 'bg-white text-teal-800 border-white'
-                          : item.badgeColor
-                      }`}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
+        {/* Navigation List */}
+        <div className="px-2.5 py-3 flex-1 overflow-y-auto space-y-4 bg-white">
+          {isRoleAdmin ? (
+            <div className="space-y-4">
+              {/* Category 1: Overview */}
+              <div>
+                <div className="text-[10px] font-bold text-slate-400 px-3 mb-1.5 tracking-wider uppercase">
+                  概覽
+                </div>
+                <nav className="space-y-0.5">
+                  {adminMenuItems.slice(0, 1).map((item) => {
+                    const Icon = item.icon;
+                    const isActive = adminActiveTab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        id={`admin-nav-${item.id}`}
+                        onClick={() => handleAdminTabSelect(item.id)}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
+                          isActive
+                            ? 'bg-[#E8EEF2] text-[#26313B] font-bold border-l-3 border-[#536B7A] shadow-2xs pl-2.5'
+                            : 'text-slate-600 hover:bg-[#F1F5F9] hover:text-slate-900 font-medium'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2.5">
+                          <Icon className={`w-4 h-4 ${isActive ? 'text-[#536B7A]' : 'text-slate-400'}`} />
+                          <span>{item.label}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </nav>
+              </div>
+
+              {/* Category 2: Administrative Management */}
+              <div>
+                <div className="text-[10px] font-bold text-slate-400 px-3 mb-1.5 tracking-wider uppercase">
+                  教務管理
+                </div>
+                <nav className="space-y-0.5">
+                  {adminMenuItems.slice(1, 7).map((item) => {
+                    const Icon = item.icon;
+                    const isActive = adminActiveTab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        id={`admin-nav-${item.id}`}
+                        onClick={() => handleAdminTabSelect(item.id)}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
+                          isActive
+                            ? 'bg-[#E8EEF2] text-[#26313B] font-bold border-l-3 border-[#536B7A] shadow-2xs pl-2.5'
+                            : 'text-slate-600 hover:bg-[#F1F5F9] hover:text-slate-900 font-medium'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2.5">
+                          <Icon className={`w-4 h-4 ${isActive ? 'text-[#536B7A]' : 'text-slate-400'}`} />
+                          <span>{item.label}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </nav>
+              </div>
+
+              {/* Category 3: Monitoring & Reports */}
+              <div>
+                <div className="text-[10px] font-bold text-slate-400 px-3 mb-1.5 tracking-wider uppercase">
+                  監控與報表
+                </div>
+                <nav className="space-y-0.5">
+                  {adminMenuItems.slice(7).map((item) => {
+                    const Icon = item.icon;
+                    const isActive = adminActiveTab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        id={`admin-nav-${item.id}`}
+                        onClick={() => handleAdminTabSelect(item.id)}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
+                          isActive
+                            ? 'bg-[#E8EEF2] text-[#26313B] font-bold border-l-3 border-[#536B7A] shadow-2xs pl-2.5'
+                            : 'text-slate-600 hover:bg-[#F1F5F9] hover:text-slate-900 font-medium'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2.5">
+                          <Icon className={`w-4 h-4 ${isActive ? 'text-[#536B7A]' : 'text-slate-400'}`} />
+                          <span>{item.label}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </nav>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <div className="text-[10px] font-bold text-slate-400 px-3 mb-1.5 tracking-wider uppercase">
+                  授課核心
+                </div>
+                <nav className="space-y-0.5">
+                  {teacherMenuItems.slice(0, 3).map((item) => {
+                    const Icon = item.icon;
+                    const isActive = activeTab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        id={`nav-${item.id}`}
+                        onClick={() => handleTabSelect(item.id)}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
+                          isActive
+                            ? 'bg-[#E8EEF2] text-[#26313B] font-bold border-l-3 border-[#536B7A] shadow-2xs pl-2.5'
+                            : 'text-slate-600 hover:bg-[#F1F5F9] hover:text-slate-900 font-medium'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2.5">
+                          <Icon className={`w-4 h-4 ${isActive ? 'text-[#536B7A]' : 'text-slate-400'}`} />
+                          <span>{item.label}</span>
+                        </div>
+                        {item.badge && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </nav>
+              </div>
+
+              <div>
+                <div className="text-[10px] font-bold text-slate-400 px-3 mb-1.5 tracking-wider uppercase">
+                  追蹤與紀錄
+                </div>
+                <nav className="space-y-0.5">
+                  {teacherMenuItems.slice(3).map((item) => {
+                    const Icon = item.icon;
+                    const isActive = activeTab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        id={`nav-${item.id}`}
+                        onClick={() => handleTabSelect(item.id)}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
+                          isActive
+                            ? 'bg-[#E8EEF2] text-[#26313B] font-bold border-l-3 border-[#536B7A] shadow-2xs pl-2.5'
+                            : 'text-slate-600 hover:bg-[#F1F5F9] hover:text-slate-900 font-medium'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2.5">
+                          <Icon className={`w-4 h-4 ${isActive ? 'text-[#536B7A]' : 'text-slate-400'}`} />
+                          <span>{item.label}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </nav>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Switch Teacher Quick Selector */}
-        {teachers.length > 1 && onSelectTeacher && (
-          <div className="p-3 border-t border-slate-800 bg-slate-950/60 shrink-0">
-            <div className="text-[11px] font-semibold text-slate-400 px-1 mb-2 flex items-center justify-between">
-              <span>切換授課教師視角</span>
-              <ArrowRightLeft className="w-3 h-3 text-slate-500" />
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              {teachers.map((teacher) => {
-                const isCurrent = teacher.id === currentTeacher.id;
-                return (
-                  <button
-                    key={teacher.id}
-                    id={`btn-switch-teacher-${teacher.id}`}
-                    onClick={() => handleTeacherSelect(teacher)}
-                    className={`flex items-center space-x-2 p-2 rounded-lg text-xs font-semibold transition-all ${
-                      isCurrent
-                        ? 'bg-teal-700 text-white ring-1 ring-teal-400'
-                        : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
-                    }`}
-                  >
-                    <img
-                      src={teacher.avatarUrl}
-                      alt={teacher.name}
-                      className="w-6 h-6 rounded-full object-cover border border-slate-600 shrink-0"
-                    />
-                    <span className="truncate">{teacher.name}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Teacher Profile Footer */}
-        <div className="p-4 border-t border-slate-800 bg-slate-950/80 shrink-0">
+        {/* Profile Footer */}
+        <div className="p-3.5 border-t border-[#DCE2E6] bg-[#F8FAFC] shrink-0">
           <div className="flex items-center space-x-3">
-            <img
-              src={currentTeacher.avatarUrl}
-              alt={currentTeacher.name}
-              className="w-10 h-10 rounded-full object-cover border-2 border-teal-500"
+            <TeacherAvatar
+              avatarUrl={isRoleAdmin ? adminProfile?.avatarUrl : currentTeacher?.avatarUrl}
+              name={isRoleAdmin ? (adminProfile?.fullName || '系統管理員') : (currentTeacher?.name || '教師')}
+              sizeClassName="w-9 h-9"
+              className="border border-slate-200 shadow-2xs"
             />
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between">
-                <div className="text-sm font-bold text-white truncate">{currentTeacher.name} 老師</div>
-                <span className="text-[10px] font-semibold bg-teal-500/20 text-teal-300 px-1.5 py-0.2 rounded">
-                  授課中
+                <div className="text-xs font-bold text-slate-800 truncate">
+                  {isRoleAdmin ? (adminProfile?.fullName || '系統管理員') : `${currentTeacher?.name || '教師'} 老師`}
+                </div>
+                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-[#E8EEF2] text-[#536B7A] border border-[#DCE2E6]">
+                  {isRoleAdmin ? 'ADMIN' : 'TEACHER'}
                 </span>
               </div>
-              <div className="text-xs text-slate-400 truncate">{currentTeacher.department}</div>
+              <div className="text-[10px] text-slate-500 truncate">
+                {isRoleAdmin ? (adminProfile?.email || 'admin@test.com') : (currentTeacher?.email || currentTeacher?.department || '靜宜大學華語中心')}
+              </div>
             </div>
           </div>
 
-          <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between">
+          <div className="mt-2.5 pt-2.5 border-t border-[#DCE2E6] flex items-center justify-between">
             <button
               id="btn-reset-demo"
               onClick={onResetData}
-              className="flex items-center space-x-1.5 text-xs text-slate-400 hover:text-rose-400 transition-colors"
-              title="重設全季所有點名與成績資料"
+              className="flex items-center space-x-1 text-[11px] text-slate-500 hover:text-slate-800 transition-colors"
+              title="重設全季所有點名、排班與成績資料"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>重設全季 Demo 資料</span>
+              <RotateCcw className="w-3 h-3 text-slate-400" />
+              <span>重設狀態</span>
             </button>
-            <span className="text-[10px] text-slate-600 font-mono">v2.6 Quarter</span>
+            {onLogout && (
+              <button
+                id="btn-sidebar-logout"
+                type="button"
+                onClick={onLogout}
+                className="flex items-center space-x-1 text-[11px] text-slate-600 hover:text-rose-600 font-semibold transition-colors cursor-pointer"
+                title="登出系統"
+              >
+                <LogOut className="w-3.5 h-3.5 text-rose-500" />
+                <span>登出系統</span>
+              </button>
+            )}
           </div>
         </div>
       </aside>

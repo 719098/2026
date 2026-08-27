@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   BarChart3, 
   AlertTriangle, 
@@ -11,43 +11,53 @@ import {
   FileWarning,
   Building2
 } from 'lucide-react';
-import { 
-  STUDENTS_LEVEL1, 
-  STUDENTS_LEVEL2, 
-  STUDENTS_LEVEL3,
-  STUDENTS_CHEN_CONVERSATION,
-  STUDENTS_CHEN_BUSINESS,
-  STUDENTS_CHEN_CULTURE
-} from '../data/mockData';
-import { Teacher } from '../types';
+import { Student, Teacher, ClassEntity } from '../types';
+import { StudentAvatar } from './StudentAvatar';
 
 interface AttendanceStatsViewProps {
   onShowToast: (message: string, type?: 'success' | 'info' | 'warning') => void;
   currentTeacher?: Teacher;
+  students?: Student[];
+  classes?: ClassEntity[];
 }
 
-export const AttendanceStatsView: React.FC<AttendanceStatsViewProps> = ({ onShowToast, currentTeacher }) => {
+export const AttendanceStatsView: React.FC<AttendanceStatsViewProps> = ({ 
+  onShowToast, 
+  currentTeacher,
+  students = [],
+  classes = []
+}) => {
   const [scopeFilter, setScopeFilter] = useState<'my' | 'all'>('my');
+  const [selectedClassId, setSelectedClassId] = useState<string>('ALL');
 
-  const isChenTeacher = currentTeacher?.name === '陳靜宜';
+  const myClasses = useMemo(() => {
+    if (!classes || classes.length === 0) return [];
+    if (!currentTeacher) return classes;
+    const assignedSet = new Set(currentTeacher.assignedClasses || []);
+    return classes.filter(c => 
+      c.teacherId === currentTeacher.id || 
+      c.teacher === currentTeacher.name || 
+      assignedSet.has(c.className) || 
+      assignedSet.has(c.name)
+    );
+  }, [classes, currentTeacher]);
 
-  const teacherLinClasses = [
-    { name: '初級華語一', students: STUDENTS_LEVEL1, teacher: '林明學' },
-    { name: '中級華語二', students: STUDENTS_LEVEL2, teacher: '林明學' },
-    { name: '高級華語三', students: STUDENTS_LEVEL3, teacher: '林明學' },
-  ];
+  const baseClasses = scopeFilter === 'my' ? myClasses : classes;
 
-  const teacherChenClasses = [
-    { name: '生活會話一班', students: STUDENTS_CHEN_CONVERSATION, teacher: '陳靜宜' },
-    { name: '商務華語實務', students: STUDENTS_CHEN_BUSINESS, teacher: '陳靜宜' },
-    { name: '台灣文化與影視欣賞', students: STUDENTS_CHEN_CULTURE, teacher: '陳靜宜' },
-  ];
+  const displayedClasses = useMemo(() => {
+    if (!selectedClassId || selectedClassId === 'ALL') return baseClasses;
+    return baseClasses.filter(
+      c => c.id === selectedClassId || c.className === selectedClassId || c.name === selectedClassId
+    );
+  }, [baseClasses, selectedClassId]);
 
-  const activeTeacherClasses = isChenTeacher ? teacherChenClasses : teacherLinClasses;
-  const allClasses = [...teacherLinClasses, ...teacherChenClasses];
+  const targetClassIds = useMemo(() => new Set(displayedClasses.map(c => c.id)), [displayedClasses]);
+  const targetClassNames = useMemo(() => new Set(displayedClasses.map(c => c.className || c.name)), [displayedClasses]);
 
-  const displayedClasses = scopeFilter === 'my' ? activeTeacherClasses : allClasses;
-  const allStudents = displayedClasses.flatMap((c) => c.students);
+  const allStudents = useMemo(() => {
+    if (!students || students.length === 0) return [];
+    return students.filter(s => targetClassIds.has(s.classId) || targetClassNames.has(s.className));
+  }, [students, targetClassIds, targetClassNames]);
 
   // Warning students (< 90% or < 80%)
   const dangerStudents = allStudents.filter((s) => s.overallAttendanceRate < 80);
@@ -65,58 +75,96 @@ export const AttendanceStatsView: React.FC<AttendanceStatsViewProps> = ({ onShow
           <div>
             <div className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 mb-2">
               <ShieldAlert className="w-3.5 h-3.5" />
-              <span>教育部外籍生居留簽證出席率預警系統 • {currentTeacher ? `${currentTeacher.name} 老師` : ''}</span>
+              <span>出席率預警系統 • {currentTeacher ? `${currentTeacher.name} 老師` : ''}</span>
             </div>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-              全班出席率統計與簽證預警名單
+              全班出席率統計與預警名單
             </h1>
             <p className="text-xs text-slate-500 mt-1 max-w-2xl">
-              依教育部華語文教學機構管理規定，外籍學生每期出席率不得低於 <strong>80%</strong>，否則將影響居留證 (ARC) 延期與就學資格。
+              依華語文教學機構管理規定，學生每期出席率不得低於 <strong>80%</strong>，低於標準者將開啟重點輔導機制。
             </p>
           </div>
 
           {/* Scope filter */}
-          <div className="flex items-center space-x-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200 text-xs">
-            <button
-              onClick={() => setScopeFilter('my')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
-                scopeFilter === 'my'
-                  ? 'bg-white text-teal-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              僅看 {currentTeacher?.name || '我'} 的班級
-            </button>
-            <button
-              onClick={() => setScopeFilter('all')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
-                scopeFilter === 'all'
-                  ? 'bg-white text-teal-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              全中心 6 個班級
-            </button>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+            <div className="flex items-center space-x-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200 text-xs">
+              <button
+                onClick={() => setScopeFilter('my')}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                  scopeFilter === 'my'
+                    ? 'bg-white text-teal-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                僅看 {currentTeacher?.name || '我'} 的班級
+              </button>
+              <button
+                onClick={() => setScopeFilter('all')}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                  scopeFilter === 'all'
+                    ? 'bg-white text-teal-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                全中心 {classes.length} 個班級
+              </button>
+            </div>
           </div>
         </div>
+
+        {/* Class Selection Tabs */}
+        {baseClasses.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-slate-100 flex items-center space-x-2 overflow-x-auto pb-1">
+            <span className="text-xs font-bold text-slate-500 shrink-0 mr-1">班級篩選：</span>
+            <button
+              id="btn-stat-class-all"
+              onClick={() => setSelectedClassId('ALL')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 ${
+                selectedClassId === 'ALL'
+                  ? 'bg-teal-600 text-white shadow-xs'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+              }`}
+            >
+              全部班級 ({baseClasses.length})
+            </button>
+            {baseClasses.map((cls) => {
+              const isSelected = selectedClassId === cls.id || selectedClassId === cls.className || selectedClassId === cls.name;
+              return (
+                <button
+                  key={cls.id || cls.name}
+                  id={`btn-stat-class-${cls.id}`}
+                  onClick={() => setSelectedClassId(cls.id || cls.className || cls.name)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 ${
+                    isSelected
+                      ? 'bg-teal-600 text-white shadow-xs'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  {cls.className || cls.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Classes Overview Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mt-6">
           {displayedClasses.map((cls) => {
-            const avgRate = Math.round(
-              (cls.students.reduce((acc, s) => acc + s.overallAttendanceRate, 0) / cls.students.length) * 10
-            ) / 10;
+            const clsStudents = students.filter(s => s.classId === cls.id || s.className === cls.className || s.className === cls.name);
+            const avgRate = clsStudents.length > 0
+              ? Math.round((clsStudents.reduce((acc, s) => acc + (s.overallAttendanceRate || 100), 0) / clsStudents.length) * 10) / 10
+              : 100;
 
             return (
-              <div key={cls.name} className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <div key={cls.id || cls.name} className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                 <div className="flex items-center justify-between">
                   <div>
-                    <span className="font-extrabold text-slate-800 text-sm block">{cls.name}</span>
+                    <span className="font-extrabold text-slate-800 text-sm block">{cls.className || cls.name}</span>
                     {scopeFilter === 'all' && (
                       <span className="text-[10px] text-teal-700 font-semibold">{cls.teacher} 老師</span>
                     )}
                   </div>
-                  <span className="text-xs text-slate-500">{cls.students.length} 位學生</span>
+                  <span className="text-xs text-slate-500">{clsStudents.length} 位學生</span>
                 </div>
                 <div className="mt-3 flex items-baseline space-x-2">
                   <span className="text-3xl font-black text-teal-700 font-mono">{avgRate}%</span>
@@ -172,11 +220,7 @@ export const AttendanceStatsView: React.FC<AttendanceStatsViewProps> = ({ onShow
                   <tr key={student.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="py-3 px-4">
                       <div className="flex items-center space-x-3">
-                        <img
-                          src={student.avatarUrl}
-                          alt={student.name}
-                          className="w-8 h-8 rounded-full object-cover border border-slate-200"
-                        />
+                        <StudentAvatar avatarUrl={student.avatarUrl} name={student.name} sizeClassName="w-8 h-8" />
                         <div>
                           <span className="font-extrabold text-slate-900">{student.name}</span>
                           <span className="text-slate-500 ml-1 text-[11px]">({student.englishName})</span>
