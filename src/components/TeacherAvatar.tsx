@@ -16,6 +16,10 @@ export const TeacherAvatar: React.FC<TeacherAvatarProps> = ({
 }) => {
   const [imgError, setImgError] = useState(false);
 
+  React.useEffect(() => {
+    setImgError(false);
+  }, [avatarUrl]);
+
   const showImage = Boolean(avatarUrl && !imgError && avatarUrl.trim() !== '');
 
   if (showImage && avatarUrl) {

@@ -336,7 +336,54 @@ export function validateTeacherAvatarFile(file: File): AvatarValidationResult {
 }
 
 /**
- * Uploads a teacher avatar to Supabase Storage ('teacher-avatars') via Server API.
+ * Helper to probe Supabase Storage for a teacher's photo URL (Public URL or Signed URL).
+ * Checks avatar.jpg, avatar.png, avatar.webp, avatar.jpeg directly from Storage.
+ */
+export async function getSingleTeacherAvatarUrl(
+  teacherId: string
+): Promise<string | null> {
+  if (!teacherId) return null;
+
+  const baseUrl = 'https://rcvetyahocznanvbggqf.supabase.co';
+  const exts = ['jpg', 'png', 'webp', 'jpeg'];
+
+  for (const ext of exts) {
+    const pubUrl = `${baseUrl}/storage/v1/object/public/teacher-avatars/${teacherId}/avatar.${ext}`;
+    try {
+      const res = await fetch(pubUrl, { method: 'HEAD' });
+      if (res.ok) {
+        return pubUrl;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (supabase) {
+    for (const ext of exts) {
+      const path = `${teacherId}/avatar.${ext}`;
+      try {
+        const { data } = await supabase.storage
+          .from('teacher-avatars')
+          .createSignedUrl(path, 60 * 60 * 24);
+        if (data?.signedUrl) {
+          const checkRes = await fetch(data.signedUrl, { method: 'HEAD' });
+          if (checkRes.ok) {
+            return data.signedUrl;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Uploads a teacher avatar to Supabase Storage ('teacher-avatars').
+ * Tries Server API first, with client-side Supabase Storage fallback.
  */
 export async function uploadTeacherAvatar(
   teacherId: string,
@@ -364,30 +411,76 @@ export async function uploadTeacherAvatar(
       }),
     });
 
-    const result = await res.json();
-    if (!res.ok || !result.success) {
+    if (res.ok) {
+      const result = await res.json();
+      if (result.success && result.signedUrl) {
+        return {
+          success: true,
+          storagePath: result.storagePath,
+          signedUrl: result.signedUrl,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[StorageService] Server API upload failed, using client fallback:', err);
+  }
+
+  if (!supabase) {
+    return { success: false, error: 'Supabase 客戶端未初始化且伺服器 API 無法連線' };
+  }
+
+  try {
+    let ext = 'webp';
+    if (file.type === 'image/jpeg') ext = 'jpg';
+    else if (file.type === 'image/png') ext = 'png';
+    else if (file.type === 'image/webp') ext = 'webp';
+
+    const targetFilePath = `${teacherId}/avatar.${ext}`;
+
+    const { data: existingFiles } = await supabase.storage
+      .from('teacher-avatars')
+      .list(teacherId);
+
+    if (existingFiles && existingFiles.length > 0) {
+      const filesToRemove = existingFiles.map((f) => `${teacherId}/${f.name}`);
+      await supabase.storage.from('teacher-avatars').remove(filesToRemove);
+    }
+
+    const { data: uploadData, error: uploadErr } = await supabase.storage
+      .from('teacher-avatars')
+      .upload(targetFilePath, file, {
+        contentType: file.type,
+        upsert: true,
+      });
+
+    if (uploadErr || !uploadData) {
       return {
         success: false,
-        error: result.error || '上傳教師照片失敗',
+        error: `照片上傳至 Storage 失敗: ${uploadErr?.message || '未知錯誤'}`,
       };
     }
 
+    const { data: pubData } = supabase.storage.from('teacher-avatars').getPublicUrl(targetFilePath);
+    const { data: signedData } = await supabase.storage.from('teacher-avatars').createSignedUrl(targetFilePath, 60 * 60 * 24);
+
+    const finalUrl = signedData?.signedUrl || pubData?.publicUrl || targetFilePath;
+
     return {
       success: true,
-      storagePath: result.storagePath,
-      signedUrl: result.signedUrl,
+      storagePath: targetFilePath,
+      signedUrl: finalUrl,
     };
   } catch (err: any) {
-    console.error('[StorageService] Error uploading teacher avatar:', err);
     return {
       success: false,
-      error: `上傳教師照片發生例外錯誤: ${err.message || String(err)}`,
+      error: `照片上傳過程中發生例外錯誤: ${err.message || String(err)}`,
     };
   }
 }
 
 /**
- * Deletes a teacher avatar from Supabase Storage ('teacher-avatars') via Server API.
+ * Deletes a teacher avatar from Supabase Storage ('teacher-avatars').
+ * Tries Server API first, with client-side Supabase Storage fallback.
  */
 export async function deleteTeacherAvatar(
   teacherId: string
@@ -403,26 +496,49 @@ export async function deleteTeacherAvatar(
       body: JSON.stringify({ teacherId }),
     });
 
-    const result = await res.json();
-    if (!res.ok || !result.success) {
-      return {
-        success: false,
-        error: result.error || '刪除教師照片失敗',
-      };
+    if (res.ok) {
+      const result = await res.json();
+      if (result.success) {
+        return { success: true };
+      }
+    }
+  } catch (err) {
+    console.warn('[StorageService] Server API delete failed, using client fallback:', err);
+  }
+
+  if (!supabase) {
+    return { success: false, error: 'Supabase 客戶端未初始化' };
+  }
+
+  try {
+    const { data: existingFiles, error: listErr } = await supabase.storage
+      .from('teacher-avatars')
+      .list(teacherId);
+
+    if (listErr) {
+      return { success: false, error: `查詢照片目錄失敗: ${listErr.message}` };
+    }
+
+    if (existingFiles && existingFiles.length > 0) {
+      const filesToRemove = existingFiles.map((f) => `${teacherId}/${f.name}`);
+      const { error: removeErr } = await supabase.storage
+        .from('teacher-avatars')
+        .remove(filesToRemove);
+
+      if (removeErr) {
+        return { success: false, error: `刪除照片失敗: ${removeErr.message}` };
+      }
     }
 
     return { success: true };
   } catch (err: any) {
-    console.error('[StorageService] Error deleting teacher avatar:', err);
-    return {
-      success: false,
-      error: `刪除教師照片發生例外錯誤: ${err.message || String(err)}`,
-    };
+    return { success: false, error: `刪除照片發生例外: ${err.message || String(err)}` };
   }
 }
 
 /**
- * Batch resolves signed URLs for an array of Teacher objects from 'teacher-avatars'.
+ * Batch resolves signed/public URLs for an array of Teacher objects from 'teacher-avatars'.
+ * Uses Server API when available, and falls back to probing Supabase Storage directly.
  */
 export async function batchResolveTeacherAvatars(
   teachers: Teacher[]
@@ -432,6 +548,8 @@ export async function batchResolveTeacherAvatars(
   const validTeachers = teachers.filter((t) => Boolean(t.id));
   if (validTeachers.length === 0) return teachers;
 
+  let urlMap: Record<string, string> = {};
+
   try {
     const teacherIds = validTeachers.map((t) => t.id);
     const res = await fetch('/api/admin/get-teacher-avatar-urls', {
@@ -440,18 +558,31 @@ export async function batchResolveTeacherAvatars(
       body: JSON.stringify({ teacherIds }),
     });
 
-    const result = await res.json();
-    const urlMap: Record<string, string> = result?.urls || {};
+    if (res.ok) {
+      const result = await res.json();
+      if (result && typeof result.urls === 'object') {
+        urlMap = result.urls;
+      }
+    }
+  } catch (err) {
+    console.warn('[StorageService] Notice fetching avatar URLs from server API:', err);
+  }
 
-    return teachers.map((t) => {
-      const signedUrl = urlMap[t.id];
+  const updatedTeachers = await Promise.all(
+    teachers.map(async (t) => {
+      let resolved = urlMap[t.id];
+      if (!resolved) {
+        const probedUrl = await getSingleTeacherAvatarUrl(t.id);
+        if (probedUrl) {
+          resolved = probedUrl;
+        }
+      }
       return {
         ...t,
-        avatarUrl: signedUrl || undefined,
+        avatarUrl: resolved || undefined,
       };
-    });
-  } catch (err) {
-    console.warn('[StorageService] Error batch resolving teacher avatars:', err);
-    return teachers;
-  }
+    })
+  );
+
+  return updatedTeachers;
 }
