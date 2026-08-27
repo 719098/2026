@@ -130,7 +130,7 @@ const STORAGE_ADMIN_LEAVES_KEY = 'clc_admin_leaves_v2';
 export default function App() {
   // Current active system role: ADMIN (行政端) or TEACHER (老師端)
   const [currentRole, setCurrentRole] = useState<UserRole>(() => {
-    const saved = localStorage.getItem(STORAGE_ROLE_KEY);
+    const saved = sessionStorage.getItem(STORAGE_ROLE_KEY);
     return (saved === 'TEACHER' || saved === 'ADMIN') ? saved : 'ADMIN';
   });
 
@@ -191,9 +191,9 @@ export default function App() {
   // Toasts
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
-  // Sync to local storage
+  // Sync to session storage
   useEffect(() => {
-    localStorage.setItem(STORAGE_ROLE_KEY, currentRole);
+    sessionStorage.setItem(STORAGE_ROLE_KEY, currentRole);
   }, [currentRole]);
 
   // Clean up legacy mock data from local storage
@@ -273,7 +273,7 @@ export default function App() {
               });
               setCurrentRole('ADMIN');
               setCurrentTeacher(null);
-              localStorage.setItem(STORAGE_ROLE_KEY, 'ADMIN');
+              sessionStorage.setItem(STORAGE_ROLE_KEY, 'ADMIN');
             } else {
               setAdminProfile({
                 id: profile.id,
@@ -286,7 +286,7 @@ export default function App() {
                 updatedAt: profile.updated_at,
               });
               setCurrentRole('TEACHER');
-              localStorage.setItem(STORAGE_ROLE_KEY, 'TEACHER');
+              sessionStorage.setItem(STORAGE_ROLE_KEY, 'TEACHER');
 
               // Fetch teacher profile from public.teachers with assigned classes
               const mappedTeacher = await fetchTeacherWithClassesByProfileId(profile.id);
@@ -328,7 +328,7 @@ export default function App() {
           setAdminProfile(null);
           setCurrentTeacher(null);
           setCurrentRole('ADMIN');
-          localStorage.removeItem(STORAGE_ROLE_KEY);
+          sessionStorage.removeItem(STORAGE_ROLE_KEY);
         }
       } else if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') && session?.user) {
         try {
@@ -354,7 +354,7 @@ export default function App() {
                 });
                 setCurrentRole('ADMIN');
                 setCurrentTeacher(null);
-                localStorage.setItem(STORAGE_ROLE_KEY, 'ADMIN');
+                sessionStorage.setItem(STORAGE_ROLE_KEY, 'ADMIN');
               } else {
                 setAdminProfile({
                   id: profile.id,
@@ -367,7 +367,7 @@ export default function App() {
                   updatedAt: profile.updated_at,
                 });
                 setCurrentRole('TEACHER');
-                localStorage.setItem(STORAGE_ROLE_KEY, 'TEACHER');
+                sessionStorage.setItem(STORAGE_ROLE_KEY, 'TEACHER');
 
                 const { data: tRow } = await client
                   .from('teachers')
@@ -503,7 +503,7 @@ export default function App() {
     setAdminProfile(profile);
     setCurrentRole('ADMIN');
     setCurrentTeacher(null);
-    localStorage.setItem(STORAGE_ROLE_KEY, 'ADMIN');
+    sessionStorage.setItem(STORAGE_ROLE_KEY, 'ADMIN');
     showToast(`歡迎回來，${profile.fullName} 管理員！`, 'success');
   };
 
@@ -512,7 +512,7 @@ export default function App() {
     setAdminProfile(profile);
     setCurrentTeacher(teacher);
     setCurrentRole('TEACHER');
-    localStorage.setItem(STORAGE_ROLE_KEY, 'TEACHER');
+    sessionStorage.setItem(STORAGE_ROLE_KEY, 'TEACHER');
     if (teacher.assignedClasses && teacher.assignedClasses.length > 0) {
       setGradeSelectedClass(teacher.assignedClasses[0]);
     }
@@ -531,7 +531,7 @@ export default function App() {
     setAdminProfile(null);
     setCurrentTeacher(null);
     setCurrentRole('ADMIN');
-    localStorage.removeItem(STORAGE_ROLE_KEY);
+    sessionStorage.removeItem(STORAGE_ROLE_KEY);
     setDbStudents([]);
     showToast('已安全登出系統', 'info');
   };
