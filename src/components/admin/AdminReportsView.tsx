@@ -29,9 +29,9 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
   allCourses,
 }) => {
   const [selectedReportTab, setSelectedReportTab] = useState<'attendance' | 'grades' | 'certificate'>('attendance');
-  const [selectedStudentId, setSelectedStudentId] = useState<string>(students[0]?.id || '');
+  const [selectedStudentId, setSelectedStudentId] = useState<string>(students?.[0]?.id || '');
 
-  const selectedStudentForCert = students.find((s) => s.id === selectedStudentId) || students[0] || null;
+  const selectedStudentForCert = students?.find((s) => s.id === selectedStudentId) || students?.[0] || null;
 
   // Total school metrics
   const totalStudents = students.length;

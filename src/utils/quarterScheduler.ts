@@ -19,7 +19,20 @@ import {
  * ============================================================================
  */
 
-export const TODAY_DATE = '2026-08-11';
+/**
+ * 取得系統/瀏覽器當前實際日期 (格式: YYYY-MM-DD)
+ * 嚴格使用 new Date() 動態生成，不再寫死任何固定日期。
+ */
+export function getTodayDateStr(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// 導出動態計算的 TODAY_DATE，相容於既有模組參照，每次呼叫時返回真實當天
+export const TODAY_DATE = getTodayDateStr();
 export const QUARTER_START_DATE = '2026-07-01';
 export const QUARTER_END_DATE = '2026-10-31';
 export const TARGET_HOURS_PER_QUARTER = 165;
@@ -289,10 +302,11 @@ export function generateFullQuarterCourses(classes: ClassEntity[] = [], students
           return;
         }
 
-        const daysDiff = getDaysDifference(TODAY_DATE, curr);
+        const todayDateStr = getTodayDateStr();
+        const daysDiff = getDaysDifference(todayDateStr, curr);
         const lessonNum = Math.min(15, Math.ceil(sessionNum / 3));
 
-        if (curr < TODAY_DATE) {
+        if (curr < todayDateStr) {
           allCourses.push({
             id: sessionId,
             courseCode: config.code,

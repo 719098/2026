@@ -6,7 +6,7 @@ import {
   ClassSessionStatus, 
   ScheduleProgress 
 } from '../types';
-import { TODAY_DATE, getDaysDifference } from '../utils/quarterScheduler';
+import { getTodayDateStr, getDaysDifference } from '../utils/quarterScheduler';
 
 /**
  * ============================================================================
@@ -64,7 +64,7 @@ function mapDbToClassSession(row: any): ClassSessionEntity {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     className: row.classes?.name,
-    courseName: row.classes?.course_definitions?.name,
+    courseName: row.classes?.name,
   };
 }
 
@@ -799,8 +799,9 @@ export async function fetchCourseSessionsFromSupabase(): Promise<{ data: any[]; 
       const attKey = `${s.class_id}_${s.session_date}`;
       const savedAtt = attendanceMap.get(attKey);
 
-      const daysSince = getDaysDifference(TODAY_DATE, s.session_date);
-      const isPast7Days = s.session_date < TODAY_DATE && daysSince > 7;
+      const todayDateStr = getTodayDateStr();
+      const daysSince = getDaysDifference(todayDateStr, s.session_date);
+      const isPast7Days = s.session_date < todayDateStr && daysSince > 7;
       const isLocked = isPast7Days || s.status === 'SUSPENDED';
 
       let calculatedStatus = s.status === 'SUSPENDED' ? 'holiday' : 'unmarked';
@@ -808,10 +809,9 @@ export async function fetchCourseSessionsFromSupabase(): Promise<{ data: any[]; 
 
       if (savedAtt) {
         attendanceData = savedAtt.attendanceData;
-        calculatedStatus = savedAtt.isSubmitted ? 'completed' : (isPast7Days ? 'completed' : 'in_progress');
+        calculatedStatus = savedAtt.isSubmitted ? 'completed' : 'in_progress';
       } else if (isPast7Days && s.status !== 'SUSPENDED') {
-        // Over 7 days and no saved attendance record: treat as completed default (PRESENT) without nagging
-        calculatedStatus = 'completed';
+        calculatedStatus = 'locked';
       }
 
       return {
@@ -937,13 +937,11 @@ export async function generateQuarterSessions(
 
     const suspendedDatesSet = new Set<string>((holidayRows || []).map((h: any) => h.date));
 
-    // 5. 依日期區間逐日產生課堂（精確符合 target_hours 上限即停止）
+    // 5. 依學期起訖區間 (start_date ~ end_date) 逐日產生課堂
     const [sYear, sMonth, sDay] = termData.start_date.split('-').map(Number);
     const [eYear, eMonth, eDay] = termData.end_date.split('-').map(Number);
     const startDate = new Date(sYear, sMonth - 1, sDay, 12, 0, 0);
     const endDate = new Date(eYear, eMonth - 1, eDay, 12, 0, 0);
-    const sessionsToInsert: any[] = [];
-    let currentHours = 0;
 
     const rulesMap = new Map<number, any[]>();
     rules.forEach((r: any) => {
@@ -952,12 +950,30 @@ export async function generateQuarterSessions(
       rulesMap.get(dow)!.push(r);
     });
 
-    const iterDate = new Date(startDate);
-    while (iterDate <= endDate) {
-      if (targetHours > 0 && currentHours >= targetHours) {
-        break;
-      }
+    // 6. 取得該班級已有的 class_sessions，嚴格保留既有課堂 (不隨便刪除歷史或已排課堂)
+    const { data: existingSessions, error: fetchExistingErr } = await supabase
+      .from('class_sessions')
+      .select('id, session_date, start_time, status, periods_count')
+      .eq('class_id', classId);
 
+    if (fetchExistingErr) {
+      console.error('[ScheduleService] Error fetching existing sessions:', fetchExistingErr);
+      return { data: null, error: fetchExistingErr };
+    }
+
+    // 建立既有槽位清單，已存在的 class_id + session_date 課堂一律完整保留，不重複建立
+    const existingSlotKeys = new Set<string>();
+    (existingSessions || []).forEach((s: any) => {
+      const timeStr = s.start_time ? String(s.start_time).slice(0, 5) : '';
+      existingSlotKeys.add(`${s.session_date}_${timeStr}`);
+      existingSlotKeys.add(s.session_date);
+    });
+
+    const iterDate = new Date(startDate);
+    const sessionsToInsert: any[] = [];
+    const seenSlotsToInsert = new Set<string>();
+
+    while (iterDate <= endDate) {
       // YYYY-MM-DD format without UTC timezone shift
       const y = iterDate.getFullYear();
       const m = String(iterDate.getMonth() + 1).padStart(2, '0');
@@ -968,23 +984,30 @@ export async function generateQuarterSessions(
       const jsDay = iterDate.getDay();
       const isoDayOfWeek = jsDay === 0 ? 7 : jsDay;
 
-      // 檢查是否為停課日
+      // 檢查是否為停課日 (排除 holidays 中 is_suspended = true 的假日)
       const isSuspended = suspendedDatesSet.has(dateStr);
 
       if (!isSuspended && rulesMap.has(isoDayOfWeek)) {
         const dayRules = rulesMap.get(isoDayOfWeek)!;
         for (const rule of dayRules) {
-          if (targetHours > 0 && currentHours >= targetHours) {
-            break;
+          const startTime = rule.start_time || '09:10:00';
+          const timeStr = startTime.slice(0, 5);
+          const slotKey = `${dateStr}_${timeStr}`;
+
+          // 若該日期/時段已存在課堂，保留既有資料，不重複建立
+          if (existingSlotKeys.has(slotKey) || existingSlotKeys.has(dateStr) || seenSlotsToInsert.has(slotKey)) {
+            continue;
           }
 
+          seenSlotsToInsert.add(slotKey);
           const periods = Number(rule.periods_count) || 3;
           sessionsToInsert.push({
+            id: crypto.randomUUID(),
             class_id: classId,
             session_date: dateStr,
             day_of_week: isoDayOfWeek,
-            start_time: rule.start_time,
-            end_time: rule.end_time,
+            start_time: startTime,
+            end_time: rule.end_time || '12:00:00',
             periods_count: periods,
             classroom: rule.classroom || defaultClassroom,
             status: 'NORMAL',
@@ -992,7 +1015,6 @@ export async function generateQuarterSessions(
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           });
-          currentHours += periods;
         }
       }
 
@@ -1000,114 +1022,96 @@ export async function generateQuarterSessions(
       iterDate.setDate(iterDate.getDate() + 1);
     }
 
-    if (sessionsToInsert.length === 0) {
-      return { 
-        data: null, 
-        error: new Error('在學期起訖期間內未能匹配到任何符合規則的上課日期') 
-      };
+    // 7. 批次寫入新產生的 class_sessions
+    if (sessionsToInsert.length > 0) {
+      const chunkSize = 100;
+      for (let i = 0; i < sessionsToInsert.length; i += chunkSize) {
+        const chunk = sessionsToInsert.slice(i, i + chunkSize);
+        const { error: insError } = await supabase
+          .from('class_sessions')
+          .insert(chunk);
+
+        if (insError) {
+          console.error('[ScheduleService] Error inserting generated sessions chunk:', insError);
+          return { data: null, error: insError };
+        }
+      }
     }
 
-    // 6. 取得該班級已有的 class_sessions，保護歷史堂次與已點名紀錄
-    const { data: existingSessions } = await supabase
+    // 8. 重新查詢該班級在資料庫中的所有有效 class_sessions，精確計算已排定總時數
+    const { data: allSessions } = await supabase
       .from('class_sessions')
-      .select('id, session_date, start_time, status')
+      .select('status, periods_count')
       .eq('class_id', classId);
 
-    const attendanceMap = await fetchAttendanceRecordsFromSupabase();
-
-    // 建立保護與已有 Slot 清單：
-    // 1) 過去的堂次 (session_date < TODAY_DATE)
-    // 2) 已有點名紀錄者 (attendanceMap.has(attKey))
-    // 3) 狀態不為 NORMAL 者 (如 RESCHEDULED, MAKEUP, SUSPENDED)
-    const protectedIds = new Set<string>();
-    const existingSlotKeys = new Set<string>();
-
-    (existingSessions || []).forEach((s: any) => {
-      const attKey = `${classId}_${s.session_date}`;
-      const hasAtt = attendanceMap.has(attKey);
-      const isPast = s.session_date < TODAY_DATE;
-      const isNotNormal = s.status !== 'NORMAL';
-
-      if (isPast || hasAtt || isNotNormal) {
-        protectedIds.add(String(s.id));
+    let totalScheduledHours = 0;
+    (allSessions || []).forEach((s: any) => {
+      if (s.status === 'NORMAL' || s.status === 'MAKEUP') {
+        totalScheduledHours += (Number(s.periods_count) || 3);
       }
     });
-
-    // 找出只屬於未來 (session_date >= TODAY_DATE)、尚未發生且無點名的 NORMAL 堂次進行清理重刷
-    const deletableFutureIds = (existingSessions || [])
-      .filter((s: any) => s.session_date >= TODAY_DATE && s.status === 'NORMAL' && !protectedIds.has(String(s.id)))
-      .map((s: any) => String(s.id));
-
-    if (deletableFutureIds.length > 0) {
-      const { error: clearError } = await supabase
-        .from('class_sessions')
-        .delete()
-        .in('id', deletableFutureIds);
-
-      if (clearError) {
-        console.error('[ScheduleService] Error clearing future unstarted sessions:', clearError);
-        return { data: null, error: clearError };
-      }
-    }
-
-    // 清理完畢後，紀錄資料庫中被保留保護下來的槽位 (session_date + start_time)
-    const setOfDeletableIds = new Set(deletableFutureIds);
-    (existingSessions || []).forEach((s: any) => {
-      if (!setOfDeletableIds.has(String(s.id))) {
-        const timeStr = s.start_time ? String(s.start_time).slice(0, 5) : '';
-        existingSlotKeys.add(`${s.session_date}_${timeStr}`);
-      }
-    });
-
-    // 只寫入未來日期 (session_date >= TODAY_DATE) 且未被已有堂次佔用的新堂次 (絕對不去防護區或重複撞期)
-    const seenSlotsToInsert = new Set<string>();
-    const finalToInsert = sessionsToInsert.filter((s) => {
-      if (s.session_date < TODAY_DATE) return false;
-      const startTimeStr = s.start_time ? String(s.start_time).slice(0, 5) : '';
-      const slotKey = `${s.session_date}_${startTimeStr}`;
-      
-      if (existingSlotKeys.has(slotKey) || seenSlotsToInsert.has(slotKey)) {
-        return false;
-      }
-      seenSlotsToInsert.add(slotKey);
-      return true;
-    });
-
-    if (finalToInsert.length === 0) {
-      return {
-        data: {
-          generatedCount: 0,
-          targetHours,
-          scheduledHours: currentHours,
-        },
-        error: null,
-      };
-    }
-
-    // 7. 批次寫入新產生的未來 class_sessions
-    const chunkSize = 100;
-    for (let i = 0; i < finalToInsert.length; i += chunkSize) {
-      const chunk = finalToInsert.slice(i, i + chunkSize);
-      const { error: insError } = await supabase
-        .from('class_sessions')
-        .insert(chunk);
-
-      if (insError) {
-        console.error('[ScheduleService] Error inserting generated future sessions chunk:', insError);
-        return { data: null, error: insError };
-      }
-    }
 
     return {
       data: {
-        generatedCount: finalToInsert.length,
+        generatedCount: sessionsToInsert.length,
         targetHours,
-        scheduledHours: currentHours,
+        scheduledHours: totalScheduledHours,
       },
       error: null,
     };
   } catch (err: any) {
     console.error('[ScheduleService] Exception in generateQuarterSessions:', err);
+    return { data: null, error: err };
+  }
+}
+
+/**
+ * 為指定學期所有具有排課規則之班級自動產生全學期課表
+ */
+export async function generateAllTermSessions(
+  termId: string
+): Promise<{
+  data: {
+    totalGenerated: number;
+    classesCount: number;
+  } | null;
+  error: any;
+}> {
+  if (!supabase) {
+    return { data: null, error: new Error('Supabase client is not configured') };
+  }
+
+  try {
+    const { data: classes, error: clsErr } = await supabase
+      .from('classes')
+      .select('id, name')
+      .eq('term_id', termId);
+
+    if (clsErr) return { data: null, error: clsErr };
+    if (!classes || classes.length === 0) {
+      return { data: { totalGenerated: 0, classesCount: 0 }, error: null };
+    }
+
+    let totalGenerated = 0;
+    let successfulClasses = 0;
+
+    for (const cls of classes) {
+      const res = await generateQuarterSessions(termId, cls.id);
+      if (!res.error && res.data) {
+        totalGenerated += res.data.generatedCount;
+        successfulClasses++;
+      }
+    }
+
+    return {
+      data: {
+        totalGenerated,
+        classesCount: successfulClasses,
+      },
+      error: null,
+    };
+  } catch (err: any) {
+    console.error('[ScheduleService] Exception in generateAllTermSessions:', err);
     return { data: null, error: err };
   }
 }
@@ -1334,25 +1338,101 @@ export async function restoreSession(
 }
 
 /**
- * 刪除單堂課
+ * 刪除單堂課 (依 UUID 精準刪除)
  */
 export async function deleteClassSession(sessionId: string): Promise<{ success: boolean; error: any }> {
   if (!supabase) {
     return { success: false, error: new Error('Supabase client is not configured') };
   }
 
+  if (!sessionId) {
+    return { success: false, error: new Error('無效的堂次 ID (Session ID)') };
+  }
+
   try {
-    // 檢查學期鎖定狀態
+    // 1. 檢查學期鎖定狀態
     const lockCheck = await isTermLocked({ sessionId });
     if (lockCheck.isLocked) {
       return { success: false, error: new Error(TERM_LOCKED_ERROR_MESSAGE) };
     }
 
-    const { error } = await supabase.from('class_sessions').delete().eq('id', sessionId);
-    if (error) {
-      console.error('[ScheduleService] Error deleting class session:', error);
-      return { success: false, error };
+    // 2. 查詢該堂課的詳細資訊
+    const { data: sessionData, error: findErr } = await supabase
+      .from('class_sessions')
+      .select('id, class_id, session_date, start_time, end_time, status, classroom')
+      .eq('id', sessionId)
+      .maybeSingle();
+
+    if (findErr) {
+      console.error('[ScheduleService] Error finding session for deletion:', findErr);
+      return { success: false, error: findErr };
     }
+
+    if (!sessionData) {
+      return { success: false, error: new Error('在資料庫中找不到該課堂資料，可能已經被刪除') };
+    }
+
+    // 3. 安全檢查：檢查是否已有點名/出缺勤紀錄 (course_sessions / attendance_records)
+    const { data: csList, error: csErr } = await supabase
+      .from('course_sessions')
+      .select('id, is_attendance_submitted')
+      .eq('class_id', sessionData.class_id)
+      .eq('session_date', sessionData.session_date);
+
+    if (!csErr && csList && csList.length > 0) {
+      const csIds = csList.map((cs: any) => cs.id);
+      const { data: attRecords } = await supabase
+        .from('attendance_records')
+        .select('id')
+        .in('session_id', csIds)
+        .limit(1);
+
+      const hasAttendanceSubmitted = csList.some((cs: any) => cs.is_attendance_submitted);
+      if (hasAttendanceSubmitted || (attRecords && attRecords.length > 0)) {
+        return {
+          success: false,
+          error: new Error(
+            `該堂課 (${sessionData.session_date}) 已有點名與出缺勤紀錄 (attendance_records)，為維護學生歷史出席資料安全，不允許直接刪除。`
+          ),
+        };
+      }
+    }
+
+    // 4. 安全檢查：檢查是否有其他補課將此堂課作為關聯來源 (rescheduled_from_session_id)
+    const { data: childMakeups } = await supabase
+      .from('class_sessions')
+      .select('id, session_date')
+      .eq('rescheduled_from_session_id', sessionId);
+
+    if (childMakeups && childMakeups.length > 0) {
+      const makeupDates = childMakeups.map((m: any) => m.session_date).join('、');
+      return {
+        success: false,
+        error: new Error(
+          `該堂課已有對應的調課補課堂次（日期：${makeupDates}），請先刪除或調整補課堂次後再行刪除。`
+        ),
+      };
+    }
+
+    // 5. 執行 Supabase 精準刪除：DELETE FROM public.class_sessions WHERE id = sessionId
+    const { data: deletedRows, error: delError } = await supabase
+      .from('class_sessions')
+      .delete()
+      .eq('id', sessionId)
+      .select('id, session_date, class_id');
+
+    if (delError) {
+      console.error('[ScheduleService] Error executing delete on class_sessions:', delError);
+      return { success: false, error: delError };
+    }
+
+    if (!deletedRows || deletedRows.length === 0) {
+      return {
+        success: false,
+        error: new Error('刪除失敗：資料庫未找到對應課堂，或目前權限不足以刪除該筆資料'),
+      };
+    }
+
     return { success: true, error: null };
   } catch (err: any) {
     console.error('[ScheduleService] Exception deleting class session:', err);

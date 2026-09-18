@@ -16,11 +16,13 @@ export interface AttendanceCalculationResult {
 }
 
 export function calculateAttendanceStats(
-  students: Student[],
-  attendanceData: { [studentId: string]: StudentPeriodAttendance },
+  students: Student[] = [],
+  attendanceData?: { [studentId: string]: StudentPeriodAttendance } | null,
   periodsCount: number = 3
 ): AttendanceCalculationResult {
-  const totalStudents = students.length;
+  const safeStudents = Array.isArray(students) ? students : [];
+  const safeAttData = attendanceData || {};
+  const totalStudents = safeStudents.length;
   const period1 = { present: 0, leave: 0, absent: 0 };
   const period2 = { present: 0, leave: 0, absent: 0 };
   const period3 = { present: 0, leave: 0, absent: 0 };
@@ -30,51 +32,48 @@ export function calculateAttendanceStats(
   let totalLeaveHours = 0;
   let totalAbsentHours = 0;
 
-  students.forEach((student) => {
-    const record = attendanceData[student.id] || {
-      period1: 'present',
-      period2: 'present',
-      period3: periodsCount >= 3 ? 'present' : undefined,
-      period4: periodsCount >= 4 ? 'present' : undefined,
-    };
+  const hasAttendanceData = Boolean(attendanceData && Object.keys(attendanceData).length > 0);
+
+  safeStudents.forEach((student) => {
+    if (!student || !student.id) return;
+    const record = safeAttData[student.id];
+    if (!record) return;
 
     // Period 1
     if (record.period1) {
-      period1[record.period1]++;
-      if (record.period1 === 'present') totalPresentHours++;
-      if (record.period1 === 'leave') totalLeaveHours++;
-      if (record.period1 === 'absent') totalAbsentHours++;
+      if (record.period1 === 'present') { period1.present++; totalPresentHours++; }
+      else if (record.period1 === 'leave') { period1.leave++; totalLeaveHours++; }
+      else if (record.period1 === 'absent') { period1.absent++; totalAbsentHours++; }
     }
 
     // Period 2
     if (record.period2) {
-      period2[record.period2]++;
-      if (record.period2 === 'present') totalPresentHours++;
-      if (record.period2 === 'leave') totalLeaveHours++;
-      if (record.period2 === 'absent') totalAbsentHours++;
+      if (record.period2 === 'present') { period2.present++; totalPresentHours++; }
+      else if (record.period2 === 'leave') { period2.leave++; totalLeaveHours++; }
+      else if (record.period2 === 'absent') { period2.absent++; totalAbsentHours++; }
     }
 
     // Period 3 (if >= 3-hour class)
     if (periodsCount >= 3 && record.period3) {
-      period3[record.period3]++;
-      if (record.period3 === 'present') totalPresentHours++;
-      if (record.period3 === 'leave') totalLeaveHours++;
-      if (record.period3 === 'absent') totalAbsentHours++;
+      if (record.period3 === 'present') { period3.present++; totalPresentHours++; }
+      else if (record.period3 === 'leave') { period3.leave++; totalLeaveHours++; }
+      else if (record.period3 === 'absent') { period3.absent++; totalAbsentHours++; }
     }
 
     // Period 4 (if >= 4-hour class)
     if (periodsCount >= 4 && record.period4) {
-      period4[record.period4]++;
-      if (record.period4 === 'present') totalPresentHours++;
-      if (record.period4 === 'leave') totalLeaveHours++;
-      if (record.period4 === 'absent') totalAbsentHours++;
+      if (record.period4 === 'present') { period4.present++; totalPresentHours++; }
+      else if (record.period4 === 'leave') { period4.leave++; totalLeaveHours++; }
+      else if (record.period4 === 'absent') { period4.absent++; totalAbsentHours++; }
     }
   });
 
   const totalHours = totalStudents * periodsCount;
   // Rule: Present = 100% (1.0), Leave = 50% (0.5), Absent = 0% (0.0)
   const earnedHours = totalPresentHours + totalLeaveHours * 0.5;
-  const attendanceRate = totalHours > 0 ? Math.round((earnedHours / totalHours) * 1000) / 10 : 100;
+  const attendanceRate = totalHours > 0 && hasAttendanceData
+    ? Math.round((earnedHours / totalHours) * 1000) / 10
+    : 100;
 
   return {
     totalStudents,
@@ -88,16 +87,17 @@ export function calculateAttendanceStats(
     totalLeaveHours,
     totalAbsentHours,
     attendanceRate,
-    allMarked: true,
+    allMarked: hasAttendanceData,
   };
 }
 
 export function getDefaultAttendanceForStudents(
-  students: Student[],
+  students: Student[] = [],
   periodsCount: number = 3
 ): { [studentId: string]: StudentPeriodAttendance } {
   const initial: { [studentId: string]: StudentPeriodAttendance } = {};
-  students.forEach((student) => {
+  (students || []).forEach((student) => {
+    if (!student || !student.id) return;
     initial[student.id] = {
       period1: 'present',
       period2: 'present',
@@ -109,25 +109,25 @@ export function getDefaultAttendanceForStudents(
 }
 
 export function applyApprovedLeaves(
-  currentAttendance: { [studentId: string]: StudentPeriodAttendance },
-  students: Student[],
-  leaveRecords: LeaveRecord[],
+  currentAttendance: { [studentId: string]: StudentPeriodAttendance } = {},
+  students: Student[] = [],
+  leaveRecords: LeaveRecord[] = [],
   courseDate: string,
   periodsCount: number = 3
 ): { updatedAttendance: { [studentId: string]: StudentPeriodAttendance }; appliedCount: number } {
-  const updated = { ...currentAttendance };
+  const updated = { ...(currentAttendance || {}) };
   let appliedCount = 0;
 
   // Filter leaves for this date and these students
-  const applicableLeaves = leaveRecords.filter(
-    (l) => l.date === courseDate && l.status === 'approved'
+  const applicableLeaves = (leaveRecords || []).filter(
+    (l) => l && l.date === courseDate && l.status === 'approved'
   );
 
   applicableLeaves.forEach((leave) => {
-    const student = students.find(
-      (s) => s.id === leave.studentId || s.name === leave.studentName
+    const student = (students || []).find(
+      (s) => s && (s.id === leave.studentId || s.name === leave.studentName)
     );
-    if (student) {
+    if (student && student.id) {
       const existing = updated[student.id] || {
         period1: 'present',
         period2: 'present',
@@ -136,11 +136,11 @@ export function applyApprovedLeaves(
       };
 
       const newRecord = { ...existing };
-      if (leave.periods.includes(1)) newRecord.period1 = 'leave';
-      if (leave.periods.includes(2)) newRecord.period2 = 'leave';
-      if (periodsCount >= 3 && leave.periods.includes(3)) newRecord.period3 = 'leave';
-      if (periodsCount >= 4 && leave.periods.includes(4)) newRecord.period4 = 'leave';
-      newRecord.remarks = `${leave.typeName}：${leave.reason}`;
+      if (leave.periods?.includes(1)) newRecord.period1 = 'leave';
+      if (leave.periods?.includes(2)) newRecord.period2 = 'leave';
+      if (periodsCount >= 3 && leave.periods?.includes(3)) newRecord.period3 = 'leave';
+      if (periodsCount >= 4 && leave.periods?.includes(4)) newRecord.period4 = 'leave';
+      newRecord.remarks = `${leave.typeName || '請假'}：${leave.reason || '事假/病假'}`;
 
       updated[student.id] = newRecord;
       appliedCount++;
@@ -182,8 +182,8 @@ export function getStudentIndividualHours(
 
 // Calculate individual student history across all completed courses in the quarter
 export function calculateStudentAttendanceHistory(
-  student: Student,
-  allCourses: CourseSession[]
+  student?: Student | null,
+  allCourses: CourseSession[] = []
 ): {
   requiredHours: number;
   completedHours: number;
@@ -207,8 +207,21 @@ export function calculateStudentAttendanceHistory(
     remarks?: string;
   }>;
 } {
-  const classCourses = allCourses.filter(
-    (c) => c.className === student.className && c.status !== 'holiday' && c.status !== 'rescheduled_out'
+  if (!student || !student.id) {
+    return {
+      requiredHours: 165,
+      completedHours: 0,
+      presentHours: 0,
+      leaveHours: 0,
+      absentHours: 0,
+      attendanceRate: 100,
+      dailyRecords: [],
+    };
+  }
+
+  const safeCourses = Array.isArray(allCourses) ? allCourses : [];
+  const classCourses = safeCourses.filter(
+    (c) => c && c.className === student.className && c.status !== 'holiday' && c.status !== 'rescheduled_out'
   );
 
   const requiredHours = 165;
@@ -220,12 +233,8 @@ export function calculateStudentAttendanceHistory(
   const dailyRecords: any[] = [];
 
   classCourses.forEach((c) => {
-    if (c.status === 'completed' && c.attendanceData) {
-      const rec = c.attendanceData[student.id] || {
-        period1: 'present',
-        period2: 'present',
-        period3: c.periodsCount === 3 ? 'present' : undefined,
-      };
+    if (c?.attendanceData && student?.id && c.attendanceData[student.id]) {
+      const rec = c.attendanceData[student.id];
 
       const hours = getStudentIndividualHours(rec, c.periodsCount);
       completedHours += c.periodsCount;
@@ -266,7 +275,7 @@ export function calculateStudentAttendanceHistory(
   const attendanceRate =
     completedHours > 0
       ? Math.round((earnedHours / completedHours) * 1000) / 10
-      : student.overallAttendanceRate;
+      : (student.overallAttendanceRate || 0);
 
   return {
     requiredHours,

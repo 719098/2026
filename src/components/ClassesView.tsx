@@ -58,13 +58,16 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
   const [selectedClassId, setSelectedClassId] = useState<string>('');
 
   useEffect(() => {
-    if (activeClasses.length > 0 && !activeClasses.some(c => c.id === selectedClassId)) {
-      setSelectedClassId(activeClasses[0].id);
+    if (activeClasses && activeClasses.length > 0 && !activeClasses.some(c => c && c.id === selectedClassId)) {
+      if (activeClasses[0]?.id) {
+        setSelectedClassId(activeClasses[0].id);
+      }
     }
   }, [activeClasses, selectedClassId]);
 
   const selectedClassObj = useMemo(() => {
-    return activeClasses.find(c => c.id === selectedClassId) || activeClasses[0];
+    if (!activeClasses || activeClasses.length === 0) return null;
+    return activeClasses.find(c => c && c.id === selectedClassId) || activeClasses[0] || null;
   }, [activeClasses, selectedClassId]);
 
   const students = useMemo(() => {

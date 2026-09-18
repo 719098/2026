@@ -14,6 +14,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { LeaveRecord, Student, ClassEntity, LeaveType } from '../../types';
+import { getTodayDateStr } from '../../utils/quarterScheduler';
 
 interface AdminLeaveManagementViewProps {
   leaves: LeaveRecord[];
@@ -38,7 +39,7 @@ export const AdminLeaveManagementView: React.FC<AdminLeaveManagementViewProps> =
   // Add Leave Modal state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedStudentId, setSelectedStudentId] = useState(students[0]?.id || '');
-  const [leaveDate, setLeaveDate] = useState('2026-08-04');
+  const [leaveDate, setLeaveDate] = useState<string>(() => getTodayDateStr());
   const [leaveType, setLeaveType] = useState<LeaveType>('personal');
   const [leavePeriods, setLeavePeriods] = useState<number[]>([1, 2, 3]);
   const [leaveReason, setLeaveReason] = useState('因移民署辦理外僑居留證延期手續');

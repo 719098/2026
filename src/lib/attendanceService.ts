@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { CourseSession, StudentPeriodAttendance, LeaveRecord, Student, ClassEntity, LeaveType } from '../types';
+import { getAttendanceEvidenceSignedUrl } from './storageService';
 
 export interface SaveAttendanceParams {
   course: CourseSession;
@@ -103,10 +104,11 @@ export async function saveAttendanceToSupabase(
       return 'PRESENT';
     };
 
-    const studentIds = Object.keys(attendanceData);
+    const safeAttData = attendanceData || {};
+    const studentIds = Object.keys(safeAttData);
     if (studentIds.length > 0) {
       const upsertRows = studentIds.map((studentId) => {
-        const record = attendanceData[studentId];
+        const record = safeAttData[studentId] || ({} as StudentPeriodAttendance);
         const p1 = mapStatusToDb(record.period1);
         const p2 = mapStatusToDb(record.period2);
         const p3 = mapStatusToDb(record.period3);
@@ -115,6 +117,7 @@ export async function saveAttendanceToSupabase(
         let earnedHours = 0;
         [p1, p2, p3, p4].forEach((p) => {
           if (p === 'PRESENT') earnedHours += 1;
+          else if (p === 'LEAVE') earnedHours += 0.5;
         });
 
         return {
@@ -126,13 +129,29 @@ export async function saveAttendanceToSupabase(
           period_4: p4,
           earned_hours: earnedHours,
           operated_by: validOperatedBy,
+          note: record.remarks || null,
+          remarks: record.remarks || null,
+          evidence_image_path: record.evidenceImagePath || null,
           updated_at: new Date().toISOString(),
         };
       });
 
-      const { error: attUpsertErr } = await supabase
-        .from('attendance_records')
-        .upsert(upsertRows, { onConflict: 'session_id,student_id' });
+      // Execute upsert with resilience against schema differences (note vs remarks, etc.)
+      const tryUpsert = async (rows: any[]) => {
+        return await supabase!
+          .from('attendance_records')
+          .upsert(rows, { onConflict: 'session_id,student_id' });
+      };
+
+      let { error: attUpsertErr } = await tryUpsert(upsertRows);
+
+      // If remarks or evidence_image_path column is not found yet, fall back gracefully
+      if (attUpsertErr && attUpsertErr.code === 'PGRST204') {
+        console.warn('[AttendanceService] Retrying upsert with fallback columns:', attUpsertErr.message);
+        const fallbackRows = upsertRows.map(({ remarks, evidence_image_path, ...rest }) => rest);
+        const retryResult = await tryUpsert(fallbackRows);
+        attUpsertErr = retryResult.error;
+      }
 
       if (attUpsertErr) {
         console.error('[AttendanceService] Error upserting attendance_records:', attUpsertErr);
@@ -192,22 +211,36 @@ export async function fetchAttendanceRecordsFromSupabase(): Promise<
       return 'present';
     };
 
-    // Group attendance rows by session_id
+    // Group attendance rows by session_id and resolve signed URLs for evidence images
     const attBySession = new Map<string, { [studentId: string]: StudentPeriodAttendance }>();
 
-    (attendanceRows || []).forEach((row) => {
+    for (const row of attendanceRows || []) {
       const sId = row.session_id;
       if (!attBySession.has(sId)) {
         attBySession.set(sId, {});
       }
       const dict = attBySession.get(sId)!;
+      const rawRemarks = row.remarks || row.note || undefined;
+      const evidencePath = row.evidence_image_path || undefined;
+      let evidenceUrl = undefined;
+      if (evidencePath) {
+        try {
+          evidenceUrl = (await getAttendanceEvidenceSignedUrl(evidencePath)) || undefined;
+        } catch (e) {
+          console.warn('[AttendanceService] Could not resolve evidence signed URL:', e);
+        }
+      }
+
       dict[row.student_id] = {
         period1: mapDbToStatus(row.period_1),
         period2: mapDbToStatus(row.period_2),
         period3: row.period_3 ? mapDbToStatus(row.period_3) : undefined,
         period4: row.period_4 ? mapDbToStatus(row.period_4) : undefined,
+        remarks: rawRemarks,
+        evidenceImagePath: evidencePath,
+        evidenceImageUrl: evidenceUrl,
       };
-    });
+    }
 
     courseSessions.forEach((cs) => {
       const key = `${cs.class_id}_${cs.session_date}`;

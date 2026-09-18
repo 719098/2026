@@ -1,4 +1,4 @@
-import { Student, StudentGrade } from '../types';
+import { Student, StudentGrade, CourseSession } from '../types';
 
 export const GRADE_WEIGHTS = {
   attendance: 0.20, // 20% 出席
@@ -8,6 +8,109 @@ export const GRADE_WEIGHTS = {
   homework: 0.15,   // 15% 作業
   attitude: 0.10,   // 10% 學習態度
 };
+
+export interface StudentAttendanceCalculationResult {
+  attendanceScore: number; // 0 ~ 100 percentage
+  weightedScore: number;   // attendanceScore * 0.20 (0 ~ 20)
+  totalSessions: number;   // count of sessions with attendance recorded
+  totalPeriods: number;    // total periods counted
+  presentPeriods: number;  // periods marked present
+  leavePeriods: number;    // periods marked leave
+  absentPeriods: number;   // periods marked absent
+  hasRecords: boolean;     // true if student has at least one recorded period
+}
+
+/**
+ * Calculates student attendance score based on official CLC weighting:
+ * - Present (出席) = 100% (weight 1.0)
+ * - Leave (請假) = 50% (weight 0.5)
+ * - Absent (缺席 / 曠課) = 0% (weight 0.0)
+ *
+ * Formula:
+ * (present * 1.0 + leave * 0.5 + absent * 0.0) / totalPeriods * 100
+ * Weighted Attendance Grade = Attendance Rate * 20%
+ *
+ * Sessions without recorded attendance (尚未點名) do NOT count as 100% attendance.
+ * If totalPeriods is 0, attendanceScore is 0 (hasRecords: false).
+ */
+export function calculateStudentAttendanceScore(
+  studentId: string,
+  courses: CourseSession[],
+  studentClassName?: string
+): StudentAttendanceCalculationResult {
+  let totalPeriods = 0;
+  let presentPeriods = 0;
+  let leavePeriods = 0;
+  let absentPeriods = 0;
+  let sessionCount = 0;
+
+  for (const c of courses) {
+    if (studentClassName && c.className && c.className !== studentClassName && c.classId !== studentClassName) {
+      continue;
+    }
+
+    if (!c.attendanceData || !c.attendanceData[studentId]) {
+      continue;
+    }
+
+    const att = c.attendanceData[studentId];
+    const periodsCount = c.periodsCount || 3;
+    const periods: (string | undefined)[] = [att.period1, att.period2];
+    if (periodsCount >= 3) periods.push(att.period3);
+    if (periodsCount >= 4) periods.push(att.period4);
+
+    let hasAnyMarked = false;
+    for (const p of periods) {
+      if (!p) continue;
+      const statusLower = String(p).toLowerCase();
+      if (statusLower === 'present') {
+        presentPeriods += 1;
+        totalPeriods += 1;
+        hasAnyMarked = true;
+      } else if (statusLower === 'leave') {
+        leavePeriods += 1;
+        totalPeriods += 1;
+        hasAnyMarked = true;
+      } else if (statusLower === 'absent') {
+        absentPeriods += 1;
+        totalPeriods += 1;
+        hasAnyMarked = true;
+      }
+    }
+
+    if (hasAnyMarked) {
+      sessionCount += 1;
+    }
+  }
+
+  if (totalPeriods === 0) {
+    return {
+      attendanceScore: 0,
+      weightedScore: 0,
+      totalSessions: 0,
+      totalPeriods: 0,
+      presentPeriods: 0,
+      leavePeriods: 0,
+      absentPeriods: 0,
+      hasRecords: false,
+    };
+  }
+
+  const earnedPoints = presentPeriods * 1.0 + leavePeriods * 0.5 + absentPeriods * 0.0;
+  const attendanceRate = Math.round((earnedPoints / totalPeriods) * 1000) / 10;
+  const weightedScore = Math.round(attendanceRate * GRADE_WEIGHTS.attendance * 10) / 10;
+
+  return {
+    attendanceScore: attendanceRate,
+    weightedScore,
+    totalSessions: sessionCount,
+    totalPeriods,
+    presentPeriods,
+    leavePeriods,
+    absentPeriods,
+    hasRecords: true,
+  };
+}
 
 // Calculate total score using exact percentage formula
 export function calculateTotalGrade(

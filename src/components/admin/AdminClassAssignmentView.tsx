@@ -41,7 +41,7 @@ export const AdminClassAssignmentView: React.FC<AdminClassAssignmentViewProps> =
 
   // Modals
   const [assigningStudent, setAssigningStudent] = useState<Student | null>(null);
-  const [assignTargetClassId, setAssignTargetClassId] = useState<string>(classes[0]?.id || '');
+  const [assignTargetClassId, setAssignTargetClassId] = useState<string>(classes?.[0]?.id || '');
 
   const [transferringStudent, setTransferringStudent] = useState<Student | null>(null);
   const [transferTargetClassId, setTransferTargetClassId] = useState<string>('');
@@ -139,7 +139,7 @@ export const AdminClassAssignmentView: React.FC<AdminClassAssignmentViewProps> =
       const available = classes.filter(
         (c) => c.name !== student.className && String(c.id) !== String(student.classId)
       );
-      setTransferTargetClassId(available[0]?.id || classes[0]?.id || '');
+      setTransferTargetClassId(available?.[0]?.id || classes?.[0]?.id || '');
     } else {
       // Pick first student with a class if called generically
       const assignedOne = students.find((s) => s.className && s.className !== '尚未分班');
@@ -148,8 +148,8 @@ export const AdminClassAssignmentView: React.FC<AdminClassAssignmentViewProps> =
         const available = classes.filter(
           (c) => c.name !== assignedOne.className && String(c.id) !== String(assignedOne.classId)
         );
-        setTransferTargetClassId(available[0]?.id || classes[0]?.id || '');
-      } else if (students.length > 0) {
+        setTransferTargetClassId(available?.[0]?.id || classes?.[0]?.id || '');
+      } else if (students && students.length > 0 && students[0]) {
         openAssignModal(students[0]);
         return;
       }

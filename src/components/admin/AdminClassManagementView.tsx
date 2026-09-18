@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   BookOpen, 
   Plus, 
@@ -20,14 +20,16 @@ import {
   ToggleRight,
   Power
 } from 'lucide-react';
-import { ClassEntity, CourseDefinition, Teacher, Student, Term } from '../../types';
+import { ClassEntity, Teacher, Student, Term } from '../../types';
+import { MaterialEntity, fetchMaterialsFromSupabase } from '../../lib/materialService';
 
 interface AdminClassManagementViewProps {
   classes: ClassEntity[];
-  courses: CourseDefinition[];
+  courses?: any[];
   teachers: Teacher[];
   students: Student[];
   terms?: Term[];
+  materials?: MaterialEntity[];
   onAddClass: (newClass: Partial<ClassEntity>) => Promise<boolean | void> | void;
   onUpdateClass: (updatedClass: ClassEntity) => Promise<boolean | void> | void;
   onToggleClassStatus?: (classId: string, currentStatus: string) => Promise<boolean | void> | void;
@@ -41,6 +43,7 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
   teachers,
   students,
   terms = [],
+  materials: initialMaterials = [],
   onAddClass,
   onUpdateClass,
   onToggleClassStatus,
@@ -50,6 +53,17 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTermFilter, setSelectedTermFilter] = useState('ALL');
 
+  // Master materials
+  const [masterMaterials, setMasterMaterials] = useState<MaterialEntity[]>(initialMaterials);
+
+  useEffect(() => {
+    fetchMaterialsFromSupabase().then(({ data }) => {
+      if (data && data.length > 0) {
+        setMasterMaterials(data);
+      }
+    });
+  }, []);
+
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingClass, setEditingClass] = useState<ClassEntity | null>(null);
@@ -57,11 +71,21 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // New Class Form Materials & Remarks
+  const [addMat1, setAddMat1] = useState<string>('');
+  const [addMat2, setAddMat2] = useState<string>('');
+  const [addRemarks, setAddRemarks] = useState<string>('');
+
+  // Edit Class Form Materials & Remarks
+  const [editMat1, setEditMat1] = useState<string>('');
+  const [editMat2, setEditMat2] = useState<string>('');
+  const [editRemarks, setEditRemarks] = useState<string>('');
+
   // New Class Form State
-  const defaultTerm = terms.find((t) => t.isActive) || terms[0];
+  const defaultTerm = terms?.find((t) => t.isActive) || terms?.[0];
 
   const getInitialAddForm = () => {
-    const activeTerm = terms.find((t) => t.isActive) || terms[0];
+    const activeTerm = terms?.find((t) => t.isActive) || terms?.[0];
     const existingCodes = new Set(classes.map((c) => c.classCode));
     const yearStr = new Date().getFullYear();
     let candidateCode = `${yearStr}S-CLS-01`;
@@ -74,8 +98,9 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
     return {
       name: `2026 夏季 華語研習班 (${candidateCode})`,
       classCode: candidateCode,
-      courseId: courses[0]?.id || '',
-      teacherId: teachers[0]?.id || '',
+      courseId: courses?.[0]?.id || '',
+      teacherId: '',
+      teacherName: '未指定教師',
       classroom: '華語中心 308 教室',
       termId: activeTerm?.id || '',
       term: activeTerm?.name || '2026 夏季密集班',
@@ -83,9 +108,10 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
       endDate: activeTerm?.endDate || '2026-10-31',
       dailyHours: 3,
       weeklyDays: [1, 2, 3, 4, 5],
-      timeSlot: '09:00 - 12:00',
-      totalTargetHours: courses[0]?.suggestedHours || 110,
-      maxCapacity: 15,
+      timeSlot: '09:10－12:00',
+      totalTargetHours: courses?.[0]?.suggestedHours || 165,
+      maxCapacity: 40,
+      capacity: 40,
       status: 'OPEN',
     };
   };
@@ -93,14 +119,21 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
   const [newForm, setNewForm] = useState(getInitialAddForm);
 
   const filteredClasses = classes.filter((c) => {
+    const matchedTeacher = c.teacherId ? teachers.find((t) => t.id === c.teacherId) : null;
+    const resolvedTeacherName = matchedTeacher?.name || (c.teacherName && c.teacherName !== '未指定教師' ? c.teacherName : '');
+    const termObj = terms.find((t) => t.id === c.termId);
+    const termCode = termObj?.termCode || '';
+
     const matchSearch =
-      c.name.includes(searchTerm) ||
-      c.courseName.includes(searchTerm) ||
-      c.teacherName.includes(searchTerm) ||
-      c.classroom.includes(searchTerm);
+      c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.courseName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.teacherName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      resolvedTeacherName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.classroom.toLowerCase().includes(searchTerm.toLowerCase());
     const matchTerm =
       selectedTermFilter === 'ALL' ||
       c.termId === selectedTermFilter ||
+      termCode === selectedTermFilter ||
       c.term.includes(selectedTermFilter);
     return matchSearch && matchTerm;
   });
@@ -108,19 +141,27 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setActionError(null);
+
+    const selectedMatIds: string[] = [];
+    const m1 = (addMat1 || '').trim();
+    const m2 = (addMat2 || '').trim();
+    if (m1 && m1 !== '-- 未指定教材 --' && m1 !== '未指定教材') {
+      selectedMatIds.push(m1);
+    }
+    if (m2 && m2 !== '-- 未指定教材 --' && m2 !== '未指定教材' && !selectedMatIds.includes(m2)) {
+      selectedMatIds.push(m2);
+    }
+
     setIsSubmitting(true);
     try {
-      const course = courses.find((crs) => crs.id === newForm.courseId) || courses[0];
-      const teacher = teachers.find((t) => t.id === newForm.teacherId) || teachers[0];
-      const selectedTermObj = terms.find((t) => t.id === newForm.termId) || defaultTerm;
+      const teacher = newForm.teacherId ? teachers?.find((t) => t.id === newForm.teacherId) : null;
+      const selectedTermObj = terms?.find((t) => t.id === newForm.termId) || defaultTerm;
 
       const newClassPayload: Partial<ClassEntity> = {
         classCode: newForm.classCode || `CLS-${Date.now().toString().slice(-4)}`,
         name: newForm.name,
-        courseId: course?.id || '',
-        courseName: course?.name || newForm.name,
-        teacherId: teacher?.id || '',
-        teacherName: teacher?.name || '未指定教師',
+        teacherId: teacher ? teacher.id : '',
+        teacherName: teacher ? teacher.name : '未指定教師',
         classroom: newForm.classroom,
         termId: selectedTermObj?.id || newForm.termId,
         term: selectedTermObj?.name || newForm.term,
@@ -128,15 +169,21 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
         endDate: selectedTermObj?.endDate || newForm.endDate,
         dailyHours: Number(newForm.dailyHours) || 3,
         weeklyDays: newForm.weeklyDays,
-        timeSlot: newForm.timeSlot,
-        totalTargetHours: Number(newForm.totalTargetHours) || course?.suggestedHours || 0,
-        maxCapacity: Number(newForm.maxCapacity) || 15,
+        totalTargetHours: Number(newForm.totalTargetHours) || 0,
+        maxCapacity: Number(newForm.maxCapacity) || 40,
+        capacity: Number(newForm.maxCapacity) || 40,
         status: newForm.status || 'OPEN',
+        materialIds: selectedMatIds,
+        remarks: addRemarks,
       };
 
       await onAddClass(newClassPayload);
       setIsAddModalOpen(false);
+      setAddMat1('');
+      setAddMat2('');
+      setAddRemarks('');
     } catch (err: any) {
+      console.error('[AdminClassManagementView] handleAddSubmit error:', err);
       setActionError(err.message || '新增班級失敗');
     } finally {
       setIsSubmitting(false);
@@ -147,25 +194,38 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
     e.preventDefault();
     if (!editingClass) return;
     setActionError(null);
+
+    const selectedMatIds: string[] = [];
+    const m1 = (editMat1 || '').trim();
+    const m2 = (editMat2 || '').trim();
+    if (m1 && m1 !== '-- 未指定教材 --' && m1 !== '未指定教材') {
+      selectedMatIds.push(m1);
+    }
+    if (m2 && m2 !== '-- 未指定教材 --' && m2 !== '未指定教材' && !selectedMatIds.includes(m2)) {
+      selectedMatIds.push(m2);
+    }
+
     setIsSubmitting(true);
     try {
-      const course = courses.find((crs) => crs.id === editingClass.courseId);
-      const teacher = teachers.find((t) => t.id === editingClass.teacherId);
+      const teacher = editingClass.teacherId ? teachers.find((t) => t.id === editingClass.teacherId) : null;
       const selectedTermObj = terms.find((t) => t.id === editingClass.termId);
 
       const updated: ClassEntity = {
         ...editingClass,
-        courseName: course ? course.name : editingClass.courseName,
-        teacherName: teacher ? teacher.name : editingClass.teacherName,
+        teacherId: teacher ? teacher.id : '',
+        teacherName: teacher ? teacher.name : '未指定教師',
         termId: selectedTermObj ? selectedTermObj.id : editingClass.termId,
         term: selectedTermObj ? selectedTermObj.name : editingClass.term,
-        maxCapacity: Number(editingClass.maxCapacity) || 15,
-        totalTargetHours: Number(editingClass.totalTargetHours) || course?.suggestedHours || 0,
+        maxCapacity: Number(editingClass.maxCapacity) || 40,
+        capacity: Number(editingClass.maxCapacity) || 40,
+        materialIds: selectedMatIds,
+        remarks: editRemarks,
       };
 
       await onUpdateClass(updated);
       setEditingClass(null);
     } catch (err: any) {
+      console.error('[AdminClassManagementView] handleEditSubmit error:', err);
       setActionError(err.message || '更新班級失敗');
     } finally {
       setIsSubmitting(false);
@@ -174,7 +234,7 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
 
   const handleToggleStatus = async (cls: ClassEntity) => {
     if (!onToggleClassStatus) return;
-    const current = cls.status === 'OPEN' || !cls.status || cls.status === 'ongoing' ? 'OPEN' : 'CLOSED';
+    const current = (cls.status || '').toUpperCase() === 'OPEN' ? 'OPEN' : 'CLOSED';
     const nextStatus = current === 'OPEN' ? 'CLOSED' : 'OPEN';
     try {
       await onToggleClassStatus(cls.id, nextStatus);
@@ -210,7 +270,7 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
             </span>
           </div>
           <p className="text-xs text-[#66717C] mt-1">
-            綁定官方教材（Course）、指派授課教師、排定教室、設定每日時數（2H/3H）與全季開課時程。
+            綁定官方教材、指派授課教師、排定教室、設定班級狀態與全季開課時程。
           </p>
         </div>
 
@@ -218,6 +278,9 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
           onClick={() => {
             setActionError(null);
             setNewForm(getInitialAddForm());
+            setAddMat1(masterMaterials?.[0]?.id || '');
+            setAddMat2('');
+            setAddRemarks('');
             setIsAddModalOpen(true);
           }}
           className="inline-flex items-center space-x-1.5 px-4 py-2 bg-[#536B7A] hover:bg-[#455865] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors"
@@ -263,7 +326,10 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
             (s) => s.className === cls.name || s.classId === cls.id
           ).length;
           const isCapacityFull = enrolledCount >= cls.maxCapacity;
-          const isOpen = cls.status === 'OPEN' || !cls.status || cls.status === 'ongoing';
+          const isClassOpen = (cls.status || '').toUpperCase() === 'OPEN';
+          const matchedTeacher = cls.teacherId ? teachers.find((t) => t.id === cls.teacherId) : null;
+          const resolvedTeacherName = matchedTeacher?.name || (cls.teacherName && cls.teacherName !== '未指定教師' ? cls.teacherName : '');
+          const hasAssignedTeacher = Boolean(cls.teacherId && resolvedTeacherName);
 
           return (
             <div
@@ -278,34 +344,61 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                       <span className="text-[10px] font-mono font-bold bg-[#E8EEF2] text-[#536B7A] px-2 py-0.5 rounded-md border border-[#DCE2E6]">
                         {cls.classCode}
                       </span>
-                      {isOpen ? (
+                      {isClassOpen ? (
                         <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                          招生中 (OPEN)
+                          開放招生中 (OPEN)
                         </span>
                       ) : (
                         <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#E8EEF2] text-slate-600 border border-[#DCE2E6]">
-                          已關閉 (CLOSED)
+                          已關閉/額滿 (CLOSED)
                         </span>
                       )}
                     </div>
                     <h3 className="text-base font-bold text-[#26313B] mt-2">{cls.name}</h3>
                   </div>
-                  <span className="text-xs font-semibold text-slate-600 bg-[#F5F7F9] border border-[#DCE2E6] px-2.5 py-1 rounded-md shrink-0">
-                    {cls.dailyHours} 小時制/天
-                  </span>
                 </div>
 
                 {/* Info specs */}
                 <div className="mt-3.5 space-y-2 text-xs">
-                  <div className="flex items-center justify-between p-2 bg-[#F8FAFC] rounded-lg border border-[#F0F4F7]">
-                    <span className="text-[#66717C] font-semibold">綁定教材定義：</span>
-                    <span className="font-bold text-[#536B7A]">{cls.courseName}</span>
+                  {/* Selected Materials */}
+                  <div className="p-2 bg-[#F8FAFC] rounded-lg border border-[#F0F4F7] space-y-1">
+                    <span className="text-slate-600 block text-[11px] font-semibold leading-relaxed">
+                      所屬教材：
+                      {cls.remarks && cls.remarks.trim() ? (
+                        <span className="text-slate-800 font-normal">
+                          {cls.remarks
+                            .split('\n')
+                            .map((s: string) => s.trim())
+                            .filter(Boolean)
+                            .join('、')}
+                        </span>
+                      ) : null}
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {cls.materialNames && cls.materialNames.length > 0 ? (
+                        cls.materialNames.map((mName, idx) => (
+                          <span key={idx} className="px-2 py-0.5 bg-teal-50 text-teal-800 border border-teal-200 rounded font-bold text-[11px]">
+                            {mName}
+                          </span>
+                        ))
+                      ) : cls.materials && cls.materials.length > 0 ? (
+                        cls.materials.map((m: any, idx: number) => (
+                          <span key={idx} className="px-2 py-0.5 bg-teal-50 text-teal-800 border border-teal-200 rounded font-bold text-[11px]">
+                            {m.materialName || m.name || '教材'}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-slate-400 text-[11px] italic">尚未指定教材</span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 text-[11px]">
                     <div className="p-2 bg-[#F8FAFC] rounded-lg border border-[#F0F4F7]">
                       <span className="text-slate-400 block text-[10px]">授課教師</span>
-                      <span className="font-bold text-[#26313B]">{cls.teacherName} 老師</span>
+                      <span className={`font-bold ${hasAssignedTeacher ? 'text-[#26313B]' : 'text-slate-500 font-medium'}`}>
+                        {hasAssignedTeacher ? `${resolvedTeacherName} 老師` : '未指定教師'}
+                      </span>
                     </div>
                     <div className="p-2 bg-[#F8FAFC] rounded-lg border border-[#F0F4F7]">
                       <span className="text-slate-400 block text-[10px]">上課教室</span>
@@ -315,16 +408,8 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
 
                   <div className="p-2.5 bg-[#F8FAFC] rounded-lg border border-[#F0F4F7] text-[11px] space-y-1">
                     <div className="flex items-center justify-between text-[#66717C]">
-                      <span>上課時段：</span>
-                      <span className="font-mono font-bold text-[#26313B]">{cls.timeSlot}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-[#66717C]">
                       <span>開課期程：</span>
                       <span className="font-mono text-slate-700">{cls.startDate} ~ {cls.endDate}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-[#66717C]">
-                      <span>規劃總時數：</span>
-                      <span className="font-bold text-[#536B7A]">{cls.totalTargetHours} 小時</span>
                     </div>
                   </div>
 
@@ -362,15 +447,15 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                   {onToggleClassStatus && (
                     <button
                       onClick={() => handleToggleStatus(cls)}
-                      title={isOpen ? '點擊關閉此班級' : '點擊開放此班級'}
+                      title={isClassOpen ? '點擊關閉此班級' : '點擊開放此班級'}
                       className={`px-2 py-1.5 rounded-md text-xs font-semibold transition-colors flex items-center space-x-1 border ${
-                        isOpen
+                        isClassOpen
                           ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
                           : 'bg-[#E8EEF2] text-slate-700 border-[#C9D1D7] hover:bg-[#DCE2E6]'
                       }`}
                     >
                       <Power className="w-3 h-3" />
-                      <span>{isOpen ? '開放中' : '已關閉'}</span>
+                      <span>{isClassOpen ? '開放中' : '已關閉'}</span>
                     </button>
                   )}
 
@@ -378,6 +463,11 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                     onClick={() => {
                       setActionError(null);
                       setEditingClass(cls);
+                      const m1 = cls.materials?.[0]?.materialId || cls.materialIds?.[0] || '';
+                      const m2 = cls.materials?.[1]?.materialId || cls.materialIds?.[1] || '';
+                      setEditMat1(m1);
+                      setEditMat2(m2);
+                      setEditRemarks(cls.remarks || '');
                     }}
                     className="px-2.5 py-1.5 bg-[#F0F4F7] hover:bg-[#E8EEF2] text-[#26313B] font-semibold border border-[#DCE2E6] rounded-md text-xs transition-colors flex items-center space-x-1"
                   >
@@ -481,28 +571,15 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">所屬教材課程 (Course) *</label>
+                  <label className="block font-bold text-slate-700 mb-1">授課教師</label>
                   <select
-                    value={newForm.courseId}
-                    onChange={(e) => setNewForm({ ...newForm, courseId: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white font-bold text-indigo-700"
-                  >
-                    {courses.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} ({c.level})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">指派授課教師 *</label>
-                  <select
-                    value={newForm.teacherId}
+                    value={newForm.teacherId || ''}
                     onChange={(e) => setNewForm({ ...newForm, teacherId: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white font-bold text-slate-800"
                   >
+                    <option value="">-- 未指定教師 --</option>
                     {teachers.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.name} 老師 ({t.department})
@@ -510,9 +587,6 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                     ))}
                   </select>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">上課教室</label>
                   <input
@@ -537,17 +611,7 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">每日上課時段</label>
-                  <input
-                    type="text"
-                    placeholder="例：09:00 - 12:00"
-                    value={newForm.timeSlot}
-                    onChange={(e) => setNewForm({ ...newForm, timeSlot: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono"
-                  />
-                </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">招生名額上限</label>
                   <input
@@ -561,27 +625,70 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">每日上課時數</label>
-                  <select
-                    value={newForm.dailyHours}
-                    onChange={(e) => setNewForm({ ...newForm, dailyHours: Number(e.target.value) })}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white"
-                  >
-                    <option value={3}>3 小時（每日 3 節課）</option>
-                    <option value={2}>2 小時（每日 2 節課）</option>
-                  </select>
+              {/* 所屬教材選取 (最多 2 個，可不選) */}
+              <div className="p-3 bg-teal-50/70 border border-teal-200/80 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block font-bold text-teal-900">
+                    所屬教材 (最多可選 2 個教材)
+                  </label>
+                  <span className="text-[10px] text-teal-700 bg-white px-2 py-0.5 rounded-md font-semibold border border-teal-200">
+                    最多 2 本，可不選
+                  </span>
                 </div>
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">規劃總目標時數</label>
-                  <input
-                    type="number"
-                    value={newForm.totalTargetHours}
-                    onChange={(e) => setNewForm({ ...newForm, totalTargetHours: Number(e.target.value) })}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-teal-800 mb-1">教材 1 (選填)</label>
+                    <select
+                      value={addMat1}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setAddMat1(val);
+                        if (val && val === addMat2) setAddMat2('');
+                      }}
+                      className="w-full px-2.5 py-1.5 border border-teal-200 rounded-lg bg-white font-semibold text-slate-800"
+                    >
+                      <option value="">-- 未指定教材 --</option>
+                      {masterMaterials.map((m) => (
+                        <option key={m.id} value={m.id} disabled={m.id === addMat2}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-teal-800 mb-1">教材 2 (選填)</label>
+                    <select
+                      value={addMat2}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setAddMat2(val);
+                        if (val && val === addMat1) setAddMat1('');
+                      }}
+                      className="w-full px-2.5 py-1.5 border border-teal-200 rounded-lg bg-white font-semibold text-slate-800"
+                    >
+                      <option value="">-- 未指定教材 --</option>
+                      {masterMaterials.map((m) => (
+                        <option key={m.id} value={m.id} disabled={m.id === addMat1}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
+              </div>
+
+              {/* 進度備註 */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  進度備註 (例如：當代中文課程1 第 11-15 課、當代中文課程2 第 1-5 課)
+                </label>
+                <textarea
+                  rows={2}
+                  value={addRemarks}
+                  onChange={(e) => setAddRemarks(e.target.value)}
+                  placeholder="可填寫教材詳細進度或班級備註事項..."
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl"
+                />
               </div>
 
               <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
@@ -675,14 +782,15 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">更換授課教師</label>
+                  <label className="block font-bold text-slate-700 mb-1">授課教師</label>
                   <select
-                    value={editingClass.teacherId}
+                    value={editingClass.teacherId || ''}
                     onChange={(e) => setEditingClass({ ...editingClass, teacherId: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white font-bold text-slate-800"
                   >
+                    <option value="">-- 未指定教師 --</option>
                     {teachers.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.name} 老師 ({t.department})
@@ -690,23 +798,6 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">所屬教材規格 (Course)</label>
-                  <select
-                    value={editingClass.courseId}
-                    onChange={(e) => setEditingClass({ ...editingClass, courseId: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white font-bold text-indigo-700"
-                  >
-                    {courses.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} ({c.level})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">教室地點</label>
                   <input
@@ -730,16 +821,7 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">上課時段</label>
-                  <input
-                    type="text"
-                    value={editingClass.timeSlot}
-                    onChange={(e) => setEditingClass({ ...editingClass, timeSlot: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono"
-                  />
-                </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">名額上限</label>
                   <input
@@ -751,6 +833,72 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono"
                   />
                 </div>
+              </div>
+
+              {/* 所屬教材選取 (最多 2 個，可不選) */}
+              <div className="p-3 bg-teal-50/70 border border-teal-200/80 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block font-bold text-teal-900">
+                    所屬教材 (最多可選 2 個教材)
+                  </label>
+                  <span className="text-[10px] text-teal-700 bg-white px-2 py-0.5 rounded-md font-semibold border border-teal-200">
+                    最多 2 本，可不選
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-teal-800 mb-1">教材 1 (選填)</label>
+                    <select
+                      value={editMat1}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEditMat1(val);
+                        if (val && val === editMat2) setEditMat2('');
+                      }}
+                      className="w-full px-2.5 py-1.5 border border-teal-200 rounded-lg bg-white font-semibold text-slate-800"
+                    >
+                      <option value="">-- 未指定教材 --</option>
+                      {masterMaterials.map((m) => (
+                        <option key={m.id} value={m.id} disabled={m.id === editMat2}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-teal-800 mb-1">教材 2 (選填)</label>
+                    <select
+                      value={editMat2}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEditMat2(val);
+                        if (val && val === editMat1) setEditMat1('');
+                      }}
+                      className="w-full px-2.5 py-1.5 border border-teal-200 rounded-lg bg-white font-semibold text-slate-800"
+                    >
+                      <option value="">-- 未指定教材 --</option>
+                      {masterMaterials.map((m) => (
+                        <option key={m.id} value={m.id} disabled={m.id === editMat1}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* 進度備註 */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  進度備註 (例如：當代中文課程1 第 11-15 課、當代中文課程2 第 1-5 課)
+                </label>
+                <textarea
+                  rows={2}
+                  value={editRemarks}
+                  onChange={(e) => setEditRemarks(e.target.value)}
+                  placeholder="可填寫教材詳細進度或班級備註事項..."
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl"
+                />
               </div>
 
               <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">

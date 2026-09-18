@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { CourseSession, Student, StudentPeriodAttendance } from '../types';
 import { calculateAttendanceStats } from '../utils/attendanceUtils';
-import { TODAY_DATE, getDaysDifference } from '../utils/quarterScheduler';
+import { getTodayDateStr, getDaysDifference } from '../utils/quarterScheduler';
 
 interface CourseCardProps {
   course: CourseSession;
@@ -40,11 +40,12 @@ export const CourseCard: React.FC<CourseCardProps> = ({
   const isCompleted = course.status === 'completed';
   const isInProgress = course.status === 'in_progress';
   
-  const isPast = course.date < TODAY_DATE;
-  const isToday = course.date === TODAY_DATE;
-  const isFuture = course.date > TODAY_DATE;
+  const todayStr = getTodayDateStr();
+  const isPast = course.date < todayStr;
+  const isToday = course.date === todayStr;
+  const isFuture = course.date > todayStr;
 
-  const daysSinceCourse = getDaysDifference(TODAY_DATE, course.date);
+  const daysSinceCourse = getDaysDifference(todayStr, course.date);
   const isOverdue = isPast && daysSinceCourse > 7;
   const isLocked = course.status === 'locked' || course.isLocked || isOverdue;
 

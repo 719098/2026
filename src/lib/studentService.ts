@@ -3,6 +3,7 @@ import { Student, ClassEntity, StudentGrade, TransferClassRecord } from '../type
 import { calculateTotalGrade, getLetterGrade } from '../utils/gradeUtils';
 import { batchResolveStudentAvatars, extractStoragePath, deleteStudentStorageFiles } from './storageService';
 import { mapDbToClass, fetchClassesFromSupabase } from './classService';
+import { getTodayDateStr } from '../utils/quarterScheduler';
 
 export { mapDbToClass, fetchClassesFromSupabase };
 
@@ -30,7 +31,7 @@ export function mapDbToStudent(row: any): Student {
   const admissionDate =
     row.enterdate ||
     row.admission_date ||
-    (row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '2026-08-11');
+    (row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : getTodayDateStr());
 
   const rawStatus = String(row.rest_to_drop || row.status || '0').toLowerCase();
   const normalizedStatus: 'active' | 'withdrawn' | 'graduated' | 'suspended' =
@@ -456,6 +457,63 @@ export async function fetchStudentsFromSupabase(
     return student;
   });
 
+  // 4.5 Compute real attendance rates from attendance_records (Present=100%, Leave=50%, Absent=0%)
+  try {
+    const { data: attRecs } = await supabase
+      .from('attendance_records')
+      .select('student_id, period_1, period_2, period_3, period_4');
+    if (attRecs && attRecs.length > 0) {
+      const studentAttStats: Record<string, { present: number; leave: number; absent: number }> = {};
+      attRecs.forEach((r: any) => {
+        const sId = String(r.student_id);
+        if (!studentAttStats[sId]) {
+          studentAttStats[sId] = { present: 0, leave: 0, absent: 0 };
+        }
+        [r.period_1, r.period_2, r.period_3, r.period_4].forEach((p: any) => {
+          if (!p) return;
+          const pl = String(p).toUpperCase();
+          if (pl === 'PRESENT') studentAttStats[sId].present += 1;
+          else if (pl === 'LEAVE') studentAttStats[sId].leave += 1;
+          else if (pl === 'ABSENT') studentAttStats[sId].absent += 1;
+        });
+      });
+
+      students.forEach((s) => {
+        const stat = studentAttStats[s.id];
+        if (stat) {
+          const totalPeriods = stat.present + stat.leave + stat.absent;
+          if (totalPeriods > 0) {
+            const earned = stat.present * 1.0 + stat.leave * 0.5 + stat.absent * 0.0;
+            s.overallAttendanceRate = Math.round((earned / totalPeriods) * 1000) / 10;
+            s.totalPresentHours = stat.present;
+            s.totalLeaveHours = stat.leave;
+            s.totalAbsenceHours = stat.absent;
+          } else {
+            s.overallAttendanceRate = 0;
+            s.totalPresentHours = 0;
+            s.totalLeaveHours = 0;
+            s.totalAbsenceHours = 0;
+          }
+        } else {
+          // No attendance records at all -> NOT 100%!
+          s.overallAttendanceRate = 0;
+          s.totalPresentHours = 0;
+          s.totalLeaveHours = 0;
+          s.totalAbsenceHours = 0;
+        }
+      });
+    } else {
+      students.forEach((s) => {
+        s.overallAttendanceRate = 0;
+        s.totalPresentHours = 0;
+        s.totalLeaveHours = 0;
+        s.totalAbsenceHours = 0;
+      });
+    }
+  } catch (e) {
+    console.warn('[StudentService] Notice: could not aggregate attendance_records:', e);
+  }
+
   // 5. Batch resolve private avatar signed URLs from Supabase Storage
   const resolvedStudents = await batchResolveStudentAvatars(students);
 
@@ -601,6 +659,17 @@ export async function assignOrUpdateStudentClassInSupabase(
   // If student is already assigned to this exact class, no modification needed
   if (currentClassIds.length === 1 && currentClassIds[0] === realClassUuid) {
     return { success: true, error: null };
+  }
+
+  // Dynamic capacity check
+  if (matchedClass) {
+    const classCap = Number(matchedClass.capacity || matchedClass.maxCapacity || 40);
+    const currentCount = Number(matchedClass.studentCount || 0);
+    if (currentCount >= classCap) {
+      const capErr = new Error(`班級「${matchedClass.name}」已達人數上限 (${classCap} 人)，無法加入新學員。`);
+      console.warn('[StudentService] Capacity limit reached:', capErr.message);
+      return { success: false, error: capErr };
+    }
   }
 
   // Delete all existing class_students relations for this student to prevent duplicates and handle transfers cleanly
@@ -867,7 +936,8 @@ export async function fetchStudentGradesFromSupabase(
         const student = studentMap.get(studentId);
         const classObj = r.class_id ? classMap.get(String(r.class_id)) : null;
 
-        const att = Number(r.attendance_score ?? 100);
+        // Dynamic Attendance Score based on real attendance records
+        const att = student ? student.overallAttendanceRate : Number(r.attendance_score ?? 0);
         const quiz = Number(r.quiz_score ?? 85);
         const mid = Number(r.midterm_score ?? 80);
         const fin = Number(r.final_score ?? 85);
@@ -887,16 +957,25 @@ export async function fetchStudentGradesFromSupabase(
           finalScore: fin,
           homeworkScore: hw,
           attitudeScore: attid,
-          totalScore: r.total_score !== undefined && r.total_score !== null ? Number(r.total_score) : total,
+          totalScore: total,
           updatedAt: r.updated_at ? r.updated_at.substring(0, 16).replace('T', ' ') : undefined,
         };
+
+        // If stored attendance or total score in DB is out-of-sync with real attendance, silently update DB
+        if (Number(r.attendance_score) !== att || Number(r.total_score) !== total) {
+          supabase
+            .from('student_grades')
+            .update({ attendance_score: att, total_score: total })
+            .eq('id', r.id)
+            .then(() => {});
+        }
       });
     }
 
     // Ensure all active students have grade entries initialized in database
     for (const s of students) {
       if (!gradeMap[s.id]) {
-        const att = Math.min(100, Math.round((s.overallAttendanceRate || 100) * 10) / 10);
+        const att = s.overallAttendanceRate;
         const quiz = 85;
         const mid = 80;
         const fin = 85;
@@ -1041,7 +1120,7 @@ export async function fetchTransferRecordsFromSupabase(
         fromClassName: fromClass?.name || '原班級',
         toClassId: r.to_class_id ? String(r.to_class_id) : '',
         toClassName: toClass?.name || '新班級',
-        transferDate: r.effective_date || (r.created_at ? r.created_at.substring(0, 10) : '2026-08-11'),
+        transferDate: r.effective_date || (r.created_at ? r.created_at.substring(0, 10) : getTodayDateStr()),
         reason: r.reason || '學生轉班異動',
         operator: '行政教務處',
         effectiveImmediately: true,

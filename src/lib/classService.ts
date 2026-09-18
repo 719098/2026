@@ -1,42 +1,56 @@
 import { supabase } from './supabase';
 import { ClassEntity } from '../types';
+import { fetchClassMaterialsFromSupabase, saveClassMaterialsInSupabase } from './materialService';
 
 /**
  * Converts a database record in public.classes to the frontend ClassEntity interface.
  */
 export function mapDbToClass(row: any): ClassEntity {
-  const courseDef = row.course_definitions;
-  const courseName = courseDef?.name || row.course_name || row.courseName || row.name || '';
   const termDef = row.terms;
   const termName = termDef?.name || row.term_name || row.term || '未指定學期';
   const termId = row.term_id || termDef?.id || row.termId || '';
+  const cap = Number(row.capacity || row.max_capacity || row.maxCapacity || 40);
+
+  const teacherDef = row.teachers;
+  const teacherId = row.teacher_id || row.teacherId || '';
+  let teacherName = '';
+  if (teacherDef && (teacherDef.emp_name || teacherDef.tea_name)) {
+    teacherName = teacherDef.emp_name || teacherDef.tea_name;
+  } else if (row.teacher_name || row.teacherName) {
+    teacherName = row.teacher_name || row.teacherName;
+  } else if (!teacherId) {
+    teacherName = '未指定教師';
+  }
 
   return {
     id: String(row.id),
     classCode: row.class_code || row.classCode || `CLS-${row.id}`,
     name: row.name || row.class_name || '未命名班級',
-    courseId: row.course_definition_id || row.course_id || row.courseId || '',
-    courseName: courseName,
-    teacherId: row.teacher_id || row.teacherId || '',
-    teacherName: row.teacher_name || row.teacherName || '未指定教師',
-    classroom: row.classroom || '華語中心 301 教室',
+    courseId: '',
+    courseName: row.name || '班級',
+    teacherId: teacherId,
+    teacherName: teacherName || (teacherId ? '' : '未指定教師'),
+    classroom: row.classroom || '伯鐸402',
     termId: termId,
     term: termName,
     startDate: row.start_date || termDef?.start_date || row.startDate || '2026-07-01',
     endDate: row.end_date || termDef?.end_date || row.endDate || '2026-10-31',
     dailyHours: Number(row.daily_hours || row.dailyHours || 3),
     weeklyDays: Array.isArray(row.weekly_days) ? row.weekly_days : [1, 2, 3, 4, 5],
-    timeSlot: row.schedule_description || row.time_slot || row.timeSlot || '09:00 - 12:00',
+    timeSlot: row.schedule_description || row.time_slot || row.timeSlot || '09:10－12:00',
     totalTargetHours: Number(row.target_hours ?? row.total_target_hours ?? 0),
-    maxCapacity: Number(row.max_capacity || 15),
+    maxCapacity: cap,
+    capacity: cap,
     studentCount: Number(row.student_count || 0),
     studentIds: Array.isArray(row.student_ids) ? row.student_ids : [],
+    materials: Array.isArray(row.materials) ? row.materials : [],
+    remarks: row.remarks !== undefined && row.remarks !== null ? String(row.remarks) : '',
     status: (row.status || 'OPEN') as 'planning' | 'ongoing' | 'completed' | 'OPEN' | 'CLOSED' | string,
   };
 }
 
 /**
- * Fetch all classes from Supabase public.classes, enriched with accurate enrollment counts, course definitions and terms.
+ * Fetch all classes from Supabase public.classes, enriched with accurate enrollment counts, terms, and materials.
  */
 export async function fetchClassesFromSupabase(): Promise<{ data: ClassEntity[]; error: any }> {
   if (!supabase) {
@@ -46,7 +60,7 @@ export async function fetchClassesFromSupabase(): Promise<{ data: ClassEntity[];
   try {
     const { data: rawClasses, error: classErr } = await supabase
       .from('classes')
-      .select('*, course_definitions(id, name, code), terms(id, name, term_code, is_locked, is_active, start_date, end_date)')
+      .select('*, terms(id, name, term_code, is_locked, is_active, start_date, end_date), teachers(id, emp_name, tea_name)')
       .order('name', { ascending: true });
 
     if (classErr) {
@@ -79,11 +93,29 @@ export async function fetchClassesFromSupabase(): Promise<{ data: ClassEntity[];
       console.warn('[ClassService] Notice counting class enrollments:', e);
     }
 
+    // Fetch class materials map
+    let materialsMap: Record<string, any[]> = {};
+    try {
+      const { data: allClassMats } = await fetchClassMaterialsFromSupabase();
+      if (allClassMats && allClassMats.length > 0) {
+        allClassMats.forEach((cm) => {
+          if (!materialsMap[cm.classId]) materialsMap[cm.classId] = [];
+          materialsMap[cm.classId].push(cm);
+        });
+      }
+    } catch (e) {
+      console.warn('[ClassService] Notice fetching class materials:', e);
+    }
+
     const mapped = rawClasses.map((row: any) => {
       const cls = mapDbToClass(row);
       const cId = String(row.id);
+      const cmList = materialsMap[cId] || [];
       cls.studentCount = countMap[cId] || 0;
       cls.studentIds = studentIdsMap[cId] || [];
+      cls.materials = cmList;
+      cls.materialIds = cmList.map((cm: any) => cm.materialId);
+      cls.materialNames = cmList.map((cm: any) => cm.materialName);
       return cls;
     });
 
@@ -92,6 +124,50 @@ export async function fetchClassesFromSupabase(): Promise<{ data: ClassEntity[];
     console.error('[ClassService] Unexpected error in fetchClassesFromSupabase:', err);
     return { data: [], error: err };
   }
+}
+
+/**
+ * Executes a Supabase classes table operation with schema resilience (e.g. PGRST204 missing columns, 23505 unique class_code).
+ */
+async function executeClassOperationWithResilience(
+  operation: (payload: Record<string, any>) => Promise<{ data: any; error: any }>,
+  initialPayload: Record<string, any>,
+  maxRetries = 5
+): Promise<{ data: any; error: any }> {
+  const currentPayload = { ...initialPayload };
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const res = await operation(currentPayload);
+
+    if (!res.error) {
+      return res;
+    }
+
+    // 1. Handle duplicate key on class_code (code 23505)
+    if (res.error.code === '23505' || (typeof res.error.message === 'string' && res.error.message.includes('classes_class_code_key'))) {
+      const uniqueSuffix = Date.now().toString().slice(-4) + Math.floor(10 + Math.random() * 90);
+      currentPayload.class_code = `${currentPayload.class_code || 'CLS'}-${uniqueSuffix}`;
+      console.warn(`[ClassService Resilience] Duplicate key on class_code. Retrying with '${currentPayload.class_code}'...`);
+      continue;
+    }
+
+    // 2. Handle PGRST204 missing column in schema cache (e.g. 'capacity')
+    if (res.error.code === 'PGRST204' && typeof res.error.message === 'string') {
+      const match = res.error.message.match(/Could not find the '([^']+)' column/i);
+      if (match && match[1]) {
+        const missingCol = match[1];
+        if (missingCol in currentPayload) {
+          delete currentPayload[missingCol];
+          console.warn(`[ClassService Resilience] Column '${missingCol}' not found in public.classes schema cache. Stripping and retrying...`);
+          continue;
+        }
+      }
+    }
+
+    return res;
+  }
+
+  return { data: null, error: new Error('Exceeded max retries for class operation resilience') };
 }
 
 /**
@@ -129,18 +205,24 @@ export async function createClassInSupabase(
       // Ignore term resolution error
     }
 
+    const cap = Number(classData.capacity || classData.maxCapacity || 40);
     const payload: Record<string, any> = {
       name: classData.name,
       class_code: classData.classCode || `CLS-${Date.now().toString().slice(-6)}`,
-      classroom: classData.classroom || '華語中心 301 教室',
-      schedule_description: classData.timeSlot || '09:00 - 12:00',
+      classroom: classData.classroom || '伯鐸402',
+      schedule_description: classData.timeSlot || '09:10－12:00',
       target_hours: Number(classData.totalTargetHours) || 0,
       status: classData.status || 'OPEN',
-      max_capacity: Number(classData.maxCapacity) || 15,
+      capacity: cap,
+      max_capacity: cap,
     };
 
-    if (classData.courseId && classData.courseId.trim()) {
-      payload.course_definition_id = classData.courseId.trim();
+    if (classData.remarks !== undefined) {
+      payload.remarks = classData.remarks;
+    }
+
+    if (classData.teacherId !== undefined) {
+      payload.teacher_id = classData.teacherId && classData.teacherId.trim() ? classData.teacherId.trim() : null;
     }
 
     if (classData.termId && classData.termId.trim()) {
@@ -149,31 +231,39 @@ export async function createClassInSupabase(
       payload.term_id = termId;
     }
 
-    let { data, error } = await supabase
-      .from('classes')
-      .insert(payload)
-      .select('*, course_definitions(id, name, code), terms(id, name, term_code, is_locked, is_active, start_date, end_date)')
-      .single();
-
-    if (error && (error.code === '23505' || error.message?.includes('classes_class_code_key'))) {
-      console.warn('[ClassService] Duplicate key on class_code insert (code 23505). Retrying with auto-suffix...');
-      const uniqueSuffix = Date.now().toString().slice(-4) + Math.floor(10 + Math.random() * 90);
-      payload.class_code = `${payload.class_code}-${uniqueSuffix}`;
-      const retryResult = await supabase
+    const { data, error } = await executeClassOperationWithResilience(async (p) => {
+      return await supabase!
         .from('classes')
-        .insert(payload)
-        .select('*, course_definitions(id, name, code), terms(id, name, term_code, is_locked, is_active, start_date, end_date)')
+        .insert(p)
+        .select('*, terms(id, name, term_code, is_locked, is_active, start_date, end_date), teachers(id, emp_name, tea_name)')
         .single();
-      data = retryResult.data;
-      error = retryResult.error;
-    }
+    }, payload);
 
     if (error) {
       console.error('[ClassService] Error creating class in Supabase:', error);
       return { data: null, error };
     }
 
-    return { data: mapDbToClass(data), error: null };
+    if (data && Array.isArray(classData.materialIds)) {
+      const { success, error: matErr } = await saveClassMaterialsInSupabase(data.id, classData.materialIds);
+      if (!success || matErr) {
+        console.error('[ClassService] Error saving class_materials on create:', matErr);
+        return { data: null, error: matErr || new Error('儲存班級教材失敗') };
+      }
+    }
+
+    // 從 Supabase 重新查詢該班級實際存在的 class_materials
+    const { data: freshMats, error: matFetchErr } = await fetchClassMaterialsFromSupabase(data.id);
+    if (matFetchErr) {
+      console.error('[ClassService] Error re-fetching fresh class_materials:', matFetchErr);
+      return { data: null, error: matFetchErr };
+    }
+
+    const cls = mapDbToClass(data);
+    cls.materials = freshMats || [];
+    cls.materialIds = (freshMats || []).map((m: any) => m.materialId);
+    cls.materialNames = (freshMats || []).map((m: any) => m.materialName);
+    return { data: cls, error: null };
   } catch (err: any) {
     console.error('[ClassService] Exception in createClassInSupabase:', err);
     return { data: null, error: err };
@@ -201,44 +291,59 @@ export async function updateClassInSupabase(
     if (updateData.classroom !== undefined) payload.classroom = updateData.classroom;
     if (updateData.timeSlot !== undefined) payload.schedule_description = updateData.timeSlot;
     if (updateData.totalTargetHours !== undefined) payload.target_hours = Number(updateData.totalTargetHours);
-    if (updateData.maxCapacity !== undefined) payload.max_capacity = Number(updateData.maxCapacity);
+    if (updateData.capacity !== undefined || updateData.maxCapacity !== undefined) {
+      const cap = Number(updateData.capacity || updateData.maxCapacity || 40);
+      payload.capacity = cap;
+      payload.max_capacity = cap;
+    }
     if (updateData.status !== undefined) payload.status = updateData.status;
 
-    if (updateData.courseId !== undefined) {
-      payload.course_definition_id = updateData.courseId && updateData.courseId.trim() ? updateData.courseId.trim() : null;
+    if (updateData.remarks !== undefined) {
+      payload.remarks = updateData.remarks;
+    }
+
+    if (updateData.teacherId !== undefined) {
+      payload.teacher_id = updateData.teacherId && updateData.teacherId.trim() ? updateData.teacherId.trim() : null;
     }
 
     if (updateData.termId !== undefined) {
       payload.term_id = updateData.termId && updateData.termId.trim() ? updateData.termId.trim() : null;
     }
 
-    let { data, error } = await supabase
-      .from('classes')
-      .update(payload)
-      .eq('id', classId)
-      .select('*, course_definitions(id, name, code), terms(id, name, term_code, is_locked, is_active, start_date, end_date)')
-      .single();
-
-    if (error && (error.code === '23505' || error.message?.includes('classes_class_code_key'))) {
-      console.warn('[ClassService] Duplicate key on class_code update (code 23505). Retrying with auto-suffix...');
-      const uniqueSuffix = Date.now().toString().slice(-4) + Math.floor(10 + Math.random() * 90);
-      payload.class_code = `${payload.class_code || 'CLS'}-${uniqueSuffix}`;
-      const retryResult = await supabase
+    const { data, error } = await executeClassOperationWithResilience(async (p) => {
+      return await supabase!
         .from('classes')
-        .update(payload)
+        .update(p)
         .eq('id', classId)
-        .select('*, course_definitions(id, name, code), terms(id, name, term_code, is_locked, is_active, start_date, end_date)')
+        .select('*, terms(id, name, term_code, is_locked, is_active, start_date, end_date), teachers(id, emp_name, tea_name)')
         .single();
-      data = retryResult.data;
-      error = retryResult.error;
-    }
+    }, payload);
 
     if (error) {
       console.error('[ClassService] Error updating class in Supabase:', error);
       return { data: null, error };
     }
 
-    return { data: mapDbToClass(data), error: null };
+    if (data && Array.isArray(updateData.materialIds)) {
+      const { success, error: matErr } = await saveClassMaterialsInSupabase(classId, updateData.materialIds);
+      if (!success || matErr) {
+        console.error('[ClassService] Error updating class_materials on update:', matErr);
+        return { data: null, error: matErr || new Error('儲存班級教材失敗') };
+      }
+    }
+
+    // 從 Supabase 重新查詢該班級實際存在的 class_materials
+    const { data: freshMats, error: matFetchErr } = await fetchClassMaterialsFromSupabase(classId);
+    if (matFetchErr) {
+      console.error('[ClassService] Error re-fetching fresh class_materials:', matFetchErr);
+      return { data: null, error: matFetchErr };
+    }
+
+    const cls = mapDbToClass(data);
+    cls.materials = freshMats || [];
+    cls.materialIds = (freshMats || []).map((m: any) => m.materialId);
+    cls.materialNames = (freshMats || []).map((m: any) => m.materialName);
+    return { data: cls, error: null };
   } catch (err: any) {
     console.error('[ClassService] Exception in updateClassInSupabase:', err);
     return { data: null, error: err };

@@ -19,7 +19,8 @@ import {
   AlertTriangle,
   Layers,
   Settings,
-  HelpCircle
+  HelpCircle,
+  Loader2
 } from 'lucide-react';
 import { 
   Term, 
@@ -35,7 +36,8 @@ import {
   getIsoWeekdayName, 
   formatTimeRange, 
   calculateWeeklyHoursFromRules,
-  calculateScheduleProgressMetrics 
+  calculateScheduleProgressMetrics,
+  getTodayDateStr
 } from '../../utils/quarterScheduler';
 
 const HOUR_24_OPTIONS = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
@@ -123,7 +125,7 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
   const [selectedClassId, setSelectedClassId] = useState<string>('ALL');
 
   // Month & Filter
-  const [selectedMonth, setSelectedMonth] = useState<string>('2026-08');
+  const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
 
   // Data states from Supabase
@@ -144,6 +146,7 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
   const [showAddHolidayModal, setShowAddHolidayModal] = useState<boolean>(false);
   const [reschedulingSession, setReschedulingSession] = useState<ClassSessionEntity | null>(null);
   const [deletingRule, setDeletingRule] = useState<ClassScheduleRule | null>(null);
+  const [deletingSession, setDeletingSession] = useState<ClassSessionEntity | null>(null);
 
   // Form states - Reschedule
   const [rescheduleTargetDate, setRescheduleTargetDate] = useState<string>('');
@@ -187,7 +190,7 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
   }, [initialTermId]);
 
   // Current active term entity
-  const currentTerm = terms.find((t) => t.id === currentTermId) || terms[0];
+  const currentTerm = terms?.find((t) => t.id === currentTermId) || terms?.[0];
 
   // Classes filtered by current term
   const termClasses = classes.filter((c) => !c.termId || c.termId === currentTermId);
@@ -290,8 +293,8 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
 
   // Handler: Generate Quarter Sessions
   const handleExecuteGenerateSessions = async () => {
-    if (!currentTermId || selectedClassId === 'ALL') {
-      showToast('請先選擇特定班級後再進行全期課表產生', true);
+    if (!currentTermId) {
+      showToast('請先選擇學期後再進行課表產生', true);
       return;
     }
 
@@ -299,13 +302,24 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
     setErrorMessage(null);
 
     try {
-      const res = await scheduleService.generateQuarterSessions(currentTermId, selectedClassId);
-      if (res.error) {
-        showToast(res.error.message || '產生課表失敗', true);
-      } else if (res.data) {
-        showToast(`課表產生成功！已為該班級產生 ${res.data.generatedCount} 堂有效課堂，共計 ${res.data.scheduledHours} 小時（目標: ${res.data.targetHours}H）。`);
-        setShowGenerateModal(false);
-        await loadScheduleData();
+      if (selectedClassId === 'ALL') {
+        const res = await scheduleService.generateAllTermSessions(currentTermId);
+        if (res.error) {
+          showToast(res.error.message || '產生全校課表失敗', true);
+        } else if (res.data) {
+          showToast(`全校課表產生成功！已為 ${res.data.classesCount} 個班級產生 ${res.data.totalGenerated} 堂課堂。`);
+          setShowGenerateModal(false);
+          await loadScheduleData();
+        }
+      } else {
+        const res = await scheduleService.generateQuarterSessions(currentTermId, selectedClassId);
+        if (res.error) {
+          showToast(res.error.message || '產生課表失敗', true);
+        } else if (res.data) {
+          showToast(`課表產生成功！已為該班級產生 ${res.data.generatedCount} 堂有效課堂，共計 ${res.data.scheduledHours} 小時（目標: ${res.data.targetHours}H）。`);
+          setShowGenerateModal(false);
+          await loadScheduleData();
+        }
       }
     } catch (err: any) {
       showToast(err.message || '課表產生失敗', true);
@@ -610,20 +624,51 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
     }
   };
 
-  // Handler: Delete Single Session
-  const handleDeleteSession = async (sessionId: string) => {
-    if (!window.confirm('確定要自資料庫刪除此堂課嗎？此操作無法復原。')) return;
+  // Handler: Confirm Delete Single Session (Triggered from modal)
+  const handleConfirmDeleteSession = async () => {
+    if (!deletingSession) return;
+    const sessionToDelete = deletingSession;
     setActionLoading(true);
     try {
-      const res = await scheduleService.deleteClassSession(sessionId);
-      if (res.error) {
-        showToast(res.error.message || '刪除課堂失敗', true);
-      } else {
-        showToast('課堂已成功刪除');
-        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      const res = await scheduleService.deleteClassSession(sessionToDelete.id);
+      if (!res.success || res.error) {
+        const errMsg =
+          res.error?.message ||
+          res.error?.details ||
+          (typeof res.error === 'string' ? res.error : '刪除課堂失敗');
+        showToast(errMsg, true);
+        setDeletingSession(null);
+        return;
       }
+
+      // Success notification
+      const targetClass =
+        termClasses.find((c) => c.id === sessionToDelete.classId) ||
+        classes.find((c) => c.id === sessionToDelete.classId);
+      const classNameStr = targetClass?.name || sessionToDelete.className || '';
+      showToast(`課堂已自資料庫成功刪除 (${sessionToDelete.sessionDate} ${classNameStr ? `${classNameStr} 班` : ''})`);
+      setDeletingSession(null);
+
+      // 1. Immediately remove from current state
+      const updatedSessions = sessions.filter((s) => s.id !== sessionToDelete.id);
+      setSessions(updatedSessions);
+
+      // 2. Immediately re-calculate scheduled hours and progress metrics
+      const currentSelected =
+        classes.find((c) => c.id === selectedClassId || c.code === selectedClassId) ||
+        termClasses.find((c) => c.id === selectedClassId || c.code === selectedClassId);
+      const targetHours =
+        selectedClassId === 'ALL'
+          ? termClasses.reduce((acc, c) => acc + (c.totalTargetHours || 0), 0)
+          : currentSelected?.totalTargetHours || 0;
+
+      setProgress(calculateScheduleProgressMetrics(targetHours, updatedSessions));
+
+      // 3. Re-fetch fresh data from Supabase to guarantee complete consistency
+      await loadScheduleData();
     } catch (err: any) {
       showToast(err.message || '刪除課堂失敗', true);
+      setDeletingSession(null);
     } finally {
       setActionLoading(false);
     }
@@ -805,15 +850,13 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
         </div>
 
         {/* Action Button: Generate Sessions */}
-        {selectedClassId !== 'ALL' && (
-          <button
-            onClick={() => setShowGenerateModal(true)}
-            className="px-3.5 py-1.5 bg-gradient-to-r from-teal-600 to-emerald-600 text-white text-xs font-black rounded-xl hover:from-teal-700 hover:to-emerald-700 transition-all flex items-center space-x-1.5 shrink-0 shadow-xs"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>⚡ 產生全期課表</span>
-          </button>
-        )}
+        <button
+          onClick={() => setShowGenerateModal(true)}
+          className="px-3.5 py-1.5 bg-gradient-to-r from-teal-600 to-emerald-600 text-white text-xs font-black rounded-xl hover:from-teal-700 hover:to-emerald-700 transition-all flex items-center space-x-1.5 shrink-0 shadow-xs"
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>{selectedClassId === 'ALL' ? '⚡ 產生全校全期課表' : '⚡ 產生全期課表'}</span>
+        </button>
       </div>
 
       {/* 165-Hour Progress Dashboard (Only when specific class or overall) */}
@@ -882,11 +925,19 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
                 onChange={(e) => setSelectedMonth(e.target.value)}
                 className="px-3 py-1.5 text-xs border border-slate-200 rounded-xl bg-white font-bold text-slate-800 focus:ring-2 focus:ring-teal-500/20"
               >
-                <option value="ALL">全學期所有月份</option>
-                <option value="2026-07">2026 年 7 月 (開學首月)</option>
-                <option value="2026-08">2026 年 8 月 (暑期核心月)</option>
-                <option value="2026-09">2026 年 9 月 (結業衝刺月)</option>
-                <option value="2026-10">2026 年 10 月 (期末月)</option>
+                <option value="ALL">全學期所有月份 ({sessions.length} 堂)</option>
+                <option value="2026-07">
+                  2026 年 7 月 ({sessions.filter((s) => s.sessionDate.startsWith('2026-07')).length} 堂)
+                </option>
+                <option value="2026-08">
+                  2026 年 8 月 ({sessions.filter((s) => s.sessionDate.startsWith('2026-08')).length} 堂)
+                </option>
+                <option value="2026-09">
+                  2026 年 9 月 ({sessions.filter((s) => s.sessionDate.startsWith('2026-09')).length} 堂)
+                </option>
+                <option value="2026-10">
+                  2026 年 10 月 ({sessions.filter((s) => s.sessionDate.startsWith('2026-10')).length} 堂)
+                </option>
               </select>
             </div>
 
@@ -1055,8 +1106,8 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
                               </>
                             )}
                             <button
-                              onClick={() => handleDeleteSession(s.id)}
-                              className="p-1 text-slate-400 hover:text-rose-600 rounded-lg"
+                              onClick={() => setDeletingSession(s)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
                               title="刪除堂次"
                             >
                               <Trash2 className="w-3.5 h-3.5 inline" />
@@ -1321,9 +1372,13 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
                   <Sparkles className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-slate-900">產生全學期課表堂次</h3>
+                  <h3 className="text-base font-black text-slate-900">
+                    {selectedClassId === 'ALL' ? '產生全校全學期課表堂次' : '產生全學期課表堂次'}
+                  </h3>
                   <p className="text-xs text-slate-500">
-                    班級：{termClasses.find((c) => c.id === selectedClassId)?.name}
+                    {selectedClassId === 'ALL'
+                      ? `對象：當前學期全體班級 (${termClasses.length} 個班級)`
+                      : `班級：${termClasses.find((c) => c.id === selectedClassId)?.name}`}
                   </p>
                 </div>
               </div>
@@ -1709,6 +1764,132 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
           </div>
         </div>
       )}
+
+      {/* ===================================================================== */}
+      {/* MODAL 6: DELETE SESSION CONFIRMATION MODAL                            */}
+      {/* ===================================================================== */}
+      {deletingSession && (() => {
+        const cls =
+          termClasses.find((c) => c.id === deletingSession.classId) ||
+          classes.find((c) => c.id === deletingSession.classId);
+        const clsName = cls?.name || deletingSession.className || '指定';
+        const startStr = deletingSession.startTime ? deletingSession.startTime.slice(0, 5) : '09:00';
+        const endStr = deletingSession.endTime ? deletingSession.endTime.slice(0, 5) : '12:00';
+        const confirmTitleText = `確定要刪除 ${deletingSession.sessionDate} ${clsName} 班 ${startStr}-${endStr} 這堂課嗎？`;
+
+        return (
+          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+              <div className="flex items-start space-x-3.5">
+                <div className="w-11 h-11 rounded-2xl bg-rose-50 flex items-center justify-center shrink-0 border border-rose-100 text-rose-600 mt-0.5">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 leading-snug">
+                    {confirmTitleText}
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    此操作將自資料庫 (<code className="font-mono text-[11px] text-rose-700 bg-rose-50 px-1 py-0.5 rounded">public.class_sessions</code>) 精準刪除此筆記錄。
+                  </p>
+                </div>
+              </div>
+
+              {/* Detailed specs */}
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 text-xs space-y-2">
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 font-medium">班級名稱</span>
+                  <span className="font-bold text-slate-800">{clsName} 班</span>
+                </div>
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 font-medium">上課日期</span>
+                  <span className="font-bold text-slate-800">
+                    {deletingSession.sessionDate} (週{getIsoWeekdayName(deletingSession.dayOfWeek)})
+                  </span>
+                </div>
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 font-medium">上課時段與時數</span>
+                  <span className="font-bold text-slate-800">
+                    {startStr} - {endStr}（{deletingSession.periodsCount} 節 / {deletingSession.periodsCount} 小時）
+                  </span>
+                </div>
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 font-medium">上課教室</span>
+                  <span className="font-bold text-slate-800">{deletingSession.classroom || '未指定教室'}</span>
+                </div>
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 font-medium">堂次狀態</span>
+                  <div>
+                    {deletingSession.status === 'NORMAL' && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+                        正常授課
+                      </span>
+                    )}
+                    {deletingSession.status === 'MAKEUP' && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        🔵 補課堂次
+                      </span>
+                    )}
+                    {deletingSession.status === 'RESCHEDULED' && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                        ⚠️ 已調課
+                      </span>
+                    )}
+                    {deletingSession.status === 'CANCELLED' && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                        ❌ 已停課
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-between items-center py-1">
+                  <span className="text-slate-500 font-medium">Session UUID</span>
+                  <span
+                    className="font-mono text-[10px] text-slate-600 bg-white px-1.5 py-0.5 rounded border border-slate-200 truncate max-w-[200px]"
+                    title={deletingSession.id}
+                  >
+                    {deletingSession.id}
+                  </span>
+                </div>
+              </div>
+
+              {/* Warning box */}
+              <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl text-xs text-amber-900 leading-relaxed">
+                ⚠️ <strong>注意：</strong>確認刪除後將永久刪除此課堂資料，該班級「已排定時數」與月份統計將同步即時扣減。若此堂課已有出缺勤點名紀錄，為保護歷史資料將被拒絕刪除。
+              </div>
+
+              {/* Action buttons */}
+              <div className="flex items-center justify-end space-x-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDeletingSession(null)}
+                  disabled={actionLoading}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteSession}
+                  disabled={actionLoading}
+                  className="px-5 py-2 bg-rose-600 text-white rounded-xl text-xs font-black hover:bg-rose-700 shadow-xs transition-colors flex items-center space-x-1.5 disabled:opacity-50"
+                >
+                  {actionLoading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>刪除中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>確認刪除</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

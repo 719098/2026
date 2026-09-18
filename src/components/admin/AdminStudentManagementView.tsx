@@ -31,8 +31,11 @@ import {
   User
 } from 'lucide-react';
 import { Student, ClassEntity, EnrollmentStatus, StudentEnrollmentHistory } from '../../types';
+import { getTodayDateStr } from '../../utils/quarterScheduler';
 import { StudentAvatar } from '../StudentAvatar';
 import { uploadStudentAvatar, validateAvatarFile } from '../../lib/storageService';
+import { BatchImportStudentModal } from './BatchImportStudentModal';
+import { FileSpreadsheet } from 'lucide-react';
 
 interface AdminStudentManagementViewProps {
   students: Student[];
@@ -71,7 +74,16 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
   const [statusChangeStudent, setStatusChangeStudent] = useState<Student | null>(null);
   const [viewHistoryStudent, setViewHistoryStudent] = useState<Student | null>(null);
   const [deletingStudent, setDeletingStudent] = useState<Student | null>(null);
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState<{ message: string; type: 'success' | 'error' | 'warning' | 'info' } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info') => {
+    setToastMessage({ message, type });
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
+  };
 
   const openEditModal = (student: Student) => {
     setEditingStudent(student);
@@ -281,7 +293,7 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
 
     const newHistoryRecord: StudentEnrollmentHistory = {
       id: `HIST-${statusChangeStudent.id}-${Date.now()}`,
-      date: '2026-08-18',
+      date: getTodayDateStr(),
       action: statusAction,
       actionName,
       fromClass: statusChangeStudent.className,
@@ -356,6 +368,13 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
             </button>
           )}
           <button
+            onClick={() => setIsBatchModalOpen(true)}
+            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-white hover:bg-[#F0F4F7] text-[#26313B] border border-[#DCE2E6] text-xs font-semibold rounded-lg shadow-2xs transition-colors"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-teal-600" />
+            <span>批量匯入學生</span>
+          </button>
+          <button
             onClick={() => setIsAddModalOpen(true)}
             className="inline-flex items-center space-x-1.5 px-4 py-2 bg-[#536B7A] hover:bg-[#455865] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors"
           >
@@ -364,6 +383,31 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
           </button>
         </div>
       </div>
+
+      {/* Floating Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 transition-all duration-300">
+          <div
+            className={`px-4 py-3 rounded-xl shadow-lg border text-xs font-bold flex items-center space-x-2 ${
+              toastMessage.type === 'success'
+                ? 'bg-emerald-800 text-white border-emerald-700'
+                : toastMessage.type === 'error'
+                ? 'bg-rose-800 text-white border-rose-700'
+                : toastMessage.type === 'warning'
+                ? 'bg-amber-800 text-white border-amber-700'
+                : 'bg-slate-800 text-white border-slate-700'
+            }`}
+          >
+            <span>{toastMessage.message}</span>
+            <button
+              onClick={() => setToastMessage(null)}
+              className="ml-2 text-white/70 hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Error Message Alert Banner */}
       {errorMessage && (
@@ -1252,6 +1296,19 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
           </div>
         </div>
       )}
+
+      {/* Modal 6: Batch Import Students Modal (Excel/CSV) */}
+      <BatchImportStudentModal
+        isOpen={isBatchModalOpen}
+        onClose={() => setIsBatchModalOpen(false)}
+        existingStudents={students}
+        onImportComplete={async () => {
+          if (onRefresh) {
+            await onRefresh();
+          }
+        }}
+        onShowToast={(msg, type) => showToast(msg, type)}
+      />
     </div>
   );
 };

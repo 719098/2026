@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { 
   Calculator, 
   Save, 
@@ -15,7 +15,7 @@ import {
   UserX
 } from 'lucide-react';
 import { Student, StudentGrade, CourseSession } from '../types';
-import { GRADE_WEIGHTS, calculateTotalGrade, getLetterGrade } from '../utils/gradeUtils';
+import { GRADE_WEIGHTS, calculateTotalGrade, getLetterGrade, calculateStudentAttendanceScore } from '../utils/gradeUtils';
 import { StudentAvatar } from './StudentAvatar';
 
 interface GradeManagementViewProps {
@@ -74,6 +74,22 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
     );
   }, [classStudents, searchQuery]);
 
+  // Helper to dynamically calculate real attendance score from attendance records:
+  // Present = 100%, Leave = 50%, Absent = 0%
+  // Attendance Grade = Attendance Rate * 20%
+  const getStudentAttendanceData = useCallback(
+    (studentId: string, studentClassName?: string) => {
+      const student = students.find((s) => s.id === studentId);
+      const attResult = calculateStudentAttendanceScore(studentId, allCourses, studentClassName || currentClassName);
+      const score = attResult.hasRecords ? attResult.attendanceScore : (student?.overallAttendanceRate ?? 0);
+      return {
+        attResult,
+        attendanceScore: score,
+      };
+    },
+    [students, allCourses, currentClassName]
+  );
+
   // Handler for numerical input changes
   const handleScoreChange = (
     studentId: string,
@@ -86,12 +102,14 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
     if (val > 100) val = 100;
     if (val < 0) val = 0;
 
+    const { attendanceScore } = getStudentAttendanceData(studentId, currentClassName);
+
     setLocalGrades((prev) => {
       const existing = prev[studentId] || {
         studentId,
         studentName,
         className: currentClassName,
-        attendanceScore: 100,
+        attendanceScore,
         quizScore: 80,
         midtermScore: 80,
         finalScore: 80,
@@ -102,6 +120,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
 
       const updated = {
         ...existing,
+        attendanceScore, // Always enforce dynamic attendance score from records
         [field]: val,
       };
 
@@ -124,14 +143,42 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
     setHasUnsavedChanges(true);
   };
 
-  // Save handler
+  // Save handler: guarantees real attendanceScore and recalculated totalScore are stored
   const handleSave = () => {
-    onUpdateGrades(localGrades);
+    const syncedGrades: Record<string, StudentGrade> = { ...localGrades };
+    classStudents.forEach((s) => {
+      const { attendanceScore } = getStudentAttendanceData(s.id, currentClassName);
+      const existing = syncedGrades[s.id];
+      const quiz = existing ? existing.quizScore : 85;
+      const mid = existing ? existing.midtermScore : 80;
+      const fin = existing ? existing.finalScore : 85;
+      const hw = existing ? existing.homeworkScore : 90;
+      const attid = existing ? existing.attitudeScore : 90;
+      const total = calculateTotalGrade(attendanceScore, quiz, mid, fin, hw, attid);
+
+      syncedGrades[s.id] = {
+        studentId: s.id,
+        studentName: s.name,
+        className: currentClassName,
+        classId: s.classId,
+        attendanceScore,
+        quizScore: quiz,
+        midtermScore: mid,
+        finalScore: fin,
+        homeworkScore: hw,
+        attitudeScore: attid,
+        totalScore: total,
+        updatedAt: new Date().toISOString().substring(0, 16).replace('T', ' '),
+      };
+    });
+
+    setLocalGrades(syncedGrades);
+    onUpdateGrades(syncedGrades);
     setHasUnsavedChanges(false);
-    onShowToast(`🎉 已成功儲存【${currentClassName}】全班成績資料！`, 'success');
+    onShowToast(`🎉 已成功儲存【${currentClassName}】全班成績資料（已自動同步實際出缺席成績）！`, 'success');
   };
 
-  // Class Stats Summary
+  // Class Stats Summary using dynamic attendance score
   const classStats = useMemo(() => {
     if (classStudents.length === 0) return { avgTotal: 0, passCount: 0, failCount: 0 };
     let sum = 0;
@@ -139,8 +186,15 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
     let fail = 0;
 
     classStudents.forEach((s) => {
+      const { attendanceScore } = getStudentAttendanceData(s.id, currentClassName);
       const g = localGrades[s.id];
-      const total = g ? g.totalScore : 0;
+      const quiz = g ? g.quizScore : 85;
+      const mid = g ? g.midtermScore : 80;
+      const fin = g ? g.finalScore : 85;
+      const hw = g ? g.homeworkScore : 90;
+      const attid = g ? g.attitudeScore : 90;
+      const total = calculateTotalGrade(attendanceScore, quiz, mid, fin, hw, attid);
+
       sum += total;
       if (total >= 60) pass++;
       else fail++;
@@ -151,34 +205,43 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
       passCount: pass,
       failCount: fail,
     };
-  }, [classStudents, localGrades]);
+  }, [classStudents, localGrades, getStudentAttendanceData, currentClassName]);
 
-  // Export CSV
+  // Export CSV using dynamic attendance score
   const handleExportCSV = () => {
     const headers = ['學號', '姓名', '英文姓名', '班級', '出席成績(20%)', '平時考(15%)', '期中考(20%)', '期末考(20%)', '作業(15%)', '學習態度(10%)', '總成績', '等第'];
     const rows = classStudents.map((s) => {
+      const { attendanceScore } = getStudentAttendanceData(s.id, currentClassName);
       const g = localGrades[s.id] || {
-        attendanceScore: 0,
-        quizScore: 0,
-        midtermScore: 0,
-        finalScore: 0,
-        homeworkScore: 0,
-        attitudeScore: 0,
+        attendanceScore,
+        quizScore: 85,
+        midtermScore: 80,
+        finalScore: 85,
+        homeworkScore: 90,
+        attitudeScore: 90,
         totalScore: 0,
       };
-      const letter = getLetterGrade(g.totalScore).letter;
+      const total = calculateTotalGrade(
+        attendanceScore,
+        g.quizScore,
+        g.midtermScore,
+        g.finalScore,
+        g.homeworkScore,
+        g.attitudeScore
+      );
+      const letter = getLetterGrade(total).letter;
       return [
         s.studentNumber,
         s.name,
         s.englishName,
         s.className,
-        g.attendanceScore,
+        attendanceScore,
         g.quizScore,
         g.midtermScore,
         g.finalScore,
         g.homeworkScore,
         g.attitudeScore,
-        g.totalScore,
+        total,
         letter,
       ];
     });
@@ -380,17 +443,28 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
 
             <tbody className="divide-y divide-slate-100 text-xs">
               {filteredStudents.map((student, index) => {
-                const grade = localGrades[student.id] || {
+                const { attResult, attendanceScore } = getStudentAttendanceData(student.id, currentClassName);
+                const existing = localGrades[student.id];
+                const quiz = existing ? existing.quizScore : 85;
+                const midterm = existing ? existing.midtermScore : 80;
+                const final = existing ? existing.finalScore : 85;
+                const homework = existing ? existing.homeworkScore : 90;
+                const attitude = existing ? existing.attitudeScore : 90;
+                const computedTotal = calculateTotalGrade(attendanceScore, quiz, midterm, final, homework, attitude);
+
+                const grade: StudentGrade = {
                   studentId: student.id,
                   studentName: student.name,
                   className: currentClassName,
-                  attendanceScore: Math.min(100, Math.round(student.overallAttendanceRate * 10) / 10),
-                  quizScore: 85,
-                  midtermScore: 80,
-                  finalScore: 85,
-                  homeworkScore: 90,
-                  attitudeScore: 90,
-                  totalScore: 86.5,
+                  classId: student.classId,
+                  attendanceScore,
+                  quizScore: quiz,
+                  midtermScore: midterm,
+                  finalScore: final,
+                  homeworkScore: homework,
+                  attitudeScore: attitude,
+                  totalScore: computedTotal,
+                  updatedAt: existing?.updatedAt,
                 };
 
                 const letter = getLetterGrade(grade.totalScore);
@@ -436,13 +510,35 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
 
                     {/* 1. 出席成績 (自動計算, 不可直接編輯) */}
                     <td className="py-3 px-3 text-center">
-                      <div className="inline-flex flex-col items-center justify-center bg-teal-50/80 border border-teal-200 px-3 py-1.5 rounded-xl">
-                        <span className="font-mono font-black text-sm text-teal-900">
-                          {grade.attendanceScore}
+                      <div className={`inline-flex flex-col items-center justify-center px-3 py-1.5 rounded-xl border ${
+                        grade.attendanceScore >= 80
+                          ? 'bg-teal-50/80 border-teal-200 text-teal-900'
+                          : grade.attendanceScore >= 60
+                          ? 'bg-amber-50/80 border-amber-200 text-amber-900'
+                          : 'bg-rose-50/80 border-rose-200 text-rose-900'
+                      }`}>
+                        <span className="font-mono font-black text-sm">
+                          {grade.attendanceScore}%
                         </span>
-                        <span className="text-[10px] text-teal-700 font-medium">
+                        <span className={`text-[10px] font-medium ${
+                          grade.attendanceScore >= 80
+                            ? 'text-teal-700'
+                            : grade.attendanceScore >= 60
+                            ? 'text-amber-700'
+                            : 'text-rose-700'
+                        }`}>
                           佔 {Math.round(grade.attendanceScore * 0.2 * 10) / 10} 分
                         </span>
+                        {attResult.hasRecords && (
+                          <span className="text-[9px] text-slate-500 mt-0.5 whitespace-nowrap">
+                            {attResult.presentPeriods > 0 && `${attResult.presentPeriods}出 `}
+                            {attResult.leavePeriods > 0 && `${attResult.leavePeriods}假 `}
+                            {attResult.absentPeriods > 0 && `${attResult.absentPeriods}缺`}
+                          </span>
+                        )}
+                        {!attResult.hasRecords && (
+                          <span className="text-[9px] text-slate-400 mt-0.5">尚未點名</span>
+                        )}
                       </div>
                     </td>
 

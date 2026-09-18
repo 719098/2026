@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 import { Teacher, UserRole, UserProfile } from '../types';
 import { TeacherAvatar } from './TeacherAvatar';
-import { TODAY_DATE } from '../utils/quarterScheduler';
 
 interface HeaderProps {
   currentRole: UserRole;

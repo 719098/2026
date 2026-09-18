@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -14,10 +14,10 @@ import {
 } from 'lucide-react';
 import { DayScheduleSummary } from '../types';
 import { formatDateFull, getAdjacentDate } from '../utils/dateUtils';
-import { TODAY_DATE } from '../utils/quarterScheduler';
+import { getTodayDateStr } from '../utils/quarterScheduler';
 
 interface DateNavigatorProps {
-  selectedDate: string; // "2026-08-11"
+  selectedDate: string; // "YYYY-MM-DD"
   onSelectDate: (date: string) => void;
   daySummaries: DayScheduleSummary[];
 }
@@ -27,8 +27,25 @@ export const DateNavigator: React.FC<DateNavigatorProps> = ({
   onSelectDate,
   daySummaries,
 }) => {
+  const todayStr = getTodayDateStr();
+  const currentTodayMonth = todayStr.slice(0, 7); // e.g. "2026-09"
   const fullDateDisplay = formatDateFull(selectedDate);
-  const isSelectedToday = selectedDate === TODAY_DATE;
+  const isSelectedToday = selectedDate === todayStr;
+
+  // Auto-scroll selected date pill into view
+  const selectedPillRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (selectedPillRef.current) {
+      selectedPillRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'center',
+      });
+    }
+  }, [selectedDate]);
+
+  const todayMonthDayDisplay = todayStr.slice(5).replace('-', '/'); // "MM/DD"
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-xs mb-6 overflow-hidden">
@@ -62,36 +79,36 @@ export const DateNavigator: React.FC<DateNavigatorProps> = ({
           {/* Quick Month Jumpers */}
           <div className="hidden sm:flex items-center space-x-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
             <button
-              onClick={() => onSelectDate('2026-07-01')}
+              onClick={() => onSelectDate(currentTodayMonth === '2026-07' ? todayStr : '2026-07-01')}
               className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
                 selectedDate.startsWith('2026-07') ? 'bg-white text-teal-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              7月 (開學)
+              7月 (開學){currentTodayMonth === '2026-07' ? ' • 今日' : ''}
             </button>
             <button
-              onClick={() => onSelectDate(TODAY_DATE)}
+              onClick={() => onSelectDate(currentTodayMonth === '2026-08' ? todayStr : '2026-08-01')}
               className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
                 selectedDate.startsWith('2026-08') ? 'bg-white text-teal-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              8月 (今日)
+              8月{currentTodayMonth === '2026-08' ? ' (今日)' : ''}
             </button>
             <button
-              onClick={() => onSelectDate('2026-09-01')}
+              onClick={() => onSelectDate(currentTodayMonth === '2026-09' ? todayStr : '2026-09-01')}
               className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
                 selectedDate.startsWith('2026-09') ? 'bg-white text-teal-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              9月
+              9月{currentTodayMonth === '2026-09' ? ' (今日)' : ''}
             </button>
             <button
-              onClick={() => onSelectDate('2026-10-01')}
+              onClick={() => onSelectDate(currentTodayMonth === '2026-10' ? todayStr : '2026-10-01')}
               className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
                 selectedDate.startsWith('2026-10') ? 'bg-white text-teal-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              10月 (結業)
+              10月 (結業){currentTodayMonth === '2026-10' ? ' • 今日' : ''}
             </button>
           </div>
 
@@ -107,15 +124,15 @@ export const DateNavigator: React.FC<DateNavigatorProps> = ({
 
           <button
             id="btn-today"
-            onClick={() => onSelectDate(TODAY_DATE)}
+            onClick={() => onSelectDate(getTodayDateStr())}
             className={`px-3.5 py-1.5 text-xs font-bold rounded-xl border transition-all shadow-2xs ${
               isSelectedToday
                 ? 'bg-teal-600 text-white border-teal-600 ring-2 ring-teal-200'
                 : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
             }`}
-            title={`回到系統今日基準日 (${TODAY_DATE})`}
+            title={`回到系統今日基準日 (${todayStr})`}
           >
-            今日 (08/11)
+            今日 ({todayMonthDayDisplay})
           </button>
 
           <button
@@ -156,6 +173,7 @@ export const DateNavigator: React.FC<DateNavigatorProps> = ({
               <button
                 key={day.date}
                 id={`date-pill-${day.date}`}
+                ref={isSelected ? selectedPillRef : null}
                 onClick={() => onSelectDate(day.date)}
                 className={`flex flex-col items-center justify-between p-2.5 rounded-2xl border text-center transition-all min-w-[110px] ${
                   isSelected

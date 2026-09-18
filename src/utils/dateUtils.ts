@@ -1,5 +1,5 @@
 import { DayScheduleSummary, CourseSession } from '../types';
-import { HOLIDAYS_CONFIG, TODAY_DATE, isWeekend, isHoliday } from './quarterScheduler';
+import { HOLIDAYS_CONFIG, getTodayDateStr, isWeekend, isHoliday } from './quarterScheduler';
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 
@@ -61,9 +61,10 @@ export function generateDateStrip(
     const holidayName = holidayInfo?.name;
     const { displayDate, weekday } = formatDateShort(curr);
 
-    const isToday = curr === TODAY_DATE;
-    const isPast = curr < TODAY_DATE;
-    const isFuture = curr > TODAY_DATE;
+    const today = getTodayDateStr();
+    const isToday = curr === today;
+    const isPast = curr < today;
+    const isFuture = curr > today;
 
     const dayCourses = courses.filter((c) => c.date === curr);
     const totalCourses = dayCourses.length;

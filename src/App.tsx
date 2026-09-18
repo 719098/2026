@@ -34,12 +34,6 @@ import {
   deleteClassInSupabase
 } from './lib/classService';
 import {
-  fetchCourseDefinitions,
-  createCourseDefinition,
-  updateCourseDefinition,
-  deleteCourseDefinition
-} from './lib/courseService';
-import {
   fetchTermsFromSupabase,
   createTermInSupabase,
   updateTermInSupabase,
@@ -69,7 +63,7 @@ import {
 import { AdminDashboardView } from './components/admin/AdminDashboardView';
 import { AdminStudentManagementView } from './components/admin/AdminStudentManagementView';
 import { AdminClassAssignmentView } from './components/admin/AdminClassAssignmentView';
-import { AdminCourseCatalogView } from './components/admin/AdminCourseCatalogView';
+import { AdminMaterialManagementView } from './components/admin/AdminMaterialManagementView';
 import { AdminTermManagementView } from './components/admin/AdminTermManagementView';
 import { AdminClassManagementView } from './components/admin/AdminClassManagementView';
 import { AdminTeacherManagementView } from './components/admin/AdminTeacherManagementView';
@@ -87,7 +81,6 @@ import {
   UserRole,
   UserProfile,
   AdminNavigationTab,
-  CourseDefinition,
   ClassEntity,
   Term,
   TransferClassRecord,
@@ -105,8 +98,8 @@ const DEFAULT_TEACHER: Teacher = {
   term: '2026 夏季班',
   assignedClasses: ['初級華語一', '中級華語二', '高級華語三'],
 };
-import { generateDateStrip, formatDateFull } from './utils/dateUtils';
-import { generateFullQuarterCourses, TODAY_DATE } from './utils/quarterScheduler';
+import { generateDateStrip, formatDateFull, getAdjacentDate } from './utils/dateUtils';
+import { generateFullQuarterCourses, getTodayDateStr } from './utils/quarterScheduler';
 import { generateAllInitialGrades } from './utils/gradeUtils';
 import { 
   Coffee, 
@@ -148,8 +141,8 @@ export default function App() {
   // Mobile sidebar drawer state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
 
-  // Active selected date (Anchor: 2026-08-11)
-  const [selectedDate, setSelectedDate] = useState<string>(TODAY_DATE);
+  // Active selected date (Dynamic Today via new Date())
+  const [selectedDate, setSelectedDate] = useState<string>(() => getTodayDateStr());
 
   // Selected student for detail popup modal
   const [selectedStudentForDetail, setSelectedStudentForDetail] = useState<Student | null>(null);
@@ -167,11 +160,9 @@ export default function App() {
   const [isStudentsLoading, setIsStudentsLoading] = useState<boolean>(false);
   const [studentsError, setStudentsError] = useState<string | null>(null);
 
-  // Supabase Classes & Courses & Terms (Directly loaded from Supabase, NO mock/localStorage fallback)
+  // Supabase Classes & Terms (Directly loaded from Supabase, NO mock/localStorage fallback)
   const [adminClasses, setAdminClasses] = useState<ClassEntity[]>([]);
-  const [adminCourses, setAdminCourses] = useState<CourseDefinition[]>([]);
   const [adminTerms, setAdminTerms] = useState<Term[]>([]);
-  const [isCoursesLoading, setIsCoursesLoading] = useState<boolean>(false);
   const [isTermsLoading, setIsTermsLoading] = useState<boolean>(false);
 
   const [adminTeachers, setAdminTeachers] = useState<Teacher[]>([]);
@@ -422,7 +413,6 @@ export default function App() {
   const loadSupabaseStudents = async () => {
     if (!isSupabaseConfigured() || !supabase) return;
     setIsStudentsLoading(true);
-    setIsCoursesLoading(true);
     setIsTermsLoading(true);
     setStudentsError(null);
     try {
@@ -436,14 +426,7 @@ export default function App() {
       }
       setAdminTerms(dbTerms || []);
 
-      // 2. Fetch courses directly from Supabase course_definitions table
-      const { data: dbCourses, error: courseErr } = await fetchCourseDefinitions();
-      if (courseErr) {
-        console.error('Failed to load courses from Supabase:', courseErr);
-      }
-      setAdminCourses(dbCourses || []);
-
-      // 3. Fetch classes directly from Supabase classes table
+      // 2. Fetch classes directly from Supabase classes table
       const { data: dbClasses, error: classErr } = await fetchClassesFromSupabase();
       if (classErr) {
         console.error('Failed to load classes from Supabase:', classErr);
@@ -486,7 +469,6 @@ export default function App() {
       setStudentsError(`載入資料時發生未預期錯誤: ${err.message || String(err)}`);
     } finally {
       setIsStudentsLoading(false);
-      setIsCoursesLoading(false);
       setIsTermsLoading(false);
     }
   };
@@ -551,7 +533,7 @@ export default function App() {
 
   // Reset full quarter data handler (re-sync with Supabase)
   const handleResetData = () => {
-    setSelectedDate(TODAY_DATE);
+    setSelectedDate(getTodayDateStr());
     setActiveAttendanceCourse(null);
     setSelectedStudentForDetail(null);
     loadSupabaseStudents();
@@ -639,52 +621,6 @@ export default function App() {
     await loadSupabaseStudents();
   };
 
-  // 3. Courses Definition Handlers (Supabase CRUD)
-  const handleAddCourse = async (newCourse: Partial<CourseDefinition>) => {
-    try {
-      const { data, error } = await createCourseDefinition(newCourse);
-      if (error || !data) {
-        showToast(`建立課程規格失敗: ${error?.message || '未知錯誤'}`, 'error');
-        throw error || new Error('新增課程失敗');
-      }
-      showToast(`✅ 已成功於 Supabase 建立課程規格：${data.name} (${data.code})`, 'success');
-      await loadSupabaseStudents();
-    } catch (err: any) {
-      console.error('handleAddCourse error:', err);
-      throw err;
-    }
-  };
-
-  const handleUpdateCourse = async (courseId: string, updatedCourse: Partial<CourseDefinition>) => {
-    try {
-      const { data, error } = await updateCourseDefinition(courseId, updatedCourse);
-      if (error || !data) {
-        showToast(`更新課程規格失敗: ${error?.message || '未知錯誤'}`, 'error');
-        throw error || new Error('更新課程失敗');
-      }
-      showToast(`✅ 已儲存【${data.name}】課程教材標準設定！`, 'success');
-      await loadSupabaseStudents();
-    } catch (err: any) {
-      console.error('handleUpdateCourse error:', err);
-      throw err;
-    }
-  };
-
-  const handleDeleteCourse = async (courseId: string) => {
-    try {
-      const { success, error } = await deleteCourseDefinition(courseId);
-      if (error || !success) {
-        showToast(error?.message || '刪除課程失敗', 'error');
-        throw error || new Error('刪除課程失敗');
-      }
-      showToast(`✅ 已成功刪除課程教材規格！`, 'success');
-      await loadSupabaseStudents();
-    } catch (err: any) {
-      console.error('handleDeleteCourse error:', err);
-      throw err;
-    }
-  };
-
   // 4. Terms Handlers (Supabase CRUD)
   const handleAddTerm = async (newTerm: Partial<Term>) => {
     try {
@@ -768,13 +704,15 @@ export default function App() {
     try {
       const { data, error } = await createClassInSupabase(newClass);
       if (error || !data) {
-        showToast(`開設新班級失敗: ${error?.message || '未知錯誤'}`, 'error');
-        throw error || new Error('新增班級失敗');
+        const msg = error?.message || '未知錯誤';
+        showToast(`開設新班級失敗: ${msg}`, 'error');
+        throw error || new Error(msg);
       }
-      showToast(`✅ 已成功開設新班級：${data.name}`, 'success');
       await loadSupabaseStudents();
+      showToast(`✅ 已成功開設新班級：${data.name}`, 'success');
     } catch (err: any) {
-      console.error('handleAddClass error:', err);
+      console.error('[handleAddClass error]:', err);
+      showToast(`❌ 開設新班級失敗: ${err.message || String(err)}`, 'error');
       throw err;
     }
   };
@@ -783,26 +721,28 @@ export default function App() {
     try {
       const { data, error } = await updateClassInSupabase(updatedClass.id, updatedClass);
       if (error || !data) {
-        showToast(`更新班級失敗: ${error?.message || '未知錯誤'}`, 'error');
-        throw error || new Error('更新班級失敗');
+        const msg = error?.message || '未知錯誤';
+        showToast(`更新班級失敗: ${msg}`, 'error');
+        throw error || new Error(msg);
       }
-      showToast(`✅ 已更新班級【${data.name}】開班資訊！`, 'success');
       await loadSupabaseStudents();
+      showToast(`✅ 已更新班級【${data.name}】開班資訊！`, 'success');
     } catch (err: any) {
-      console.error('handleUpdateClass error:', err);
+      console.error('[handleUpdateClass error]:', err);
+      showToast(`❌ 更新班級失敗: ${err.message || String(err)}`, 'error');
       throw err;
     }
   };
 
-  const handleToggleClassStatus = async (classId: string, currentStatus: string) => {
+  const handleToggleClassStatus = async (classId: string, nextStatus: string) => {
     try {
-      const nextStatus = currentStatus === 'OPEN' ? 'CLOSED' : 'OPEN';
-      const { success, error } = await toggleClassStatusInSupabase(classId, nextStatus);
+      const resolvedStatus = (nextStatus || '').toUpperCase() === 'OPEN' ? 'OPEN' : 'CLOSED';
+      const { success, error } = await toggleClassStatusInSupabase(classId, resolvedStatus);
       if (error || !success) {
         showToast(`切換班級狀態失敗: ${error?.message || '未知錯誤'}`, 'error');
         throw error || new Error('切換班級狀態失敗');
       }
-      showToast(`✅ 已將班級狀態更新為【${nextStatus === 'OPEN' ? '招生開放中' : '已關閉招生'}】！`, 'success');
+      showToast(`✅ 已將班級狀態更新為【${resolvedStatus === 'OPEN' ? '招生開放中 (OPEN)' : '已關閉/額滿 (CLOSED)'}】！`, 'success');
       await loadSupabaseStudents();
     } catch (err: any) {
       console.error('handleToggleClassStatus error:', err);
@@ -1037,10 +977,12 @@ export default function App() {
   }, [selectedDate, teacherCourses, adminLeaves]);
 
   const pendingMakeupCourses = useMemo(() => {
+    const today = getTodayDateStr();
+    const sevenDaysAgo = getAdjacentDate(today, -7);
     return teacherCourses.filter(
       (c) =>
-        c.date < TODAY_DATE &&
-        c.date >= '2026-08-04' &&
+        c.date < today &&
+        c.date >= sevenDaysAgo &&
         c.status === 'unmarked' &&
         !c.isLocked
     );
@@ -1130,7 +1072,12 @@ export default function App() {
     });
 
     setActiveAttendanceCourse(null);
-    showToast(`🎉 點名紀錄已成功寫入 Supabase 資料庫！`, 'success');
+    showToast(`🎉 點名紀錄已成功寫入 Supabase 資料庫！已自動重新計算學員出缺席與出席成績。`, 'success');
+
+    // Asynchronously reload students and grades so grade management view reflects the newly recorded attendance
+    loadSupabaseStudents().catch((err) => {
+      console.warn('[App] Background reload after attendance save failed:', err);
+    });
   };
 
   // Handler: Jump to target date
@@ -1147,7 +1094,8 @@ export default function App() {
         admin_students: '全校外籍學生基本資料與學籍管理',
         admin_enrollment: '學生分班與轉班作業中樞',
         admin_assignments: '學生分班與轉班作業中樞',
-        admin_courses: '教材／課程標準定義 (Courses Catalog)',
+        admin_courses: '課程分類定義 (Course Catalog)',
+        admin_materials: '教材主資料與班級教材進度規劃 (Materials Management)',
         admin_terms: '全校學期期別管理 (Term Management)',
         admin_classes: '實際開設班級管理 (Classes Management)',
         admin_teachers: '全校專兼任教師師資管理',
@@ -1313,12 +1261,20 @@ export default function App() {
               )}
 
               {adminActiveTab === 'admin_courses' && (
-                <AdminCourseCatalogView
-                  courses={adminCourses}
-                  onAddCourse={handleAddCourse}
-                  onUpdateCourse={handleUpdateCourse}
-                  onDeleteCourse={handleDeleteCourse}
-                  isLoading={isCoursesLoading}
+                <AdminMaterialManagementView
+                  classes={adminClasses}
+                  onRefreshMaterials={() => {
+                    loadSupabaseStudents();
+                  }}
+                />
+              )}
+
+              {adminActiveTab === 'admin_materials' && (
+                <AdminMaterialManagementView
+                  classes={adminClasses}
+                  onRefreshMaterials={() => {
+                    loadSupabaseStudents();
+                  }}
                 />
               )}
 
@@ -1341,7 +1297,6 @@ export default function App() {
               {adminActiveTab === 'admin_classes' && (
                 <AdminClassManagementView
                   classes={adminClasses}
-                  courses={adminCourses}
                   teachers={adminTeachers}
                   students={dbStudents}
                   terms={adminTerms}
@@ -1436,7 +1391,7 @@ export default function App() {
                   <LeaveNoticeBanner leaves={currentDayLeaves} />
 
                   {/* Pending Makeup Alert if past courses within 7 days need attention */}
-                  {selectedDate === TODAY_DATE && (
+                  {selectedDate === getTodayDateStr() && (
                     <PendingMakeupAlert
                       pendingCourses={pendingMakeupCourses}
                       onSelectCourseDate={(date) => setSelectedDate(date)}
@@ -1470,10 +1425,10 @@ export default function App() {
                         此日期為週末公休日、國定假日或無課程安排。您可點擊上方日期導覽切換至其他上課日。
                       </p>
                       <button
-                        onClick={() => setSelectedDate(TODAY_DATE)}
+                        onClick={() => setSelectedDate(getTodayDateStr())}
                         className="mt-4 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center space-x-1.5"
                       >
-                        <span>返回今日 ({TODAY_DATE.slice(5)})</span>
+                        <span>返回今日 ({getTodayDateStr().slice(5).replace('-', '/')})</span>
                         <ArrowRight className="w-3.5 h-3.5" />
                       </button>
                     </div>

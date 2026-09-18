@@ -105,26 +105,13 @@ export interface Term {
   updatedAt?: string;
 }
 
-// COURSE: 教材 / 課程標準定義（例如：初級華語一、商務華語）
-export interface CourseDefinition {
-  id: string;
-  code: string; // e.g. "CHN-101"
-  name: string; // e.g. "初級華語一"
-  level: string; // e.g. "初級 A1" | "中級 B1" | "高級 C1"
-  textbook: string; // e.g. "《當代中文課程》第一冊"
-  suggestedHours: number; // 建議總時數 e.g. 165 或 110
-  description: string;
-  targetAudience: string;
-  createdAt: string;
-}
-
 // CLASS: 實際開設的班級（例如：2026 夏季 初級華語一 A班）
 export interface ClassEntity {
   id: string;
   classCode: string; // e.g. "2026S-LV1-A"
-  name: string; // e.g. "2026 夏季 初級華語一 A班" (或縮稱 "初級華語一")
-  courseId: string; // 關聯 CourseDefinition.id
-  courseName: string; // 課程定義名稱
+  name: string; // e.g. "2026 夏季 初級華語一 A班"
+  courseId?: string;
+  courseName?: string;
   teacherId: string; // 授課教師 ID
   teacherName: string; // 授課教師姓名
   classroom: string; // e.g. "華語中心 302 教室"
@@ -136,9 +123,14 @@ export interface ClassEntity {
   weeklyDays: number[]; // [1, 2, 3, 4, 5] (週一至週五)
   timeSlot: string; // "09:00 - 12:00"
   totalTargetHours: number; // 165
-  maxCapacity: number; // e.g. 15
+  maxCapacity: number; // e.g. 40
+  capacity: number; // 班級容量 (預設 40，可由 ADMIN 修改)
   studentCount: number;
   studentIds: string[];
+  materials?: any[]; // 已指派教材列表
+  materialIds?: string[]; // 選取的最多 2 個教材 ID
+  materialNames?: string[]; // 選取的最多 2 個教材名稱
+  remarks?: string; // 備註 (進度備註)
   status: 'planning' | 'ongoing' | 'completed' | 'OPEN' | 'CLOSED' | string;
 }
 
@@ -310,6 +302,8 @@ export interface StudentPeriodAttendance {
   period3?: AttendanceStatus; // For 3-hour and 4-hour classes
   period4?: AttendanceStatus; // For 4-hour intensive classes
   remarks?: string;
+  evidenceImagePath?: string;
+  evidenceImageUrl?: string;
 }
 
 export interface RescheduleInfo {
@@ -397,7 +391,8 @@ export type AdminNavigationTab =
   | 'admin_enrollment'    // 學生分班與轉班
   | 'admin_assignments'   // 學生分班與轉班
   | 'admin_terms'         // 學期期別管理 (Terms)
-  | 'admin_courses'       // 教材課程定義 (Courses)
+  | 'admin_courses'       // 教材與班級進度管理
+  | 'admin_materials'     // 教材主資料與班級教材管理 (Materials)
   | 'admin_classes'       // 開設班級管理 (Classes)
   | 'admin_teachers'      // 教師師資管理
   | 'admin_schedule'      // 全校排課與調課

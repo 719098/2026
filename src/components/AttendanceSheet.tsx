@@ -15,7 +15,8 @@ import {
   MessageSquare,
   Lock,
   Calendar,
-  Sparkles
+  Sparkles,
+  Image as ImageIcon
 } from 'lucide-react';
 import { 
   CourseSession, 
@@ -25,13 +26,14 @@ import {
   LeaveRecord 
 } from '../types';
 import { StudentAvatar } from './StudentAvatar';
+import { StudentRemarkModal } from './StudentRemarkModal';
 import { 
   calculateAttendanceStats, 
   getDefaultAttendanceForStudents, 
   applyApprovedLeaves,
   getStudentIndividualHours 
 } from '../utils/attendanceUtils';
-import { TODAY_DATE, getDaysDifference } from '../utils/quarterScheduler';
+import { getTodayDateStr, getDaysDifference } from '../utils/quarterScheduler';
 
 interface AttendanceSheetProps {
   course: CourseSession;
@@ -57,9 +59,10 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
   const is4H = periodsCount >= 4;
 
   // Check 7-day makeup deadline:
-  // If course.date < TODAY_DATE and days difference > 7 days, it's overdue
-  const daysSinceCourse = getDaysDifference(TODAY_DATE, course.date);
-  const isOverdue = daysSinceCourse > 7;
+  // If course.date < today and days difference > 7 days, it's overdue
+  const todayDateStr = getTodayDateStr();
+  const daysSinceCourse = getDaysDifference(todayDateStr, course.date);
+  const isOverdue = course.date < todayDateStr && daysSinceCourse > 7;
   const isReadOnly = explicitReadOnly || isOverdue || course.isLocked;
 
   // Initialize state: default to all present
@@ -70,8 +73,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
     return getDefaultAttendanceForStudents(students, periodsCount);
   });
 
-  const [activeRemarkStudentId, setActiveRemarkStudentId] = useState<string | null>(null);
-  const [remarkInput, setRemarkInput] = useState<string>('');
+  const [modalStudent, setModalStudent] = useState<Student | null>(null);
   const [filterQuery, setFilterQuery] = useState<string>('');
 
   // Calculate live statistics
@@ -172,25 +174,26 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
     }
   };
 
-  // Save remark
-  const handleSaveRemark = (studentId: string) => {
+  // Save remark & evidence from modal
+  const handleRemarksUpdate = (studentId: string, updatedRemarks: string, evidenceImagePath?: string, evidenceImageUrl?: string) => {
     setAttendance((prev) => {
       const current = prev[studentId] || { 
         period1: 'present', 
         period2: 'present', 
-        period3: is3H ? 'present' : undefined 
+        period3: is3H ? 'present' : undefined,
+        period4: is4H ? 'present' : undefined,
       };
       return {
         ...prev,
         [studentId]: {
           ...current,
-          remarks: remarkInput,
+          remarks: updatedRemarks || undefined,
+          evidenceImagePath: evidenceImagePath || undefined,
+          evidenceImageUrl: evidenceImageUrl || undefined,
         },
       };
     });
-    setActiveRemarkStudentId(null);
-    setRemarkInput('');
-    onShowToast('備註已更新', 'info');
+    onShowToast('學生點名備註與佐證資料已更新', 'success');
   };
 
   // Submit Handler
@@ -287,88 +290,6 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
         </div>
       </div>
 
-      {/* Real-time Statistics Banner */}
-      <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-2xl p-5 shadow-md">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-700/80 pb-4">
-          <div>
-            <span className="text-xs font-bold text-teal-400 uppercase tracking-wider">即時點名統計儀表板</span>
-            <h2 className="text-lg font-bold text-white mt-0.5">
-              全堂出席率：
-              <span className={`text-2xl font-black ml-2 ${
-                stats.attendanceRate >= 90 ? 'text-emerald-400' : stats.attendanceRate >= 80 ? 'text-yellow-400' : 'text-rose-400'
-              }`}>
-                {stats.attendanceRate}%
-              </span>
-            </h2>
-          </div>
-
-          {/* Total Hours Breakdown */}
-          <div className="flex flex-wrap items-center gap-3 text-xs">
-            <div className="bg-slate-800 px-3 py-2 rounded-xl border border-slate-700 flex items-center space-x-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
-              <span className="text-slate-300">出席總時數:</span>
-              <span className="text-sm font-extrabold text-white font-mono">{stats.totalPresentHours} 小時</span>
-            </div>
-
-            <div className="bg-slate-800 px-3 py-2 rounded-xl border border-slate-700 flex items-center space-x-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-blue-400"></span>
-              <span className="text-slate-300">請假總時數:</span>
-              <span className="text-sm font-extrabold text-blue-300 font-mono">{stats.totalLeaveHours} 小時</span>
-            </div>
-
-            <div className="bg-slate-800 px-3 py-2 rounded-xl border border-slate-700 flex items-center space-x-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-rose-400"></span>
-              <span className="text-slate-300">缺席總時數:</span>
-              <span className="text-sm font-extrabold text-rose-300 font-mono">{stats.totalAbsentHours} 小時</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Periods Individual Counters */}
-        <div className={`grid grid-cols-1 ${is3H ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-3 pt-4`}>
-          {/* Period 1 */}
-          <div className="bg-slate-800/80 rounded-xl p-3 border border-slate-700">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-teal-300">第 1 節 ({course.periodTimes[0] || '第1節'})</span>
-              <span className="text-[11px] text-slate-400 font-mono">共 {stats.totalStudents} 人</span>
-            </div>
-            <div className="flex items-center justify-between text-xs font-medium">
-              <span className="text-emerald-400">🟢 出席 {stats.period1.present}</span>
-              <span className="text-blue-300">🔵 請假 {stats.period1.leave}</span>
-              <span className="text-rose-400">🔴 缺席 {stats.period1.absent}</span>
-            </div>
-          </div>
-
-          {/* Period 2 */}
-          <div className="bg-slate-800/80 rounded-xl p-3 border border-slate-700">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-teal-300">第 2 節 ({course.periodTimes[1] || '第2節'})</span>
-              <span className="text-[11px] text-slate-400 font-mono">共 {stats.totalStudents} 人</span>
-            </div>
-            <div className="flex items-center justify-between text-xs font-medium">
-              <span className="text-emerald-400">🟢 出席 {stats.period2.present}</span>
-              <span className="text-blue-300">🔵 請假 {stats.period2.leave}</span>
-              <span className="text-rose-400">🔴 缺席 {stats.period2.absent}</span>
-            </div>
-          </div>
-
-          {/* Period 3 (Only if 3-hour class!) */}
-          {is3H && stats.period3 && (
-            <div className="bg-slate-800/80 rounded-xl p-3 border border-slate-700">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-teal-300">第 3 節 ({course.periodTimes[2] || '第3節'})</span>
-                <span className="text-[11px] text-slate-400 font-mono">共 {stats.totalStudents} 人</span>
-              </div>
-              <div className="flex items-center justify-between text-xs font-medium">
-                <span className="text-emerald-400">🟢 出席 {stats.period3.present}</span>
-                <span className="text-blue-300">🔵 請假 {stats.period3.leave}</span>
-                <span className="text-rose-400">🔴 缺席 {stats.period3.absent}</span>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Quick Batch Actions & Filter Bar */}
       <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4">
         {/* Left: Quick Batch Buttons */}
@@ -429,22 +350,22 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                 <th className="py-3.5 px-4 min-w-[200px]">學生資訊</th>
                 <th className="py-3.5 px-3 text-center min-w-[150px]">
                   <div>第 1 節</div>
-                  <div className="text-[10px] font-normal text-slate-500">{course.periodTimes[0] || '09:00-09:50'}</div>
+                  <div className="text-[10px] font-normal text-slate-500">{course?.periodTimes?.[0] || '09:00-09:50'}</div>
                 </th>
                 <th className="py-3.5 px-3 text-center min-w-[150px]">
                   <div>第 2 節</div>
-                  <div className="text-[10px] font-normal text-slate-500">{course.periodTimes[1] || '10:00-10:50'}</div>
+                  <div className="text-[10px] font-normal text-slate-500">{course?.periodTimes?.[1] || '10:00-10:50'}</div>
                 </th>
                 {is3H && (
                   <th className="py-3.5 px-3 text-center min-w-[150px]">
                     <div>第 3 節</div>
-                    <div className="text-[10px] font-normal text-slate-500">{course.periodTimes[2] || '11:00-11:50'}</div>
+                    <div className="text-[10px] font-normal text-slate-500">{course?.periodTimes?.[2] || '11:00-11:50'}</div>
                   </th>
                 )}
                 {is4H && (
                   <th className="py-3.5 px-3 text-center min-w-[150px]">
                     <div>第 4 節</div>
-                    <div className="text-[10px] font-normal text-slate-500">{course.periodTimes[3] || '12:00-12:50'}</div>
+                    <div className="text-[10px] font-normal text-slate-500">{course?.periodTimes?.[3] || '12:00-12:50'}</div>
                   </th>
                 )}
                 <th className="py-3.5 px-3 text-center min-w-[140px]">整堂快捷</th>
@@ -714,62 +635,49 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                       </div>
                     </td>
 
-                    {/* Remarks */}
+                    {/* Remarks & Evidence Button */}
                     <td className="py-3 px-4 text-right">
-                      {activeRemarkStudentId === student.id ? (
-                        <div className="flex items-center justify-end space-x-1">
-                          <input
-                            type="text"
-                            value={remarkInput}
-                            onChange={(e) => setRemarkInput(e.target.value)}
-                            placeholder="輸入事由..."
-                            className="px-2 py-1 text-xs border border-slate-300 rounded bg-white w-32 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                            autoFocus
-                          />
-                          <button
-                            onClick={() => handleSaveRemark(student.id)}
-                            className="p-1 bg-teal-600 text-white rounded hover:bg-teal-700"
+                      <div className="flex items-center justify-end space-x-1.5">
+                        {record.remarks && (
+                          <span 
+                            onClick={() => setModalStudent(student)}
+                            className="text-[11px] text-slate-700 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-md max-w-[120px] truncate cursor-pointer border border-slate-200"
+                            title={record.remarks}
                           >
-                            <Check className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => setActiveRemarkStudentId(null)}
-                            className="p-1 bg-slate-200 text-slate-700 rounded hover:bg-slate-300"
+                            {record.remarks}
+                          </span>
+                        )}
+
+                        {record.evidenceImageUrl && (
+                          <a
+                            href={record.evidenceImageUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="p-1 text-teal-600 hover:text-teal-800 bg-teal-50 hover:bg-teal-100 rounded-md transition-colors"
+                            title="檢視佐證照片"
+                            onClick={(e) => e.stopPropagation()}
                           >
-                            <X className="w-3.5 h-3.5" />
+                            <ImageIcon className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+
+                        {!isReadOnly ? (
+                          <button
+                            type="button"
+                            onClick={() => setModalStudent(student)}
+                            className={`p-1 rounded-md transition-colors ${
+                              record.remarks || record.evidenceImagePath 
+                                ? 'text-teal-600 hover:bg-teal-50' 
+                                : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
+                            }`}
+                            title={record.remarks ? "編輯事由與佐證照片" : "新增事由與佐證照片"}
+                          >
+                            <MessageSquare className="w-3.5 h-3.5" />
                           </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-end space-x-1">
-                          {record.remarks ? (
-                            <span 
-                              onClick={() => {
-                                if (!isReadOnly) {
-                                  setActiveRemarkStudentId(student.id);
-                                  setRemarkInput(record.remarks || '');
-                                }
-                              }}
-                              className="text-[11px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded max-w-[120px] truncate cursor-pointer hover:bg-slate-200"
-                              title={record.remarks}
-                            >
-                              {record.remarks}
-                            </span>
-                          ) : !isReadOnly ? (
-                            <button
-                              onClick={() => {
-                                setActiveRemarkStudentId(student.id);
-                                setRemarkInput('');
-                              }}
-                              className="text-slate-400 hover:text-slate-600 p-1"
-                              title="新增備註"
-                            >
-                              <MessageSquare className="w-3.5 h-3.5" />
-                            </button>
-                          ) : (
-                            <span className="text-slate-400 text-[11px]">-</span>
-                          )}
-                        </div>
-                      )}
+                        ) : !record.remarks && !record.evidenceImageUrl ? (
+                          <span className="text-slate-400 text-[11px]">-</span>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -778,6 +686,21 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Student Remark Modal */}
+      {modalStudent && (
+        <StudentRemarkModal
+          isOpen={Boolean(modalStudent)}
+          onClose={() => setModalStudent(null)}
+          student={modalStudent}
+          sessionId={course.id}
+          courseName={course.courseName}
+          className={course.className}
+          currentAttendance={attendance[modalStudent.id] || { period1: 'present', period2: 'present' }}
+          onSave={(newRemarks, imgPath, imgUrl) => handleRemarksUpdate(modalStudent.id, newRemarks, imgPath, imgUrl)}
+          isReadOnly={isReadOnly}
+        />
+      )}
 
       {/* Floating Bottom Sticky Action Bar */}
       {!isReadOnly && (

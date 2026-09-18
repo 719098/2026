@@ -586,3 +586,119 @@ export async function batchResolveTeacherAvatars(
 
   return updatedTeachers;
 }
+
+/**
+ * Attendance Evidence Images Support (attendance-evidence bucket)
+ */
+const ALLOWED_EVIDENCE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_EVIDENCE_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+
+export function validateEvidenceFile(file: File): { valid: boolean; error?: string } {
+  if (!file) {
+    return { valid: false, error: '請選擇佐證照片檔案' };
+  }
+
+  if (!ALLOWED_EVIDENCE_MIME_TYPES.includes(file.type.toLowerCase())) {
+    return {
+      valid: false,
+      error: '佐證照片格式不符：僅支援 JPG、PNG 或 WebP 格式',
+    };
+  }
+
+  if (file.size > MAX_EVIDENCE_FILE_SIZE) {
+    const mb = (file.size / (1024 * 1024)).toFixed(2);
+    return {
+      valid: false,
+      error: `檔案過大 (${mb} MB)：佐證照片大小不得超過 5 MB`,
+    };
+  }
+
+  return { valid: true };
+}
+
+export function extractEvidenceStoragePath(urlOrPath?: string | null): string | null {
+  if (!urlOrPath || typeof urlOrPath !== 'string') return null;
+
+  if (urlOrPath.startsWith('attendance-evidence/')) {
+    return urlOrPath.replace('attendance-evidence/', '');
+  }
+
+  if (urlOrPath.includes('/attendance-evidence/')) {
+    const parts = urlOrPath.split('/attendance-evidence/');
+    if (parts[1]) {
+      return parts[1].split('?')[0];
+    }
+  }
+
+  return urlOrPath.split('?')[0];
+}
+
+export async function uploadAttendanceEvidenceImage(
+  sessionId: string,
+  studentId: string,
+  file: File
+): Promise<{ success: boolean; storagePath?: string; signedUrl?: string; error?: string }> {
+  if (!supabase) {
+    return { success: false, error: 'Supabase client is not initialized' };
+  }
+
+  const validation = validateEvidenceFile(file);
+  if (!validation.valid) {
+    return { success: false, error: validation.error };
+  }
+
+  const fileExt = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+  const targetFilePath = `${sessionId}/${studentId}_${Date.now()}.${fileExt}`;
+
+  try {
+    const { error: uploadError } = await supabase.storage
+      .from('attendance-evidence')
+      .upload(targetFilePath, file, {
+        upsert: true,
+        contentType: file.type,
+      });
+
+    if (uploadError) {
+      console.error('[StorageService] Error uploading evidence to Supabase Storage:', uploadError);
+      return { success: false, error: uploadError.message };
+    }
+
+    const { data: signedData } = await supabase.storage
+      .from('attendance-evidence')
+      .createSignedUrl(targetFilePath, 60 * 60 * 24);
+
+    return {
+      success: true,
+      storagePath: targetFilePath,
+      signedUrl: signedData?.signedUrl || targetFilePath,
+    };
+  } catch (err: any) {
+    console.error('[StorageService] Exception during evidence upload:', err);
+    return { success: false, error: err.message || String(err) };
+  }
+}
+
+export async function getAttendanceEvidenceSignedUrl(
+  pathOrUrl?: string | null,
+  expiresInSeconds = 60 * 60 * 24
+): Promise<string | null> {
+  if (!pathOrUrl) return null;
+  if (!supabase) return pathOrUrl;
+
+  const storagePath = extractEvidenceStoragePath(pathOrUrl);
+  if (!storagePath) return pathOrUrl;
+
+  try {
+    const { data, error } = await supabase.storage
+      .from('attendance-evidence')
+      .createSignedUrl(storagePath, expiresInSeconds);
+
+    if (error || !data?.signedUrl) {
+      return pathOrUrl;
+    }
+    return data.signedUrl;
+  } catch {
+    return pathOrUrl;
+  }
+}
+

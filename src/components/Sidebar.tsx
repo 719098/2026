@@ -140,9 +140,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: ArrowRightLeft,
     },
     {
-      id: 'admin_courses',
-      label: '教材／課程定義',
-      icon: BookOpen,
+      id: 'admin_materials',
+      label: '教材與班級進度',
+      icon: Layers,
     },
     {
       id: 'admin_terms',

@@ -18,7 +18,7 @@ import {
   Building2
 } from 'lucide-react';
 import { Student, Teacher, CourseSession, LeaveRecord, ClassEntity, AdminNavigationTab } from '../../types';
-import { TODAY_DATE } from '../../utils/quarterScheduler';
+import { getTodayDateStr } from '../../utils/quarterScheduler';
 import { formatDateFull } from '../../utils/dateUtils';
 import { StudentAvatar } from '../StudentAvatar';
 
@@ -41,15 +41,17 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onNavigateTab,
   onSelectStudentDetail,
 }) => {
+  const todayStr = getTodayDateStr();
+
   // Today's courses across all classes
-  const todayCourses = allCourses.filter((c) => c.date === TODAY_DATE);
+  const todayCourses = allCourses.filter((c) => c.date === todayStr);
   const completedTodayCourses = todayCourses.filter((c) => c.status === 'completed');
   const pendingTodayCourses = todayCourses.filter(
     (c) => c.status === 'unmarked' || c.status === 'in_progress'
   );
 
   // Today's leaves
-  const todayLeaves = leaves.filter((l) => l.date === TODAY_DATE);
+  const todayLeaves = leaves.filter((l) => l.date === todayStr);
   const pendingLeaves = leaves.filter((l) => l.status === 'pending');
 
   // Visa warning students (< 80% attendance rate)
@@ -81,7 +83,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             早安，系統管理員
           </h1>
           <p className="text-[#66717C] text-xs sm:text-sm mt-1.5 max-w-2xl leading-relaxed">
-            以下是今天華語中心的營運概況。今日日期：<strong className="text-[#26313B] font-semibold">{formatDateFull(TODAY_DATE)}</strong>。全校共開設 <strong className="text-[#26313B] font-semibold">{classes.length} 個班級</strong>、在籍外籍學員 <strong className="text-[#26313B] font-semibold">{students.length} 位</strong>、專任授課教師 <strong className="text-[#26313B] font-semibold">{teachers.length} 位</strong>。
+            以下是今天華語中心的營運概況。今日日期：<strong className="text-[#26313B] font-semibold">{formatDateFull(todayStr)}</strong>。全校共開設 <strong className="text-[#26313B] font-semibold">{classes.length} 個班級</strong>、在籍外籍學員 <strong className="text-[#26313B] font-semibold">{students.length} 位</strong>、專任授課教師 <strong className="text-[#26313B] font-semibold">{teachers.length} 位</strong>。
           </p>
         </div>
       </div>
