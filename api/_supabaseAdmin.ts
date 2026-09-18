@@ -1,5 +1,53 @@
 import { createClient } from '@supabase/supabase-js';
 
+// Safe JSON response helper compatible with all Vercel/Node runtimes
+export function sendJsonResponse(res: any, statusCode: number, data: any) {
+  try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    if (typeof res.status === 'function' && typeof res.json === 'function') {
+      return res.status(statusCode).json(data);
+    }
+  } catch (e) {
+    console.warn('[sendJsonResponse] Standard response method warning:', e);
+  }
+  try {
+    res.statusCode = statusCode;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify(data));
+  } catch (err) {
+    console.error('[sendJsonResponse] Fallback response error:', err);
+  }
+}
+
+// Safe asynchronous request body parser
+export async function parseRequestBody(req: any): Promise<any> {
+  if (!req) return {};
+  if (req.body) {
+    if (typeof req.body === 'string') {
+      try {
+        return JSON.parse(req.body);
+      } catch {
+        return {};
+      }
+    }
+    return req.body;
+  }
+  if (typeof req.on === 'function') {
+    try {
+      const chunks: any[] = [];
+      for await (const chunk of req) {
+        chunks.push(chunk);
+      }
+      const raw = Buffer.concat(chunks).toString('utf-8');
+      if (!raw || !raw.trim()) return {};
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
 export function getValidSupabaseUrl(): string {
   const candidates = [
     process.env.SUPABASE_URL,
@@ -35,16 +83,14 @@ export function getAdminSupabaseClient() {
 
   const activeKey = serviceRoleKey || anonKey;
 
-  if (!activeKey) {
-    throw new Error('伺服器未設定 Supabase 金鑰');
-  }
-
-  const client = createClient(supabaseUrl, activeKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
+  const client = activeKey
+    ? createClient(supabaseUrl, activeKey, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+        },
+      })
+    : null;
 
   return {
     client,
@@ -73,16 +119,4 @@ export function calculateNextTeacherNo(teachers: any[]): string {
     return `T${String(nextNum).padStart(3, '0')}`;
   }
   return `T${nextNum}`;
-}
-
-export function parseRequestBody(req: any): any {
-  if (!req.body) return {};
-  if (typeof req.body === 'string') {
-    try {
-      return JSON.parse(req.body);
-    } catch {
-      return {};
-    }
-  }
-  return req.body;
 }

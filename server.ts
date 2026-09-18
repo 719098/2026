@@ -62,11 +62,11 @@ app.post("/api/admin/create-teacher", async (req, res) => {
   const cleanPassword = typeof password === 'string' ? password : '';
 
   if (!cleanName || !cleanEmail) {
-    return res.status(400).json({ error: '教師姓名與 Email 為必填欄位' });
+    return res.status(400).json({ success: false, error: '教師姓名與 Email 為必填欄位' });
   }
 
   if (!cleanPassword || cleanPassword.length < 6) {
-    return res.status(400).json({ error: '密碼為必填欄位且長度至少需要 6 位數' });
+    return res.status(400).json({ success: false, error: '密碼為必填欄位且長度至少需要 6 位數' });
   }
 
   const supabaseUrl = getValidSupabaseUrl();
@@ -76,7 +76,7 @@ app.post("/api/admin/create-teacher", async (req, res) => {
   const activeKey = serviceRoleKey || anonKey;
 
   if (!activeKey) {
-    return res.status(500).json({ error: '伺服器未設定 Supabase 金鑰' });
+    return res.status(500).json({ success: false, error: '伺服器未設定 Supabase 金鑰' });
   }
 
   const adminSupabase = createClient(supabaseUrl, activeKey, {
@@ -150,12 +150,14 @@ app.post("/api/admin/create-teacher", async (req, res) => {
             });
           } else {
             return res.status(400).json({
+              success: false,
               error: `建立 Supabase 登入帳號失敗: ${errMsg}`,
             });
           }
         } else {
           console.error('[Server API] auth.admin.createUser error:', authErr);
           return res.status(400).json({
+            success: false,
             error: `建立 Supabase 登入帳號失敗: ${errMsg}`,
           });
         }
@@ -164,6 +166,7 @@ app.post("/api/admin/create-teacher", async (req, res) => {
       }
     } else {
       return res.status(400).json({
+        success: false,
         error: '系統未設定 SUPABASE_SERVICE_ROLE_KEY 環境變數。管理員建立 Auth 帳號需要 Service Role Key 權限，請在 .env 中設定 SUPABASE_SERVICE_ROLE_KEY。',
       });
     }
@@ -194,6 +197,7 @@ app.post("/api/admin/create-teacher", async (req, res) => {
         }
 
         return res.status(400).json({
+          success: false,
           error: `寫入 public.profiles 資料表失敗 [${profileErr.code || 'ERR'}]: ${profileErr.message || String(profileErr)}`,
         });
       }
@@ -238,6 +242,7 @@ app.post("/api/admin/create-teacher", async (req, res) => {
       if (updateErr) {
         console.error('[Server API] public.teachers update error:', updateErr);
         return res.status(400).json({
+          success: false,
           error: `更新 public.teachers 資料表失敗: ${updateErr.message}`,
         });
       }
@@ -262,6 +267,7 @@ app.post("/api/admin/create-teacher", async (req, res) => {
         }
 
         return res.status(400).json({
+          success: false,
           error: `寫入 public.teachers 資料表失敗 [${insertErr.code || 'ERR'}]: ${insertErr.message || String(insertErr)}`,
         });
       }
@@ -290,6 +296,7 @@ app.post("/api/admin/create-teacher", async (req, res) => {
   } catch (err: any) {
     console.error('[Server API] Unexpected exception in /api/admin/create-teacher:', err);
     return res.status(500).json({
+      success: false,
       error: `建立教師時發生伺服器錯誤: ${err.message || String(err)}`,
     });
   }

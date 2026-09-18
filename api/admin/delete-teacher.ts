@@ -1,19 +1,119 @@
-import { getAdminSupabaseClient, parseRequestBody } from '../_supabaseAdmin';
+import { createClient } from '@supabase/supabase-js';
+
+function sendJsonResponse(res: any, statusCode: number, data: any) {
+  try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    if (typeof res.status === 'function' && typeof res.json === 'function') {
+      return res.status(statusCode).json(data);
+    }
+  } catch (e) {
+    console.warn('[Vercel API delete-teacher] Standard response warning:', e);
+  }
+  try {
+    res.statusCode = statusCode;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify(data));
+  } catch (err) {
+    console.error('[Vercel API delete-teacher] Fallback response error:', err);
+  }
+}
+
+async function readRequestBody(req: any): Promise<any> {
+  if (!req) return {};
+  if (req.body) {
+    if (typeof req.body === 'string') {
+      try {
+        return JSON.parse(req.body);
+      } catch {
+        return {};
+      }
+    }
+    return req.body;
+  }
+  if (typeof req.on === 'function') {
+    try {
+      const chunks: any[] = [];
+      for await (const chunk of req) {
+        chunks.push(chunk);
+      }
+      const raw = Buffer.concat(chunks).toString('utf-8');
+      if (!raw || !raw.trim()) return {};
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function getValidSupabaseUrl(): string {
+  const candidates = [
+    process.env.SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.VITE_SUPABASE_URL,
+    'https://rcvetyahocznanvbggqf.supabase.co',
+  ];
+  for (const url of candidates) {
+    if (url && typeof url === 'string') {
+      const trimmed = url.trim();
+      if (
+        (trimmed.startsWith('http://') || trimmed.startsWith('https://')) &&
+        !trimmed.includes('@')
+      ) {
+        return trimmed;
+      }
+    }
+  }
+  return 'https://rcvetyahocznanvbggqf.supabase.co';
+}
 
 export default async function handler(req: any, res: any) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed, please use POST' });
-  }
-
-  const body = parseRequestBody(req);
-  const { teacherId, action = 'check', nextStatus } = body || {};
-
-  if (!teacherId || typeof teacherId !== 'string') {
-    return res.status(400).json({ error: '未提供合法的教師識別碼 (teacherId)' });
-  }
-
   try {
-    const { client: adminSupabase, hasServiceRoleKey } = getAdminSupabaseClient();
+    if (req.method !== 'POST') {
+      return sendJsonResponse(res, 405, {
+        success: false,
+        error: 'Method Not Allowed, please use POST',
+      });
+    }
+
+    const body = await readRequestBody(req);
+    const { teacherId, action = 'check', nextStatus } = body || {};
+
+    if (!teacherId || typeof teacherId !== 'string') {
+      return sendJsonResponse(res, 400, {
+        success: false,
+        error: '未提供合法的教師識別碼 (teacherId)',
+      });
+    }
+
+    const supabaseUrl = getValidSupabaseUrl();
+    const serviceRoleKey =
+      process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      process.env.SUPABASE_SERVICE_KEY;
+
+    const anonKey =
+      process.env.VITE_SUPABASE_ANON_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.SUPABASE_ANON_KEY ||
+      'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
+
+    const activeKey = serviceRoleKey || anonKey;
+
+    if (!activeKey) {
+      return sendJsonResponse(res, 500, {
+        success: false,
+        error: '伺服器未設定 Supabase 金鑰 (SUPABASE_SERVICE_ROLE_KEY)',
+      });
+    }
+
+    const adminSupabase = createClient(supabaseUrl, activeKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+
+    const hasServiceRoleKey = Boolean(serviceRoleKey);
 
     // 1. Fetch teacher record
     const { data: teacher, error: teacherErr } = await adminSupabase
@@ -23,11 +123,13 @@ export default async function handler(req: any, res: any) {
       .maybeSingle();
 
     if (teacherErr || !teacher) {
-      return res.status(404).json({ error: `找不到該教師資料 (ID: ${teacherId})` });
+      return sendJsonResponse(res, 404, {
+        success: false,
+        error: `找不到該教師資料 (ID: ${teacherId})`,
+      });
     }
 
     // 2. Check relational dependencies (classes, class_sessions)
-    // Check if teacher is assigned to any class
     const { data: assignedClasses, error: classErr } = await adminSupabase
       .from('classes')
       .select('id, name, class_code')
@@ -42,7 +144,6 @@ export default async function handler(req: any, res: any) {
     );
     const relatedClassIds = (assignedClasses || []).map((c: any) => c.id);
 
-    // Check if there are class_sessions associated with these classes
     let totalSessionsCount = 0;
     if (relatedClassIds.length > 0) {
       const { count } = await adminSupabase
@@ -57,7 +158,8 @@ export default async function handler(req: any, res: any) {
     // ACTION: Check deletability
     if (action === 'check') {
       if (hasRelations) {
-        return res.json({
+        return sendJsonResponse(res, 200, {
+          success: true,
           canDelete: false,
           hasRelations: true,
           teacherName: teacher.emp_name || teacher.tea_name || '該教師',
@@ -68,7 +170,8 @@ export default async function handler(req: any, res: any) {
         });
       }
 
-      return res.json({
+      return sendJsonResponse(res, 200, {
+        success: true,
         canDelete: true,
         hasRelations: false,
         teacherName: teacher.emp_name || teacher.tea_name || '該教師',
@@ -84,7 +187,6 @@ export default async function handler(req: any, res: any) {
       const resolvedStatus = nextStatus === 'inactive' ? 'inactive' : 'active';
       const isActive = resolvedStatus === 'active';
 
-      // 1. Update teachers table status
       const { error: updateTeacherErr } = await adminSupabase
         .from('teachers')
         .update({
@@ -94,12 +196,12 @@ export default async function handler(req: any, res: any) {
         .eq('id', teacherId);
 
       if (updateTeacherErr) {
-        return res.status(400).json({
+        return sendJsonResponse(res, 400, {
+          success: false,
           error: `更新教師狀態失敗: ${updateTeacherErr.message}`,
         });
       }
 
-      // 2. Update profiles table is_active if profile_id exists
       if (teacher.profile_id) {
         await adminSupabase
           .from('profiles')
@@ -107,7 +209,7 @@ export default async function handler(req: any, res: any) {
           .eq('id', teacher.profile_id);
       }
 
-      return res.json({
+      return sendJsonResponse(res, 200, {
         success: true,
         status: resolvedStatus,
         message: `已成功將教師【${teacher.emp_name || '教師'}】狀態更新為【${
@@ -119,7 +221,8 @@ export default async function handler(req: any, res: any) {
     // ACTION: Safe Delete (Must have NO relations)
     if (action === 'delete') {
       if (hasRelations) {
-        return res.status(400).json({
+        return sendJsonResponse(res, 400, {
+          success: false,
           canDelete: false,
           error: `此教師已有授課班級 (${relatedClassNames.join('、')}) 或歷史課堂紀錄，無法直接刪除，請改用停用教師。`,
         });
@@ -148,7 +251,8 @@ export default async function handler(req: any, res: any) {
 
       if (delTeacherErr) {
         console.error('[delete-teacher] Error deleting from teachers:', delTeacherErr);
-        return res.status(400).json({
+        return sendJsonResponse(res, 400, {
+          success: false,
           error: `自 public.teachers 資料表刪除失敗: ${delTeacherErr.message}`,
         });
       }
@@ -156,14 +260,12 @@ export default async function handler(req: any, res: any) {
       // 3. Delete from public.profiles and Supabase Auth User
       const profileId = teacher.profile_id;
       if (profileId) {
-        // Delete profile
         try {
           await adminSupabase.from('profiles').delete().eq('id', profileId);
         } catch (profErr) {
           console.warn('[delete-teacher] Notice deleting profile:', profErr);
         }
 
-        // Delete Auth User if service role key available
         if (hasServiceRoleKey) {
           try {
             const { error: authDelErr } = await adminSupabase.auth.admin.deleteUser(profileId);
@@ -178,17 +280,21 @@ export default async function handler(req: any, res: any) {
         }
       }
 
-      return res.json({
+      return sendJsonResponse(res, 200, {
         success: true,
         message: `已成功安全刪除教師【${teacher.emp_name || teacher.name || '教師'}】檔案，並同步清除關聯的登入帳號與照片！`,
       });
     }
 
-    return res.status(400).json({ error: `未知的操作類型: ${action}` });
+    return sendJsonResponse(res, 400, {
+      success: false,
+      error: `未知的操作類型: ${action}`,
+    });
   } catch (err: any) {
     console.error('[Vercel API delete-teacher] Unexpected exception:', err);
-    return res.status(500).json({
-      error: `處理教師刪除/停用操作時發生伺服器錯誤: ${err.message || String(err)}`,
+    return sendJsonResponse(res, 500, {
+      success: false,
+      error: `處理教師刪除/停用操作時發生伺服器錯誤: ${err?.message || String(err)}`,
     });
   }
 }
