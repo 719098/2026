@@ -12,17 +12,25 @@ import {
   Sparkles,
   ArrowRightLeft,
   UserCheck,
+  UserX,
   Loader2,
   AlertTriangle,
   RefreshCw,
   KeyRound,
   ShieldCheck,
+  ShieldAlert,
   Camera,
   Upload,
   Trash2
 } from 'lucide-react';
 import { Teacher, ClassEntity } from '../../types';
-import { calculateNextTeacherNo, resetTeacherPasswordInSupabase } from '../../lib/teacherService';
+import { 
+  calculateNextTeacherNo, 
+  resetTeacherPasswordInSupabase,
+  checkTeacherDeletableInSupabase,
+  deleteTeacherInSupabase,
+  toggleTeacherStatusInSupabase
+} from '../../lib/teacherService';
 import { TeacherAvatar } from '../TeacherAvatar';
 import {
   uploadTeacherAvatar,
@@ -42,6 +50,8 @@ interface AdminTeacherManagementViewProps {
     password?: string;
   }) => Promise<void> | void;
   onUpdateTeacher: (updatedTeacher: Teacher) => void;
+  onDeleteTeacher?: (teacherId: string) => Promise<void> | void;
+  onToggleTeacherStatus?: (teacherId: string, nextStatus: 'active' | 'inactive') => Promise<void> | void;
   onReassignTeacherClasses: (teacherId: string, assignedClassNames: string[]) => void;
   isLoading?: boolean;
   errorMessage?: string | null;
@@ -53,6 +63,8 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
   classes,
   onAddTeacher,
   onUpdateTeacher,
+  onDeleteTeacher,
+  onToggleTeacherStatus,
   onReassignTeacherClasses,
   isLoading = false,
   errorMessage = null,
@@ -137,6 +149,93 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
   const [resetPasswordSubmitting, setResetPasswordSubmitting] = useState(false);
   const [resetPasswordError, setResetPasswordError] = useState<string | null>(null);
   const [resetPasswordSuccessMsg, setResetPasswordSuccessMsg] = useState<string | null>(null);
+
+  // Delete / Deactivate Teacher Modal State
+  const [deletingTeacher, setDeletingTeacher] = useState<Teacher | null>(null);
+  const [isCheckingDeletable, setIsCheckingDeletable] = useState(false);
+  const [deletableResult, setDeletableResult] = useState<{
+    canDelete: boolean;
+    hasRelations: boolean;
+    teacherName?: string;
+    teacherNo?: string;
+    relatedClasses?: string[];
+    sessionsCount?: number;
+    reason?: string;
+    message?: string;
+    error?: string;
+  } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteActionError, setDeleteActionError] = useState<string | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [statusTogglingId, setStatusTogglingId] = useState<string | null>(null);
+
+  const handleInitiateDelete = async (teacher: Teacher) => {
+    setDeletingTeacher(teacher);
+    setDeletableResult(null);
+    setDeleteActionError(null);
+    setDeleteConfirmText('');
+    setIsCheckingDeletable(true);
+
+    try {
+      const checkRes = await checkTeacherDeletableInSupabase(teacher.id);
+      setDeletableResult(checkRes);
+    } catch (err: any) {
+      setDeletableResult({
+        canDelete: false,
+        hasRelations: true,
+        error: `無法檢測關聯性: ${err.message || String(err)}`,
+      });
+    } finally {
+      setIsCheckingDeletable(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingTeacher) return;
+    setIsDeleting(true);
+    setDeleteActionError(null);
+
+    try {
+      if (onDeleteTeacher) {
+        await onDeleteTeacher(deletingTeacher.id);
+      } else {
+        const res = await deleteTeacherInSupabase(deletingTeacher.id);
+        if (!res.success || res.error) {
+          throw res.error || new Error('刪除教師失敗');
+        }
+      }
+      setDeletingTeacher(null);
+      onRefresh?.();
+    } catch (err: any) {
+      setDeleteActionError(err.message || '刪除教師失敗');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleToggleStatus = async (teacher: Teacher, targetStatus?: 'active' | 'inactive') => {
+    const nextStatus = targetStatus || (teacher.status === 'inactive' ? 'active' : 'inactive');
+    setStatusTogglingId(teacher.id);
+
+    try {
+      if (onToggleTeacherStatus) {
+        await onToggleTeacherStatus(teacher.id, nextStatus);
+      } else {
+        const res = await toggleTeacherStatusInSupabase(teacher.id, nextStatus);
+        if (!res.success || res.error) {
+          throw res.error || new Error('更新教師狀態失敗');
+        }
+      }
+      if (deletingTeacher) {
+        setDeletingTeacher(null);
+      }
+      onRefresh?.();
+    } catch (err: any) {
+      alert(`更新教師狀態失敗: ${err.message || String(err)}`);
+    } finally {
+      setStatusTogglingId(null);
+    }
+  };
 
   // Calculate next teacher_no dynamically
   const nextTeacherNo = calculateNextTeacherNo(teachers);
@@ -421,28 +520,69 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
                       className="border-2 border-[#E8EEF2] shadow-2xs"
                     />
                     <div>
-                      <div className="flex items-center space-x-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <h3 className="text-base font-bold text-[#26313B]">{teacher.name} 老師</h3>
                         <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-[#E8EEF2] text-[#536B7A] border border-[#DCE2E6]">
                           {teacher.title}
                         </span>
+                        {teacher.status === 'inactive' ? (
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                            已停用
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            在職中
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-[#66717C] mt-0.5">{teacher.department}</div>
-                      <div className="text-[10px] font-mono text-slate-400">教職員編號: {teacher.id}</div>
+                      <div className="text-[10px] font-mono text-slate-400">
+                        教師編號: <span className="font-bold text-slate-600">{teacher.teacherNo || teacher.acctno || teacher.id}</span>
+                      </div>
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => {
-                      setPhotoError(null);
-                      setPhotoSuccessMsg(null);
-                      setEditingTeacher(teacher);
-                    }}
-                    className="p-1.5 text-slate-400 hover:text-[#26313B] hover:bg-[#E8EEF2] rounded-md transition-colors"
-                    title="編輯教師資料"
-                  >
-                    <Edit className="w-4 h-4" />
-                  </button>
+                  {/* Actions Group */}
+                  <div className="flex items-center space-x-1">
+                    <button
+                      onClick={() => {
+                        setPhotoError(null);
+                        setPhotoSuccessMsg(null);
+                        setEditingTeacher(teacher);
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-[#26313B] hover:bg-[#E8EEF2] rounded-md transition-colors"
+                      title="編輯教師資料"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      onClick={() => handleToggleStatus(teacher)}
+                      disabled={statusTogglingId === teacher.id}
+                      className={`p-1.5 rounded-md transition-colors ${
+                        teacher.status === 'inactive'
+                          ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50'
+                          : 'text-amber-600 hover:text-amber-700 hover:bg-amber-50'
+                      }`}
+                      title={teacher.status === 'inactive' ? '重新啟用教師' : '停用教師 (保留所有歷史課堂與點名紀錄)'}
+                    >
+                      {statusTogglingId === teacher.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : teacher.status === 'inactive' ? (
+                        <UserCheck className="w-4 h-4" />
+                      ) : (
+                        <UserX className="w-4 h-4" />
+                      )}
+                    </button>
+
+                    <button
+                      onClick={() => handleInitiateDelete(teacher)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors"
+                      title="刪除教師 (檢查關聯後安全清除)"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Contact & Info */}
@@ -1114,6 +1254,176 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete / Deactivate Teacher Modal */}
+      {deletingTeacher && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center text-rose-600">
+                  <Trash2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-800">教師檔案管理與刪除</h3>
+                  <p className="text-[11px] text-slate-400">
+                    目標教師：{deletingTeacher.name} 老師 ({deletingTeacher.teacherNo || deletingTeacher.acctno || deletingTeacher.id})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDeletingTeacher(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Error Message */}
+            {deleteActionError && (
+              <div className="mt-4 p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-bold flex items-start space-x-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+                <span>{deleteActionError}</span>
+              </div>
+            )}
+
+            {/* Checking Relational Constraints Loading State */}
+            {isCheckingDeletable ? (
+              <div className="py-10 text-center space-y-3">
+                <Loader2 className="w-8 h-8 text-teal-600 animate-spin mx-auto" />
+                <p className="text-xs font-bold text-slate-700">正在分析資料庫關聯性與歷史授課資料...</p>
+                <p className="text-[11px] text-slate-400">正在檢查班級 (classes)、課堂 (class_sessions) 與點名紀錄</p>
+              </div>
+            ) : deletableResult?.hasRelations || !deletableResult?.canDelete ? (
+              /* Scenario A: Has Relations -> Recommend Deactivation */
+              <div className="mt-4 space-y-4">
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
+                  <div className="flex items-center space-x-2 text-amber-800 font-bold text-xs">
+                    <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>⚠️ 此教師已有歷史課堂或授課班級，無法直接物理刪除</span>
+                  </div>
+                  <p className="text-xs text-amber-700 leading-relaxed">
+                    為保護歷史點名紀錄、課堂日誌與學員成績出勤之完整性，資料庫禁止直接清除已有關聯的教師資料。
+                  </p>
+
+                  {deletableResult?.relatedClasses && deletableResult.relatedClasses.length > 0 && (
+                    <div className="pt-2 border-t border-amber-200/60">
+                      <span className="text-[11px] font-bold text-amber-800 block mb-1">已關聯的班級：</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {deletableResult.relatedClasses.map((cls, idx) => (
+                          <span
+                            key={idx}
+                            className="px-2 py-0.5 bg-white border border-amber-300 text-amber-900 rounded-md text-[11px] font-medium"
+                          >
+                            {cls}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-xs text-slate-600">
+                  <div className="font-bold text-slate-800 flex items-center space-x-1.5">
+                    <UserX className="w-4 h-4 text-slate-600" />
+                    <span>建議方案：將該教師設為「停用狀態」</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    停用後，該教師將<strong>無法登入系統</strong>，且在新開課排課名單中自動隱藏；但過去所有的授課班級、點名與課表紀錄將<strong>完整安全保留</strong>。
+                  </p>
+                </div>
+
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => setDeletingTeacher(null)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleStatus(deletingTeacher, 'inactive')}
+                    disabled={statusTogglingId === deletingTeacher.id}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs shadow-xs flex items-center space-x-1.5 transition-colors disabled:opacity-50"
+                  >
+                    {statusTogglingId === deletingTeacher.id ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>正在更新...</span>
+                      </>
+                    ) : (
+                      <>
+                        <UserX className="w-3.5 h-3.5" />
+                        <span>改為停用此教師</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Scenario B: Safe to Delete -> No Relations */
+              <div className="mt-4 space-y-4">
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 space-y-1.5">
+                  <div className="flex items-center space-x-1.5 font-bold text-emerald-900">
+                    <CheckCircle className="w-4 h-4 text-emerald-600" />
+                    <span>經檢查：此教師無任何授課班級與課堂關聯，可安全刪除</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-700">
+                    此操作將同步自 Supabase 資料庫完整清除以下內容：
+                  </p>
+                  <ul className="list-disc list-inside text-[11px] text-emerald-700 space-y-0.5 pl-1">
+                    <li>刪除 <code>public.teachers</code> 教師檔案資料</li>
+                    <li>刪除 <code>Supabase Auth</code> 登入使用者帳號與 Profile，不留孤兒帳號</li>
+                    <li>清理 <code>Storage: teacher-avatars</code> 資料夾中的教師照片</li>
+                  </ul>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700">
+                    防誤觸確認：請在下方輸入「<span className="text-rose-600 font-black">刪除</span>」以確認執行
+                  </label>
+                  <input
+                    type="text"
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    placeholder="請輸入「刪除」"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 font-bold"
+                  />
+                </div>
+
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => setDeletingTeacher(null)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmDelete}
+                    disabled={deleteConfirmText.trim() !== '刪除' || isDeleting}
+                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-xs shadow-xs flex items-center space-x-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {isDeleting ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>正在安全刪除...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>確認永久刪除</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

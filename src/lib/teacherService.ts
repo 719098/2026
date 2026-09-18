@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { Teacher } from '../types';
 import { batchResolveTeacherAvatars } from './storageService';
+import { safeApiPost } from './apiHelper';
 
 /**
  * Calculates the next teacher_no (e.g. T001, T002, T008... T999, T1000...) based on existing database records.
@@ -31,6 +32,7 @@ export function calculateNextTeacherNo(teachers: any[]): string {
  * Converts a database record in public.teachers to the frontend Teacher interface.
  */
 export function mapDbToTeacher(row: any): Teacher {
+  const isInactive = row.status === 'inactive' || row.is_active === false;
   return {
     id: String(row.id),
     teacherNo: row.acctno || row.emp_id || '',
@@ -51,7 +53,7 @@ export function mapDbToTeacher(row: any): Teacher {
     specialty: row.emp_skill || '',
     empSkill: row.emp_skill || '',
     office: '華語中心教師室',
-    status: 'active',
+    status: isInactive ? 'inactive' : 'active',
     empIdno: row.emp_idno || '',
     empId: row.emp_id || '',
     teaName: row.tea_name || '',
@@ -197,7 +199,7 @@ export async function updateTeacherClassAssignmentsInSupabase(
 }
 
 /**
- * Create a new teacher via Server-side API (/api/admin/create-teacher).
+ * Create a new teacher via Server-side / Vercel API (/api/admin/create-teacher).
  * Uses auth.admin.createUser with email_confirm: true on the server.
  */
 export async function createTeacherInSupabase(teacherData: {
@@ -219,56 +221,52 @@ export async function createTeacherInSupabase(teacherData: {
     return { data: null, error: new Error('密碼長度至少需要 6 位數') };
   }
 
-  try {
-    const res = await fetch('/api/admin/create-teacher', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        name: cleanName,
-        englishName: teacherData.englishName?.trim() || '',
-        email: cleanEmail,
-        phone: teacherData.phone?.trim() || '',
-        specialty: teacherData.specialty?.trim() || '',
-        password: teacherData.password,
-      }),
-    });
+  const payload = {
+    name: cleanName,
+    englishName: teacherData.englishName?.trim() || '',
+    email: cleanEmail,
+    phone: teacherData.phone?.trim() || '',
+    specialty: teacherData.specialty?.trim() || '',
+    password: teacherData.password,
+  };
 
-    const result = await res.json();
+  const resp = await safeApiPost('/api/admin/create-teacher', payload, '建立教師 API');
 
-    if (!res.ok || !result.success) {
-      console.error('[TeacherService] Server API error creating teacher:', result.error);
-      return {
-        data: null,
-        error: new Error(result.error || '建立教師失敗'),
-      };
-    }
-
-    const t = result.teacher;
-    const mappedTeacher: Teacher = {
-      id: t.id,
-      teacherNo: t.teacherNo,
-      profileId: t.profileId,
-      name: t.name,
-      englishName: t.englishName,
-      title: '專任華語講師',
-      department: '靜宜大學華語中心 教學組',
-      avatarUrl: undefined,
-      term: '2026 夏季班',
-      email: t.email,
-      phone: t.phone,
-      specialty: t.specialty,
-      office: '華語中心教師室',
-      status: 'active',
-      assignedClasses: [],
+  if (!resp.ok || !resp.data?.success) {
+    const errorMsg = resp.error || resp.data?.error || '建立教師失敗';
+    console.error('[TeacherService] Error creating teacher:', errorMsg);
+    return {
+      data: null,
+      error: new Error(errorMsg),
     };
-
-    return { data: mappedTeacher, error: null };
-  } catch (err: any) {
-    console.error('[TeacherService] Exception calling /api/admin/create-teacher:', err);
-    return { data: null, error: err };
   }
+
+  const t = resp.data.teacher;
+  const mappedTeacher: Teacher = {
+    id: t.id,
+    teacherNo: t.teacherNo,
+    acctno: t.acctno || t.teacherNo,
+    profileId: t.profileId,
+    name: t.name,
+    empName: t.empName || t.name,
+    englishName: t.englishName,
+    empEname: t.empEname || t.englishName,
+    title: '專任華語講師',
+    department: '靜宜大學華語中心 教學組',
+    avatarUrl: undefined,
+    term: '2026 夏季班',
+    email: t.email,
+    empEmail: t.empEmail || t.email,
+    phone: t.phone,
+    empOfficeExt: t.empOfficeExt || t.phone,
+    specialty: t.specialty,
+    empSkill: t.empSkill || t.specialty,
+    office: '華語中心教師室',
+    status: t.status || 'active',
+    assignedClasses: [],
+  };
+
+  return { data: mappedTeacher, error: null };
 }
 
 /**
@@ -280,26 +278,99 @@ export async function resetTeacherPasswordInSupabase(params: {
   email?: string;
   newPassword: string;
 }): Promise<{ success: boolean; message?: string; error: any }> {
-  try {
-    const res = await fetch('/api/admin/reset-teacher-password', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
+  const resp = await safeApiPost('/api/admin/reset-teacher-password', params, '重設密碼 API');
 
-    const result = await res.json();
-    if (!res.ok || !result.success) {
-      return {
-        success: false,
-        error: new Error(result.error || '重設密碼失敗'),
-      };
-    }
-
-    return { success: true, message: result.message, error: null };
-  } catch (err: any) {
-    console.error('[TeacherService] Exception calling /api/admin/reset-teacher-password:', err);
-    return { success: false, error: err };
+  if (!resp.ok || !resp.data?.success) {
+    const errorMsg = resp.error || resp.data?.error || '重設密碼失敗';
+    console.error('[TeacherService] Error resetting password:', errorMsg);
+    return {
+      success: false,
+      error: new Error(errorMsg),
+    };
   }
+
+  return { success: true, message: resp.data.message, error: null };
+}
+
+/**
+ * Check if a teacher can be safely deleted or if they have relational dependencies (classes, sessions).
+ */
+export async function checkTeacherDeletableInSupabase(teacherId: string): Promise<{
+  canDelete: boolean;
+  hasRelations: boolean;
+  teacherName?: string;
+  teacherNo?: string;
+  relatedClasses?: string[];
+  sessionsCount?: number;
+  reason?: string;
+  message?: string;
+  error?: string;
+}> {
+  const resp = await safeApiPost(
+    '/api/admin/delete-teacher',
+    { teacherId, action: 'check' },
+    '檢查教師刪除關聯 API'
+  );
+
+  if (!resp.ok) {
+    return {
+      canDelete: false,
+      hasRelations: true,
+      error: resp.error || '無法連線伺服器檢查教師資料關聯',
+    };
+  }
+
+  return resp.data;
+}
+
+/**
+ * Toggle a teacher's active/inactive status in Supabase.
+ * Preserves all historical class, attendance, and grading records.
+ */
+export async function toggleTeacherStatusInSupabase(
+  teacherId: string,
+  nextStatus: 'active' | 'inactive'
+): Promise<{ success: boolean; status?: 'active' | 'inactive'; message?: string; error: any }> {
+  const resp = await safeApiPost(
+    '/api/admin/delete-teacher',
+    { teacherId, action: 'toggle_status', nextStatus },
+    '切換教師在職狀態 API'
+  );
+
+  if (!resp.ok || !resp.data?.success) {
+    const errorMsg = resp.error || resp.data?.error || '更新教師狀態失敗';
+    console.error('[TeacherService] Error toggling status:', errorMsg);
+    return { success: false, error: new Error(errorMsg) };
+  }
+
+  return {
+    success: true,
+    status: resp.data.status,
+    message: resp.data.message,
+    error: null,
+  };
+}
+
+/**
+ * Safely delete a teacher from Supabase (only allowed when no relations exist).
+ * Cleans up teacher avatar from Storage and removes Supabase Auth User + Profile.
+ */
+export async function deleteTeacherInSupabase(
+  teacherId: string
+): Promise<{ success: boolean; message?: string; error: any }> {
+  const resp = await safeApiPost(
+    '/api/admin/delete-teacher',
+    { teacherId, action: 'delete' },
+    '安全刪除教師 API'
+  );
+
+  if (!resp.ok || !resp.data?.success) {
+    const errorMsg = resp.error || resp.data?.error || '刪除教師失敗';
+    console.error('[TeacherService] Error deleting teacher:', errorMsg);
+    return { success: false, error: new Error(errorMsg) };
+  }
+
+  return { success: true, message: resp.data.message, error: null };
 }
 
 /**

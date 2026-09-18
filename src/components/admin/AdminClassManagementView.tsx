@@ -581,8 +581,8 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                   >
                     <option value="">-- 未指定教師 --</option>
                     {teachers.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name} 老師 ({t.department})
+                      <option key={t.id} value={t.id} disabled={t.status === 'inactive'}>
+                        {t.name} 老師 ({t.department}){t.status === 'inactive' ? ' [已停用]' : ''}
                       </option>
                     ))}
                   </select>
@@ -792,8 +792,8 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                   >
                     <option value="">-- 未指定教師 --</option>
                     {teachers.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name} 老師 ({t.department})
+                      <option key={t.id} value={t.id} disabled={t.status === 'inactive' && editingClass.teacherId !== t.id}>
+                        {t.name} 老師 ({t.department}){t.status === 'inactive' ? ' [已停用]' : ''}
                       </option>
                     ))}
                   </select>

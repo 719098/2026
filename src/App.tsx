@@ -45,6 +45,8 @@ import {
   fetchTeachersFromSupabase,
   createTeacherInSupabase,
   updateTeacherInSupabase,
+  deleteTeacherInSupabase,
+  toggleTeacherStatusInSupabase,
   updateTeacherClassAssignmentsInSupabase,
   mapDbToTeacher,
   fetchTeacherWithClassesByProfileId
@@ -796,6 +798,26 @@ export default function App() {
     }
   };
 
+  const handleDeleteTeacher = async (teacherId: string) => {
+    const { success, message, error } = await deleteTeacherInSupabase(teacherId);
+    if (!success || error) {
+      showToast(`❌ 刪除教師失敗: ${error?.message || '未知錯誤'}`, 'error');
+      throw error || new Error('刪除教師失敗');
+    }
+    showToast(message || '✅ 已成功安全刪除教師檔案！', 'success');
+    await loadSupabaseTeachers();
+  };
+
+  const handleToggleTeacherStatus = async (teacherId: string, nextStatus: 'active' | 'inactive') => {
+    const { success, message, error } = await toggleTeacherStatusInSupabase(teacherId, nextStatus);
+    if (!success || error) {
+      showToast(`❌ 更新教師狀態失敗: ${error?.message || '未知錯誤'}`, 'warning');
+      throw error || new Error('更新教師狀態失敗');
+    }
+    showToast(message || '✅ 已成功更新教師在職狀態！', 'success');
+    await loadSupabaseTeachers();
+  };
+
   const handleReassignTeacherClasses = async (teacherId: string, assignedClassNames: string[]) => {
     const teacher = adminTeachers.find((t) => t.id === teacherId);
     if (!teacher) return;
@@ -1316,6 +1338,8 @@ export default function App() {
                   classes={adminClasses}
                   onAddTeacher={handleAddTeacher}
                   onUpdateTeacher={handleUpdateTeacher}
+                  onDeleteTeacher={handleDeleteTeacher}
+                  onToggleTeacherStatus={handleToggleTeacherStatus}
                   onReassignTeacherClasses={handleReassignTeacherClasses}
                   isLoading={isTeachersLoading}
                   errorMessage={teachersError}
