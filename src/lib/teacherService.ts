@@ -32,7 +32,10 @@ export function calculateNextTeacherNo(teachers: any[]): string {
  * Converts a database record in public.teachers to the frontend Teacher interface.
  */
 export function mapDbToTeacher(row: any): Teacher {
-  const isInactive = row.status === 'inactive' || row.is_active === false;
+  const isInactive =
+    row.employment_status === 'INACTIVE' ||
+    row.employment_status === 'RESIGNED' ||
+    row.is_active === false;
   return {
     id: String(row.id),
     teacherNo: row.acctno || row.emp_id || '',

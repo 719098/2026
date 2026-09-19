@@ -183,30 +183,33 @@ export default async function handler(req: any, res: any) {
     }
 
     // ACTION: Toggle Status (Deactivate / Reactivate)
+    // Note: public.teachers has employment_status, and public.profiles has is_active.
     if (action === 'toggle_status') {
       const resolvedStatus = nextStatus === 'inactive' ? 'inactive' : 'active';
       const isActive = resolvedStatus === 'active';
+      const employmentStatus = isActive ? 'ACTIVE' : 'INACTIVE';
 
-      const { error: updateTeacherErr } = await adminSupabase
+      // Update public.teachers existing employment_status
+      await adminSupabase
         .from('teachers')
         .update({
-          status: resolvedStatus,
+          employment_status: employmentStatus,
           updated_at: new Date().toISOString(),
         })
         .eq('id', teacherId);
 
-      if (updateTeacherErr) {
-        return sendJsonResponse(res, 400, {
-          success: false,
-          error: `更新教師狀態失敗: ${updateTeacherErr.message}`,
-        });
-      }
-
       if (teacher.profile_id) {
-        await adminSupabase
+        const { error: updateProfileErr } = await adminSupabase
           .from('profiles')
           .update({ is_active: isActive, updated_at: new Date().toISOString() })
           .eq('id', teacher.profile_id);
+
+        if (updateProfileErr) {
+          return sendJsonResponse(res, 400, {
+            success: false,
+            error: `更新教師登入狀態失敗: ${updateProfileErr.message}`,
+          });
+        }
       }
 
       return sendJsonResponse(res, 200, {

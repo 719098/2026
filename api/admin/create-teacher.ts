@@ -254,12 +254,11 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // 8. Insert into public.teachers
+    // 8. Insert into public.teachers (Strictly existing columns only: no 'status')
     const teacherPayload: Record<string, any> = {
       acctno: nextTeacherNo,
       emp_name: cleanName,
       emp_email: cleanEmail,
-      status: 'active',
     };
 
     if (authUserId) {
@@ -343,7 +342,7 @@ export default async function handler(req: any, res: any) {
         empOfficeExt: insertedTeacher.emp_office_ext || '',
         specialty: insertedTeacher.emp_skill || '',
         empSkill: insertedTeacher.emp_skill || '',
-        status: 'active',
+        status: insertedTeacher.employment_status === 'INACTIVE' ? 'inactive' : 'active',
       },
     });
   } catch (err: any) {
