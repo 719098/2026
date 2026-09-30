@@ -39,6 +39,8 @@ import {
   calculateScheduleProgressMetrics,
   getTodayDateStr
 } from '../../utils/quarterScheduler';
+import { InfoTooltip } from '../common/InfoTooltip';
+import { BatchActionBar, BatchActionItem } from '../common/BatchActionBar';
 
 const HOUR_24_OPTIONS = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
 const MINUTE_60_OPTIONS = Array.from({ length: 60 }, (_, i) => i.toString().padStart(2, '0'));
@@ -147,6 +149,13 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
   const [reschedulingSession, setReschedulingSession] = useState<ClassSessionEntity | null>(null);
   const [deletingRule, setDeletingRule] = useState<ClassScheduleRule | null>(null);
   const [deletingSession, setDeletingSession] = useState<ClassSessionEntity | null>(null);
+
+  // Batch selection states for sessions
+  const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
+  const [isBatchProcessing, setIsBatchProcessing] = useState<boolean>(false);
+  const [showBatchCancelModal, setShowBatchCancelModal] = useState<boolean>(false);
+  const [batchCancelReason, setBatchCancelReason] = useState<string>('中心決議全體停課');
+  const [showBatchDeleteModal, setShowBatchDeleteModal] = useState<boolean>(false);
 
   // Form states - Reschedule
   const [rescheduleTargetDate, setRescheduleTargetDate] = useState<string>('');
@@ -674,6 +683,130 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
     }
   };
 
+  // Batch Handlers for Sessions
+  const handleToggleSelectSession = (sessionId: string) => {
+    setSelectedSessionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  };
+
+  const handleSelectAllSessions = () => {
+    if (filteredSessions.length === 0) return;
+    const allSelected = filteredSessions.every((s) => selectedSessionIds.has(s.id));
+    if (allSelected) {
+      setSelectedSessionIds((prev) => {
+        const next = new Set(prev);
+        filteredSessions.forEach((s) => next.delete(s.id));
+        return next;
+      });
+    } else {
+      setSelectedSessionIds((prev) => {
+        const next = new Set(prev);
+        filteredSessions.forEach((s) => next.add(s.id));
+        return next;
+      });
+    }
+  };
+
+  const handleClearSessionSelection = () => {
+    setSelectedSessionIds(new Set());
+  };
+
+  const handleExecuteBatchCancel = async () => {
+    const ids: string[] = Array.from(selectedSessionIds);
+    if (ids.length === 0) return;
+    setIsBatchProcessing(true);
+    try {
+      const res = await scheduleService.batchCancelSessions(ids, batchCancelReason);
+      if (!res.success || res.error) {
+        showToast(res.error?.message || '批量停課失敗', true);
+      } else {
+        showToast(`已成功將 ${res.updatedCount} 堂課設定為【停課】狀態！`);
+        setSelectedSessionIds(new Set());
+        setShowBatchCancelModal(false);
+        await loadScheduleData();
+      }
+    } catch (err: any) {
+      showToast(`批量停課失敗: ${err.message || String(err)}`, true);
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const handleExecuteBatchRestore = async () => {
+    const ids: string[] = Array.from(selectedSessionIds);
+    if (ids.length === 0) return;
+    setIsBatchProcessing(true);
+    try {
+      const res = await scheduleService.batchRestoreSessions(ids);
+      if (!res.success || res.error) {
+        showToast(res.error?.message || '批量恢復課堂失敗', true);
+      } else {
+        showToast(`已成功將 ${res.updatedCount} 堂課恢復為【正常授課】！`);
+        setSelectedSessionIds(new Set());
+        await loadScheduleData();
+      }
+    } catch (err: any) {
+      showToast(`批量恢復失敗: ${err.message || String(err)}`, true);
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const handleExecuteBatchDelete = async () => {
+    const ids: string[] = Array.from(selectedSessionIds);
+    if (ids.length === 0) return;
+    setIsBatchProcessing(true);
+    try {
+      const res = await scheduleService.batchDeleteSessions(ids);
+      setShowBatchDeleteModal(false);
+      if (!res.success || res.error) {
+        showToast(res.error?.message || '批量刪除課堂失敗', true);
+      } else {
+        let msg = `已安全刪除 ${res.deletedCount} 堂課。`;
+        if (res.blockedCount > 0) {
+          msg += ` 注意：另有 ${res.blockedCount} 堂課因已有歷史點名或調課引用，已主動防護保留（未刪除）。`;
+        }
+        showToast(msg, res.deletedCount === 0 && res.blockedCount > 0);
+        setSelectedSessionIds(new Set());
+        await loadScheduleData();
+      }
+    } catch (err: any) {
+      showToast(`批量刪除失敗: ${err.message || String(err)}`, true);
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const sessionBatchActions: BatchActionItem[] = [
+    {
+      key: 'cancel',
+      label: '批量停課',
+      icon: <X className="w-3.5 h-3.5 text-rose-600" />,
+      variant: 'warning',
+      onClick: () => setShowBatchCancelModal(true),
+      disabled: isBatchProcessing,
+    },
+    {
+      key: 'restore',
+      label: '批量恢復正常',
+      icon: <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />,
+      onClick: handleExecuteBatchRestore,
+      disabled: isBatchProcessing,
+    },
+    {
+      key: 'delete',
+      label: '批量刪除課堂',
+      icon: <Trash2 className="w-3.5 h-3.5 text-rose-600" />,
+      variant: 'danger',
+      onClick: () => setShowBatchDeleteModal(true),
+      disabled: isBatchProcessing,
+    },
+  ];
+
   // Filtered Sessions for display
   const filteredSessions = sessions.filter((s) => {
     const matchMonth = selectedMonth === 'ALL' || s.sessionDate.startsWith(selectedMonth);
@@ -722,12 +855,13 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <div className="flex items-center space-x-2">
-            <CalendarDays className="w-6 h-6 text-teal-600" />
-            <h1 className="text-xl font-black text-slate-800">全校排課管理與目標時數進度監控</h1>
+            <CalendarDays className="w-5 h-5 text-teal-600" />
+            <h1 className="text-lg font-bold text-slate-800">全校排課管理與時數進度</h1>
+            <InfoTooltip
+              title="排課管理與時數進度"
+              content="管理常態每週排課規則、校務國定假日停課、全學期堂次生成、課堂進度與線上調課／補課作業。"
+            />
           </div>
-          <p className="text-xs text-slate-500 mt-1">
-            以 Supabase 正式關聯架構管理常態每週排課規則、校務國定假日停課、全學期堂次生成與線上調課／補課作業。
-          </p>
         </div>
 
         {/* Global Term Selector */}
@@ -756,7 +890,7 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
             </div>
             <div>
               <div className="font-black text-sm flex items-center gap-2">
-                <span>【{currentTerm.name}】已封存鎖定 (is_locked = true)</span>
+                <span>【{currentTerm.name}】已封存鎖定（僅供檢視）</span>
                 <span className="px-2 py-0.5 bg-amber-200 text-amber-900 text-[10px] font-bold rounded-full border border-amber-300">
                   唯讀保護中
                 </span>
@@ -957,6 +1091,16 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
             </div>
           </div>
 
+          {/* Batch Actions Bar for Sessions */}
+          <BatchActionBar
+            selectedCount={selectedSessionIds.size}
+            totalCount={filteredSessions.length}
+            onClearSelection={handleClearSessionSelection}
+            onSelectAllCurrentPage={handleSelectAllSessions}
+            isAllSelected={filteredSessions.length > 0 && filteredSessions.every((s) => selectedSessionIds.has(s.id))}
+            actions={sessionBatchActions}
+          />
+
           {/* Sessions Table */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
             <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
@@ -967,14 +1111,14 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
                 </h2>
               </div>
               <span className="text-xs text-slate-500">
-                每堂課皆具備唯一 Session ID，供點名與出勤直接關聯
+                每堂課皆具備獨立堂次紀錄，供點名與出勤直接關聯
               </span>
             </div>
 
             {loading ? (
               <div className="p-12 text-center text-slate-400">
                 <RefreshCw className="w-6 h-6 animate-spin mx-auto text-teal-600 mb-2" />
-                <p className="text-xs">正在自 Supabase 載入排課資料...</p>
+                <p className="text-xs">正在載入排課資料...</p>
               </div>
             ) : filteredSessions.length === 0 ? (
               <div className="p-12 text-center text-slate-400">
@@ -999,6 +1143,14 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                      <th className="py-3 px-3 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={filteredSessions.length > 0 && filteredSessions.every((s) => selectedSessionIds.has(s.id))}
+                          onChange={handleSelectAllSessions}
+                          className="w-4 h-4 rounded text-teal-600 border-slate-300 focus:ring-teal-500 cursor-pointer"
+                        />
+                      </th>
                       <th className="py-3 px-4">上課日期</th>
                       <th className="py-3 px-4">班級名稱</th>
                       <th className="py-3 px-4">時段 / 節數</th>
@@ -1013,6 +1165,7 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
                       const isRescheduled = s.status === 'RESCHEDULED';
                       const isMakeup = s.status === 'MAKEUP';
                       const isCancelled = s.status === 'CANCELLED';
+                      const isSelected = selectedSessionIds.has(s.id);
                       const matchedClass = classes.find((c) => c.id === s.classId);
                       const displayClassName = s.className || matchedClass?.name || matchedClass?.classCode || '華語密集班';
                       const displayCourseName = s.courseName || matchedClass?.courseName || matchedClass?.classroom || '';
@@ -1021,7 +1174,9 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
                         <tr
                           key={s.id}
                           className={`hover:bg-slate-50/80 transition-colors ${
-                            isRescheduled
+                            isSelected
+                              ? 'bg-teal-50/50 ring-1 ring-teal-400'
+                              : isRescheduled
                               ? 'bg-amber-50/30'
                               : isMakeup
                               ? 'bg-emerald-50/30'
@@ -1030,6 +1185,14 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
                               : ''
                           }`}
                         >
+                          <td className="py-3 px-3 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleToggleSelectSession(s.id)}
+                              className="w-4 h-4 rounded text-teal-600 border-slate-300 focus:ring-teal-500 cursor-pointer"
+                            />
+                          </td>
                           <td className="py-3 px-4">
                             <div className="font-bold text-slate-900">{s.sessionDate}</div>
                             <div className="text-[10px] text-slate-400">{getIsoWeekdayName(s.dayOfWeek)}</div>
@@ -1104,6 +1267,22 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
                                   停課
                                 </button>
                               </>
+                            )}
+                            {s.status === 'CANCELLED' && (
+                              <button
+                                onClick={async () => {
+                                  const res = await scheduleService.restoreSession(s.id);
+                                  if (res.error) showToast(res.error.message || '恢復失敗', true);
+                                  else {
+                                    showToast('課堂已恢復正常上課');
+                                    await loadScheduleData();
+                                  }
+                                }}
+                                className="px-2.5 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-xs font-bold"
+                                title="恢復正常授課"
+                              >
+                                恢復
+                              </button>
                             )}
                             <button
                               onClick={() => setDeletingSession(s)}
@@ -1399,7 +1578,7 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
                 <li>依據學期開課與結課日期（{currentTerm?.startDate} ~ {currentTerm?.endDate}）自動計算每日課堂。</li>
                 <li>自動依據每週排課規則（共 {rules.length} 條規則，{weeklyHours}H/週）配置節次與教室。</li>
                 <li>自動比對校務假日與國定假日，排除已標記停課的日期。</li>
-                <li>產生完成後將存入 Supabase <code>public.class_sessions</code>。</li>
+                <li>產生完成後將建立全學期各堂次正式課表。</li>
               </ul>
             </div>
 
@@ -1890,6 +2069,126 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
           </div>
         );
       })()}
+
+      {/* MODAL: BATCH CANCEL SESSIONS */}
+      {showBatchCancelModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">批量停課確認</h3>
+                  <p className="text-xs text-slate-500">已選取 {selectedSessionIds.size} 堂課</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowBatchCancelModal(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <p className="text-slate-600">
+                您即將把選取的 <strong>{selectedSessionIds.size} 堂課</strong> 狀態統一設為「停課 (CANCELLED)」。課堂紀錄將保留，但將自有效授課時數扣除。
+              </p>
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">停課原因 / 備註：</label>
+                <input
+                  type="text"
+                  value={batchCancelReason}
+                  onChange={(e) => setBatchCancelReason(e.target.value)}
+                  placeholder="例如：全校公假停課、颱風天停課、全校運動會..."
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowBatchCancelModal(false)}
+                disabled={isBatchProcessing}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteBatchCancel}
+                disabled={isBatchProcessing}
+                className="px-5 py-2 bg-amber-600 text-white rounded-xl text-xs font-black hover:bg-amber-700 transition-all flex items-center space-x-1.5 disabled:opacity-50"
+              >
+                {isBatchProcessing && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                <span>確認批量停課</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: BATCH DELETE SESSIONS */}
+      {showBatchDeleteModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center">
+                  <Trash2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">批量刪除課堂確認</h3>
+                  <p className="text-xs text-slate-500">已選取 {selectedSessionIds.size} 堂課</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowBatchDeleteModal(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1.5">
+              <div className="font-bold flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-amber-700" />
+                <span>安全保護機制：</span>
+              </div>
+              <p className="text-[11px] leading-relaxed">
+                系統將自動檢查每堂課的點名狀態。<strong>若課堂已有教師點名或學生出缺勤紀錄，系統將予以嚴格防護保留（絕不刪除）</strong>，避免破壞學生的出勤歷史。
+              </p>
+            </div>
+
+            <p className="text-xs text-slate-600">
+              確認後，僅會刪除<strong>尚未產生任何出缺勤紀錄</strong>的課堂。此動作無法復原。
+            </p>
+
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowBatchDeleteModal(false)}
+                disabled={isBatchProcessing}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteBatchDelete}
+                disabled={isBatchProcessing}
+                className="px-5 py-2 bg-rose-600 text-white rounded-xl text-xs font-black hover:bg-rose-700 transition-all flex items-center space-x-1.5 disabled:opacity-50"
+              >
+                {isBatchProcessing && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                <span>確認執行批量刪除</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

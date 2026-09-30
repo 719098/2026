@@ -20,6 +20,7 @@ import {
   Check
 } from 'lucide-react';
 import { CourseSession, DayScheduleSummary, Teacher, ClassEntity, ClassSessionEntity, Holiday } from '../types';
+import { InfoTooltip } from './common/InfoTooltip';
 
 const HOUR_24_OPTIONS = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
 const MINUTE_60_OPTIONS = Array.from({ length: 60 }, (_, i) => i.toString().padStart(2, '0'));
@@ -339,24 +340,22 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
       )}
 
       {/* Top Banner */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-blue-50 text-blue-800 border border-blue-200 mb-2">
-              <ArrowRightLeft className="w-3.5 h-3.5" />
-              <span>課程日期與調課行事曆 (Supabase 串接)</span>
-            </div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-3">
-              <span>學期排課與調課異動追蹤</span>
+            <div className="flex items-center space-x-2">
+              <ArrowRightLeft className="w-5 h-5 text-blue-600" />
+              <h1 className="text-lg font-bold text-slate-900">學期排課與調課異動追蹤</h1>
+              <InfoTooltip
+                title="排課與調課追蹤"
+                content="彙整全學期排課、停課與調課紀錄。調課時點名紀錄與學生名單將跟隨課堂實體移動至新日期，原定日期保留追蹤標記。"
+              />
               {dbSessions.length > 0 && (
-                <span className="text-xs font-bold bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full border border-emerald-200">
-                  Supabase 即時資料 ({dbSessions.length} 堂課)
+                <span className="text-xs font-semibold bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                  共 {dbSessions.length} 堂課
                 </span>
               )}
-            </h1>
-            <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
-              本視圖彙整授課教師於學期中所有排課、停課與調課紀錄。調課時，點名紀錄與學生名單將<strong>完整跟隨課程實體</strong>移動至新日期，原定日期亦會保留追蹤標記。
-            </p>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -501,16 +500,16 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
         </div>
       </div>
 
-      {/* Real Supabase Class Sessions List */}
+      {/* Class Sessions List */}
       {dbSessions.length > 0 ? (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
               <CalendarDays className="w-4 h-4 text-blue-600" />
-              <span>資料庫排課日程列表 ({filteredDbSessions.length} 堂)</span>
+              <span>排課日程列表 ({filteredDbSessions.length} 堂)</span>
             </h2>
             <span className="text-xs text-slate-500">
-              點擊「調課」或「停課」可即時同步更新 Supabase 雲端資料庫
+              點擊「調課」或「停課」可即時更新日程規劃
             </span>
           </div>
 
@@ -697,7 +696,7 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
               全季預設日程與調課總覽 ({daySummaries.length} 天)
             </h2>
             <span className="text-xs text-amber-700 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200 font-medium">
-              提示：Supabase 目前尚未正式產生課表，正顯示展示日程
+              提示：目前為展示日程，請至管理端產生正式課表
             </span>
           </div>
 

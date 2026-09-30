@@ -4,16 +4,17 @@ import {
   Search, 
   Download, 
   Filter, 
-  Sparkles, 
-  CheckCircle, 
-  AlertTriangle, 
-  Edit3, 
-  Sliders, 
   FileSpreadsheet,
+  Sliders,
+  CheckCircle,
+  AlertTriangle,
   X
 } from 'lucide-react';
 import { Student, ClassEntity } from '../../types';
 import { calculateFinalGrade, calculatePerformanceScore, getStudentScores } from '../../utils/gradeUtils';
+import { exportGradesToCsv } from '../../utils/csvExport';
+import { InfoTooltip } from '../common/InfoTooltip';
+import { BatchActionBar, BatchActionItem } from '../common/BatchActionBar';
 
 interface AdminGradesManagementViewProps {
   students: Student[];
@@ -29,6 +30,9 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClassFilter, setSelectedClassFilter] = useState('ALL');
   const [selectedGradeBandFilter, setSelectedGradeBandFilter] = useState('ALL');
+
+  // Batch selection
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
 
   // Filter students
   const filteredStudents = students.filter((s) => {
@@ -57,9 +61,59 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
     return matchSearch && matchClass && matchBand;
   });
 
-  const handleExportCSV = () => {
-    alert('已匯出全校成績總表 (CSV/Excel 格式)！包含聽說40%、讀寫40%、平時表現20% (含出席折算50%) 及最終等第。');
+  const handleToggleSelectStudent = (studentId: string) => {
+    setSelectedStudentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(studentId)) {
+        next.delete(studentId);
+      } else {
+        next.add(studentId);
+      }
+      return next;
+    });
   };
+
+  const handleSelectAllCurrentPage = () => {
+    if (filteredStudents.length === 0) return;
+    const allSelected = filteredStudents.every((s) => selectedStudentIds.has(s.id));
+    if (allSelected) {
+      setSelectedStudentIds((prev) => {
+        const next = new Set(prev);
+        filteredStudents.forEach((s) => next.delete(s.id));
+        return next;
+      });
+    } else {
+      setSelectedStudentIds((prev) => {
+        const next = new Set(prev);
+        filteredStudents.forEach((s) => next.add(s.id));
+        return next;
+      });
+    }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedStudentIds(new Set());
+  };
+
+  const handleExportAllCSV = () => {
+    exportGradesToCsv(filteredStudents);
+  };
+
+  const handleBatchExportCSV = () => {
+    const targets = filteredStudents.filter((s) => selectedStudentIds.has(s.id));
+    if (targets.length === 0) return;
+    exportGradesToCsv(targets, `學員成績冊_選取_${targets.length}人`);
+  };
+
+  const batchActions: BatchActionItem[] = [
+    {
+      key: 'batch-export',
+      label: `匯出選取成績 (${selectedStudentIds.size}人)`,
+      icon: <Download className="w-4 h-4" />,
+      variant: 'primary',
+      onClick: handleBatchExportCSV,
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -68,15 +122,16 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
         <div>
           <div className="flex items-center space-x-2">
             <Award className="w-5 h-5 text-[#536B7A]" />
-            <h1 className="text-lg font-bold text-[#26313B]">全校學員期末成績結算與等第總評</h1>
+            <h1 className="text-lg font-bold text-[#26313B]">學員期末成績與等第總評</h1>
+            <InfoTooltip
+              title="學期成績結算標準"
+              content="成績權重公式：聽說 40% + 讀寫 40% + 平時 20%（平時成績包含 50% 考勤出席率與 50% 課堂綜合表現）。"
+            />
           </div>
-          <p className="text-xs text-[#66717C] mt-1">
-            成績權重公式：<strong>聽說 40% + 讀寫 40% + 平時 20%</strong>（平時成績包含 50% 考勤出席率與 50% 課堂綜合表現）。
-          </p>
         </div>
 
         <button
-          onClick={handleExportCSV}
+          onClick={handleExportAllCSV}
           className="inline-flex items-center space-x-1.5 px-4 py-2 bg-[#536B7A] hover:bg-[#455865] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors"
         >
           <FileSpreadsheet className="w-4 h-4" />
@@ -85,13 +140,13 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
       </div>
 
       {/* Grade Formula Specs Banner */}
-      <div className="bg-[#F8FAFC] border border-[#DCE2E6] rounded-xl p-4 text-xs text-[#26313B] shadow-2xs">
+      <div className="bg-[#F8FAFC] border border-[#DCE2E6] rounded-xl p-3.5 text-xs text-[#26313B] shadow-2xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center space-x-2">
             <Sliders className="w-4 h-4 text-[#536B7A]" />
             <span className="font-bold">中心標準評分標準 (Official Grading Standards)：</span>
           </div>
-          <div className="flex flex-wrap items-center gap-4 text-[11px]">
+          <div className="flex flex-wrap items-center gap-3 text-[11px]">
             <span className="bg-white px-2.5 py-1 rounded-md border border-[#DCE2E6] font-semibold text-[#536B7A]">
               🗣️ 聽力與口語：<strong>40%</strong>
             </span>
@@ -146,12 +201,31 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
         </div>
       </div>
 
+      {/* Batch Action Bar */}
+      <BatchActionBar
+        selectedCount={selectedStudentIds.size}
+        totalCount={filteredStudents.length}
+        onClearSelection={handleClearSelection}
+        onSelectAllCurrentPage={handleSelectAllCurrentPage}
+        isAllSelected={filteredStudents.length > 0 && filteredStudents.every((s) => selectedStudentIds.has(s.id))}
+        actions={batchActions}
+      />
+
       {/* Grades Table */}
       <div className="bg-white rounded-xl border border-[#DCE2E6] shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-[#F8FAFC] text-[#66717C] font-semibold border-b border-[#DCE2E6]">
+                <th className="py-3 px-3 text-center w-10">
+                  <input
+                    type="checkbox"
+                    checked={filteredStudents.length > 0 && filteredStudents.every((s) => selectedStudentIds.has(s.id))}
+                    onChange={handleSelectAllCurrentPage}
+                    className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
+                    title={filteredStudents.every((s) => selectedStudentIds.has(s.id)) ? '取消全選' : '全選目前頁面'}
+                  />
+                </th>
                 <th className="py-3 px-4">學號 / 姓名</th>
                 <th className="py-3 px-3">所屬班級</th>
                 <th className="py-3 px-3 text-right">聽說 (40%)</th>
@@ -165,7 +239,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
             <tbody className="divide-y divide-[#F0F4F7]">
               {filteredStudents.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-[#66717C] text-xs">
+                  <td colSpan={9} className="py-12 text-center text-[#66717C] text-xs">
                     查無學員成績紀錄
                   </td>
                 </tr>
@@ -178,6 +252,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
                     studentScores.dailyPerformance,
                     student.overallAttendanceRate
                   );
+                  const isSelected = selectedStudentIds.has(student.id);
 
                   let badgeColor = 'bg-emerald-50 text-emerald-800 border-emerald-200';
                   let gradeLetter = 'A';
@@ -201,10 +276,22 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
                   return (
                     <tr
                       key={student.id}
-                      onClick={() => onSelectStudentDetail(student)}
-                      className="hover:bg-[#F8FAFC] transition-colors cursor-pointer"
+                      className={`hover:bg-[#F8FAFC] transition-colors ${isSelected ? 'bg-teal-50/40' : ''}`}
                     >
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleSelectStudent(student.id)}
+                          className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
+                          title={`選取學員 ${student.name}`}
+                        />
+                      </td>
+
+                      <td 
+                        className="py-3 px-4 cursor-pointer hover:underline"
+                        onClick={() => onSelectStudentDetail(student)}
+                      >
                         <div className="font-bold text-[#26313B]">{student.name}</div>
                         <div className="text-[10px] text-[#66717C] font-mono">
                           {student.studentNumber} • {student.englishName}

@@ -699,3 +699,213 @@ export async function saveClassMaterialsInSupabase(
   }
 }
 
+/**
+ * 檢查教材是否被任何班級使用中 (public.class_materials)
+ */
+export async function checkMaterialUsageInClasses(
+  materialId: string
+): Promise<{ isUsed: boolean; classCount: number; classNames: string[]; error?: any }> {
+  if (!supabase) return { isUsed: false, classCount: 0, classNames: [] };
+
+  try {
+    const { data, error } = await supabase
+      .from('class_materials')
+      .select('class_id, classes(id, name)')
+      .eq('material_id', materialId);
+
+    if (error) {
+      console.error('[materialService] Error checking material usage:', error);
+      return { isUsed: false, classCount: 0, classNames: [], error };
+    }
+
+    const rows = data || [];
+    const classNames = rows
+      .map((r: any) => r.classes?.name || r.class_id)
+      .filter(Boolean);
+
+    return {
+      isUsed: rows.length > 0,
+      classCount: rows.length,
+      classNames,
+    };
+  } catch (err: any) {
+    return { isUsed: false, classCount: 0, classNames: [], error: err };
+  }
+}
+
+/**
+ * 刪除單筆主教材 (僅限未被班級使用之教材)
+ */
+export async function deleteMaterialInSupabase(
+  materialId: string
+): Promise<{ success: boolean; error: any }> {
+  if (!supabase) return { success: false, error: new Error('Supabase client unavailable') };
+
+  const cleanId = String(materialId || '').trim();
+  if (!cleanId) return { success: false, error: new Error('教材識別碼不可為空白') };
+
+  try {
+    // 1. 檢查是否被班級使用中
+    const usage = await checkMaterialUsageInClasses(cleanId);
+    if (usage.isUsed) {
+      return {
+        success: false,
+        error: new Error(
+          `該教材目前已被 ${usage.classCount} 個班級關聯使用（例如：${usage.classNames.slice(0, 3).join('、')}），為維護班級資料完整性，不允許直接刪除。請改為「停用教材」或先於該班級解除教材綁定。`
+        ),
+      };
+    }
+
+    // 2. 執行刪除
+    const { error: delErr } = await supabase
+      .from('materials')
+      .delete()
+      .eq('id', cleanId);
+
+    if (delErr) {
+      console.error('[materialService] Error deleting material:', delErr);
+      return { success: false, error: delErr };
+    }
+
+    return { success: true, error: null };
+  } catch (err: any) {
+    return { success: false, error: err };
+  }
+}
+
+/**
+ * 批量更新教材啟用/停用狀態
+ */
+export async function batchUpdateMaterialsStatus(
+  materialIds: string[],
+  isActive: boolean
+): Promise<{ success: boolean; updatedCount: number; error: any }> {
+  if (!supabase) return { success: false, updatedCount: 0, error: new Error('Supabase client unavailable') };
+
+  const validIds = (materialIds || []).map((id) => String(id).trim()).filter(Boolean);
+  if (validIds.length === 0) return { success: true, updatedCount: 0, error: null };
+
+  try {
+    const { error } = await supabase
+      .from('materials')
+      .update({
+        is_active: isActive,
+        updated_at: new Date().toISOString(),
+      })
+      .in('id', validIds);
+
+    if (error) {
+      console.error('[materialService] Error in batchUpdateMaterialsStatus:', error);
+      return { success: false, updatedCount: 0, error };
+    }
+
+    return { success: true, updatedCount: validIds.length, error: null };
+  } catch (err: any) {
+    return { success: false, updatedCount: 0, error: err };
+  }
+}
+
+/**
+ * 批量刪除教材 (自動檢查班級關聯保護，若有被班級使用則阻擋保護不刪除)
+ */
+export async function batchDeleteMaterials(
+  materialIds: string[],
+  materialMap?: Map<string, string>
+): Promise<{
+  success: boolean;
+  deletedCount: number;
+  blockedCount: number;
+  blockedMaterials: { id: string; name: string; reason: string }[];
+  error: any;
+}> {
+  if (!supabase) {
+    return {
+      success: false,
+      deletedCount: 0,
+      blockedCount: 0,
+      blockedMaterials: [],
+      error: new Error('Supabase client unavailable'),
+    };
+  }
+
+  const validIds = (materialIds || []).map((id) => String(id).trim()).filter(Boolean);
+  if (validIds.length === 0) {
+    return { success: true, deletedCount: 0, blockedCount: 0, blockedMaterials: [], error: null };
+  }
+
+  try {
+    // 1. 查詢所有選取教材在 class_materials 中的關聯
+    const { data: usedRows, error: usedErr } = await supabase
+      .from('class_materials')
+      .select('material_id, class_id, classes(name)')
+      .in('material_id', validIds);
+
+    if (usedErr) {
+      console.error('[materialService] Error checking used materials in batch delete:', usedErr);
+      return { success: false, deletedCount: 0, blockedCount: 0, blockedMaterials: [], error: usedErr };
+    }
+
+    const usedMap = new Map<string, string[]>();
+    (usedRows || []).forEach((r: any) => {
+      const mId = String(r.material_id);
+      const cName = r.classes?.name || '班級';
+      const existing = usedMap.get(mId) || [];
+      if (!existing.includes(cName)) existing.push(cName);
+      usedMap.set(mId, existing);
+    });
+
+    const toDeleteIds: string[] = [];
+    const blockedList: { id: string; name: string; reason: string }[] = [];
+
+    for (const id of validIds) {
+      const matName = materialMap?.get(id) || `教材 (${id.slice(0, 6)})`;
+      if (usedMap.has(id)) {
+        const classes = usedMap.get(id) || [];
+        blockedList.push({
+          id,
+          name: matName,
+          reason: `已被班級【${classes.slice(0, 2).join('、')}${classes.length > 2 ? '等' : ''}】使用中`,
+        });
+      } else {
+        toDeleteIds.push(id);
+      }
+    }
+
+    // 2. 刪除未被使用的教材
+    if (toDeleteIds.length > 0) {
+      const { error: delErr } = await supabase
+        .from('materials')
+        .delete()
+        .in('id', toDeleteIds);
+
+      if (delErr) {
+        console.error('[materialService] Error deleting materials:', delErr);
+        return {
+          success: false,
+          deletedCount: 0,
+          blockedCount: blockedList.length,
+          blockedMaterials: blockedList,
+          error: delErr,
+        };
+      }
+    }
+
+    return {
+      success: true,
+      deletedCount: toDeleteIds.length,
+      blockedCount: blockedList.length,
+      blockedMaterials: blockedList,
+      error: null,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      deletedCount: 0,
+      blockedCount: 0,
+      blockedMaterials: [],
+      error: err,
+    };
+  }
+}
+
+

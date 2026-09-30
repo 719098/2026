@@ -23,6 +23,7 @@ import {
 import { Student, Teacher, CourseSession, StudentGrade, ClassEntity } from '../types';
 import { calculateStudentAttendanceHistory } from '../utils/attendanceUtils';
 import { StudentAvatar } from './StudentAvatar';
+import { exportStudentsToCsv, exportClassStudentAttendanceToCsv } from '../utils/csvExport';
 
 interface ClassesViewProps {
   currentTeacher?: Teacher | null;
@@ -96,6 +97,36 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
   const averageAttendance = students.length > 0
     ? Math.round((students.reduce((acc, s) => acc + (s.overallAttendanceRate || 100), 0) / students.length) * 10) / 10
     : 100;
+
+  const currentClassName = selectedClassObj?.className || selectedClassObj?.name || '班級';
+
+  const handleExportClassStudents = () => {
+    if (filteredStudents.length === 0) return;
+    exportStudentsToCsv(filteredStudents, `${currentClassName}_學生名冊`);
+  };
+
+  const handleExportAttendanceStats = () => {
+    if (filteredStudents.length === 0) return;
+    const records = filteredStudents.map((s) => {
+      const history = calculateStudentAttendanceHistory(s, allCourses);
+      const isWarning = history.attendanceRate < 90 && history.attendanceRate >= 80;
+      const isDanger = history.attendanceRate < 80;
+      const warningStatus = isDanger ? '🚨 達停修危險 (低於80%)' : isWarning ? '⚠️ 出席警示 (低於90%)' : '✅ 正常';
+      return {
+        studentNumber: s.studentNumber,
+        name: s.name,
+        englishName: s.englishName,
+        nationality: s.nationality,
+        totalHours: history.requiredHours,
+        presentHours: history.presentHours,
+        leaveHours: history.leaveHours,
+        absentHours: history.absentHours,
+        attendanceRate: history.attendanceRate,
+        warningStatus,
+      };
+    });
+    exportClassStudentAttendanceToCsv(currentClassName, records);
+  };
 
   return (
     <div className="space-y-6 pb-20">
@@ -193,8 +224,24 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
             <span>【{selectedClassObj?.className || selectedClassObj?.name}】個別學生出席名冊 ({filteredStudents.length} 人)</span>
           </div>
 
-          <div className="w-full sm:w-72">
-            <div className="relative">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleExportClassStudents}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 text-teal-800 border border-teal-200 text-xs font-semibold rounded-lg shadow-2xs transition-colors shrink-0"
+              title="匯出此班級的在班學生名冊 (CSV)"
+            >
+              <Download className="w-3.5 h-3.5 text-teal-600" />
+              <span>匯出學生名冊</span>
+            </button>
+            <button
+              onClick={handleExportAttendanceStats}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-semibold rounded-lg shadow-2xs transition-colors shrink-0"
+              title="匯出此班級全體學生的個別出缺席時數與出席率統計表 (CSV)"
+            >
+              <Download className="w-3.5 h-3.5 text-slate-500" />
+              <span>匯出出席統計</span>
+            </button>
+            <div className="relative w-full sm:w-64">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
               <input
                 type="text"

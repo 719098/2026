@@ -18,10 +18,14 @@ import {
   AlertTriangle,
   ToggleLeft,
   ToggleRight,
-  Power
+  Power,
+  Download
 } from 'lucide-react';
 import { ClassEntity, Teacher, Student, Term } from '../../types';
 import { MaterialEntity, fetchMaterialsFromSupabase } from '../../lib/materialService';
+import { InfoTooltip } from '../common/InfoTooltip';
+import { BatchActionBar, BatchActionItem } from '../common/BatchActionBar';
+import { exportStudentsToCsv } from '../../utils/csvExport';
 
 interface AdminClassManagementViewProps {
   classes: ClassEntity[];
@@ -70,6 +74,121 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
   const [deletingClass, setDeletingClass] = useState<ClassEntity | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Batch selection states
+  const [selectedClassIds, setSelectedClassIds] = useState<Set<string>>(new Set());
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [toastMessage, setToastMessage] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'warning' = 'success') => {
+    setToastMessage({ message, type });
+    setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  const handleToggleSelectClass = (classId: string) => {
+    setSelectedClassIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(classId)) {
+        next.delete(classId);
+      } else {
+        next.add(classId);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllCurrentPage = () => {
+    if (filteredClasses.length === 0) return;
+    const allSelected = filteredClasses.every((c) => selectedClassIds.has(c.id));
+    if (allSelected) {
+      setSelectedClassIds((prev) => {
+        const next = new Set(prev);
+        filteredClasses.forEach((c) => next.delete(c.id));
+        return next;
+      });
+    } else {
+      setSelectedClassIds((prev) => {
+        const next = new Set(prev);
+        filteredClasses.forEach((c) => next.add(c.id));
+        return next;
+      });
+    }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedClassIds(new Set());
+  };
+
+  const handleExportClassStudents = (cls: ClassEntity) => {
+    const classStudents = students.filter(
+      (s) => s.classId === cls.id || s.className === cls.name || s.className === cls.classCode
+    );
+    if (classStudents.length === 0) {
+      showToast(`班級【${cls.name}】目前尚無在班學生可匯出`, 'warning');
+      return;
+    }
+    exportStudentsToCsv(classStudents, `${cls.name}_班級學生名冊`);
+    showToast(`✅ 已匯出【${cls.name}】共 ${classStudents.length} 位學生名冊 (CSV)！`, 'success');
+  };
+
+  const handleBatchExportClassStudents = () => {
+    const selectedClasses = classes.filter((c) => selectedClassIds.has(c.id));
+    if (selectedClasses.length === 0) return;
+    const selectedClassNames = new Set(selectedClasses.map((c) => c.name));
+    const selectedClassIdsSet = new Set(selectedClasses.map((c) => c.id));
+    const targetStudents = students.filter(
+      (s) =>
+        (s.classId && selectedClassIdsSet.has(s.classId)) ||
+        (s.className && selectedClassNames.has(s.className))
+    );
+    if (targetStudents.length === 0) {
+      showToast('所選班級中目前尚無在班學生可匯出', 'warning');
+      return;
+    }
+    exportStudentsToCsv(targetStudents, `選取班級學生名冊_${targetStudents.length}人`);
+    showToast(`✅ 已匯出 ${selectedClasses.length} 個班級共 ${targetStudents.length} 位學生名冊 (CSV)！`, 'success');
+  };
+
+  const handleBatchToggleStatus = async (nextStatus: 'OPEN' | 'CLOSED') => {
+    if (!onToggleClassStatus) return;
+    setIsBatchProcessing(true);
+    try {
+      const selected = classes.filter((c) => selectedClassIds.has(c.id));
+      for (const cls of selected) {
+        await onToggleClassStatus(cls.id, nextStatus);
+      }
+      showToast(`✅ 已將 ${selected.length} 個班級狀態設定為【${nextStatus === 'OPEN' ? '開班招生中' : '已結課/關閉'}】！`, 'success');
+      setSelectedClassIds(new Set());
+    } catch (err: any) {
+      showToast(`批量變更班級狀態失敗: ${err.message || String(err)}`, 'error');
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const batchActions: BatchActionItem[] = [
+    {
+      key: 'open',
+      label: '批量設為開放中 (OPEN)',
+      icon: <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />,
+      onClick: () => handleBatchToggleStatus('OPEN'),
+      disabled: isBatchProcessing,
+    },
+    {
+      key: 'close',
+      label: '批量設為已結班 (CLOSED)',
+      icon: <Power className="w-3.5 h-3.5 text-slate-600" />,
+      onClick: () => handleBatchToggleStatus('CLOSED'),
+      disabled: isBatchProcessing,
+    },
+    {
+      key: 'export',
+      label: '匯出選取班級學生名冊 (CSV)',
+      icon: <Download className="w-3.5 h-3.5" />,
+      onClick: handleBatchExportClassStudents,
+      disabled: isBatchProcessing,
+    },
+  ];
 
   // New Class Form Materials & Remarks
   const [addMat1, setAddMat1] = useState<string>('');
@@ -259,19 +378,43 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
 
   return (
     <div className="space-y-6">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 transition-all duration-300">
+          <div
+            className={`px-4 py-3 rounded-xl shadow-lg border text-xs font-bold flex items-center space-x-2 ${
+              toastMessage.type === 'success'
+                ? 'bg-emerald-800 text-white border-emerald-700'
+                : toastMessage.type === 'error'
+                ? 'bg-rose-800 text-white border-rose-700'
+                : 'bg-amber-800 text-white border-amber-700'
+            }`}
+          >
+            <span>{toastMessage.message}</span>
+            <button
+              onClick={() => setToastMessage(null)}
+              className="ml-2 text-white/70 hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-5 rounded-xl border border-[#DCE2E6] shadow-2xs">
         <div>
           <div className="flex items-center space-x-2">
             <Layers className="w-5 h-5 text-[#536B7A]" />
             <h1 className="text-lg font-bold text-[#26313B]">開設班級管理</h1>
+            <InfoTooltip
+              title="開設班級管理"
+              content="管理各學期開設之華語研習班級，包含授課教師指派、教材綁定、上課時段與教室排定。支援多選批量狀態設定（開班招生中 / 已結課關閉）與班級學生名冊匯出。"
+            />
             <span className="px-2.5 py-0.5 rounded-md text-xs font-semibold bg-[#E8EEF2] text-[#536B7A] border border-[#DCE2E6]">
               共開設 {classes.length} 個班級
             </span>
           </div>
-          <p className="text-xs text-[#66717C] mt-1">
-            綁定官方教材、指派授課教師、排定教室、設定班級狀態與全季開課時程。
-          </p>
         </div>
 
         <button
@@ -319,6 +462,16 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
         </div>
       </div>
 
+      {/* Batch Actions Toolbar */}
+      <BatchActionBar
+        selectedCount={selectedClassIds.size}
+        totalCount={filteredClasses.length}
+        onClearSelection={handleClearSelection}
+        onSelectAllCurrentPage={handleSelectAllCurrentPage}
+        isAllSelected={filteredClasses.length > 0 && filteredClasses.every((c) => selectedClassIds.has(c.id))}
+        actions={batchActions}
+      />
+
       {/* Classes Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredClasses.map((cls) => {
@@ -330,31 +483,43 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
           const matchedTeacher = cls.teacherId ? teachers.find((t) => t.id === cls.teacherId) : null;
           const resolvedTeacherName = matchedTeacher?.name || (cls.teacherName && cls.teacherName !== '未指定教師' ? cls.teacherName : '');
           const hasAssignedTeacher = Boolean(cls.teacherId && resolvedTeacherName);
+          const isSelected = selectedClassIds.has(cls.id);
 
           return (
             <div
               key={cls.id}
-              className="bg-white rounded-xl border border-[#DCE2E6] p-5 shadow-2xs hover:border-[#536B7A]/40 transition-all flex flex-col justify-between"
+              className={`bg-white rounded-xl border p-5 shadow-2xs hover:border-[#536B7A]/40 transition-all flex flex-col justify-between ${
+                isSelected ? 'border-teal-500 ring-2 ring-teal-500/20 bg-teal-50/20' : 'border-[#DCE2E6]'
+              }`}
             >
               <div>
                 {/* Top Badge & Title */}
                 <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="flex items-center space-x-2">
-                      <span className="text-[10px] font-mono font-bold bg-[#E8EEF2] text-[#536B7A] px-2 py-0.5 rounded-md border border-[#DCE2E6]">
-                        {cls.classCode}
-                      </span>
-                      {isClassOpen ? (
-                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                          開放招生中 (OPEN)
+                  <div className="flex items-start space-x-2.5">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => handleToggleSelectClass(cls.id)}
+                      className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer mt-1"
+                      title={`選取 ${cls.name}`}
+                    />
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[10px] font-mono font-bold bg-[#E8EEF2] text-[#536B7A] px-2 py-0.5 rounded-md border border-[#DCE2E6]">
+                          {cls.classCode}
                         </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#E8EEF2] text-slate-600 border border-[#DCE2E6]">
-                          已關閉/額滿 (CLOSED)
-                        </span>
-                      )}
+                        {isClassOpen ? (
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                            開放招生中 (OPEN)
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#E8EEF2] text-slate-600 border border-[#DCE2E6]">
+                            已關閉/額滿 (CLOSED)
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="text-base font-bold text-[#26313B] mt-2">{cls.name}</h3>
                     </div>
-                    <h3 className="text-base font-bold text-[#26313B] mt-2">{cls.name}</h3>
                   </div>
                 </div>
 
@@ -435,13 +600,23 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
 
               {/* Action Buttons */}
               <div className="mt-4 pt-3 border-t border-[#F0F4F7] flex items-center justify-between flex-wrap gap-2">
-                <button
-                  onClick={() => onViewClassStudents(cls)}
-                  className="text-xs text-[#536B7A] hover:text-[#26313B] font-semibold inline-flex items-center space-x-1"
-                >
-                  <Users className="w-3.5 h-3.5" />
-                  <span>學生名單 ({enrolledCount})</span>
-                </button>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => onViewClassStudents(cls)}
+                    className="text-xs text-[#536B7A] hover:text-[#26313B] font-semibold inline-flex items-center space-x-1"
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    <span>學生名單 ({enrolledCount})</span>
+                  </button>
+                  <button
+                    onClick={() => handleExportClassStudents(cls)}
+                    className="text-xs text-teal-700 hover:text-teal-900 font-semibold inline-flex items-center space-x-1"
+                    title={`匯出【${cls.name}】學生名冊 (CSV)`}
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>匯出名冊</span>
+                  </button>
+                </div>
 
                 <div className="flex items-center space-x-1.5">
                   {onToggleClassStatus && (
@@ -705,7 +880,7 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                   disabled={isSubmitting}
                   className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-bold shadow-xs disabled:opacity-50"
                 >
-                  {isSubmitting ? '正在寫入 Supabase...' : '確認開設此班級'}
+                  {isSubmitting ? '正在開設班級...' : '確認開設此班級'}
                 </button>
               </div>
             </form>
@@ -915,7 +1090,7 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                   disabled={isSubmitting}
                   className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-bold shadow-xs disabled:opacity-50"
                 >
-                  {isSubmitting ? '正在儲存至 Supabase...' : '儲存開班變更'}
+                  {isSubmitting ? '正在儲存變更...' : '儲存開班變更'}
                 </button>
               </div>
             </form>
@@ -969,7 +1144,7 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
                   </div>
                 ) : (
                   <p className="text-slate-600 leading-relaxed">
-                    確定要從 Supabase 正式刪除空班級【<strong>{deletingClass.name}</strong>】嗎？此操作將永久移除該班級紀錄，且無法復原。
+                    確定要刪除空班級【<strong>{deletingClass.name}</strong>】嗎？此操作將永久移除該班級紀錄，且無法復原。
                   </p>
                 )}
 

@@ -539,7 +539,7 @@ export default function App() {
     setActiveAttendanceCourse(null);
     setSelectedStudentForDetail(null);
     loadSupabaseStudents();
-    showToast('✨ 已從 Supabase 資料庫重新同步最新資料！', 'success');
+    showToast('✨ 資料已重新整理同步完成！', 'success');
   };
 
   // ================= ADMIN HANDLERS =================
@@ -551,7 +551,7 @@ export default function App() {
       showToast(`❌ 建立學生失敗 [${error.code || 'ERR'}]: ${error.message}`, 'warning');
       throw error;
     } else {
-      showToast(`✅ 已成功於 Supabase 建立新學生：${data?.name || newStudent.name} (${data?.studentNumber || newStudent.studentNumber})`, 'success');
+      showToast(`✅ 已成功建立新學生：${data?.name || newStudent.name} (${data?.studentNumber || newStudent.studentNumber})`, 'success');
       await loadSupabaseStudents();
     }
   };
@@ -575,7 +575,7 @@ export default function App() {
       showToast(`❌ 刪除學生失敗 [${error.code || 'ERR'}]: ${error.message}`, 'warning');
       throw error;
     } else {
-      showToast(`✅ 已從 Supabase 刪除學員資料！`, 'info');
+      showToast(`✅ 已刪除學員資料！`, 'info');
       await loadSupabaseStudents();
     }
   };
@@ -631,7 +631,7 @@ export default function App() {
         showToast(`建立學期期別失敗: ${error?.message || '未知錯誤'}`, 'error');
         throw error || new Error('新增學期失敗');
       }
-      showToast(`✅ 已成功於 Supabase 建立學期期別：${data.name} (${data.termCode})`, 'success');
+      showToast(`✅ 已成功建立學期期別：${data.name} (${data.termCode})`, 'success');
       await loadSupabaseStudents();
     } catch (err: any) {
       console.error('handleAddTerm error:', err);
@@ -839,7 +839,7 @@ export default function App() {
     const { error } = await updateTeacherClassAssignmentsInSupabase(teacherId, assignedClassNames, adminClasses);
     if (error) {
       console.error('Failed to sync teacher class assignments to Supabase:', error);
-      showToast(`⚠️ 授課班級已在前端更動，但寫入 Supabase 失敗: ${error.message || String(error)}`, 'warning');
+      showToast(`⚠️ 授課班級已在前端更動，但儲存失敗: ${error.message || String(error)}`, 'warning');
     } else {
       showToast(`✅ 已成功更新【${teacher.name} 老師】的授課班級！`, 'success');
       await loadSupabaseStudents();
@@ -903,7 +903,7 @@ export default function App() {
       console.error('Failed to create leave in Supabase:', error);
       showToast(`⚠️ 請假單儲存至資料庫失敗: ${error?.message || '資料庫錯誤'}`, 'warning');
     } else {
-      showToast(`✅ 已成功登錄學員【${leave.studentName}】的請假紀錄至 Supabase！`, 'success');
+      showToast(`✅ 已成功登錄學員【${leave.studentName}】的請假紀錄！`, 'success');
       const freshLeaves = await fetchLeavesFromSupabase(dbStudents, adminClasses);
       setAdminLeaves(freshLeaves);
     }
@@ -961,7 +961,7 @@ export default function App() {
         const student = dbStudents.find((s) => String(s.id) === String(grade.studentId));
         await saveStudentGradeToSupabase(grade, student?.classId);
       }
-      showToast('✅ 成績已成功寫入 Supabase 資料庫！', 'success');
+      showToast('✅ 成績已儲存成功！', 'success');
     } catch (err) {
       console.error('Failed to save grades to Supabase:', err);
       showToast('⚠️ 成績儲存至資料庫時發生部分錯誤', 'warning');
@@ -1094,7 +1094,7 @@ export default function App() {
     });
 
     setActiveAttendanceCourse(null);
-    showToast(`🎉 點名紀錄已成功寫入 Supabase 資料庫！已自動重新計算學員出缺席與出席成績。`, 'success');
+    showToast(`🎉 點名紀錄已成功儲存！已自動重新計算學員出缺席與出席成績。`, 'success');
 
     // Asynchronously reload students and grades so grade management view reflects the newly recorded attendance
     loadSupabaseStudents().catch((err) => {

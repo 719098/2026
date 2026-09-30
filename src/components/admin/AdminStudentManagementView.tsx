@@ -35,7 +35,11 @@ import { getTodayDateStr } from '../../utils/quarterScheduler';
 import { StudentAvatar } from '../StudentAvatar';
 import { uploadStudentAvatar, validateAvatarFile } from '../../lib/storageService';
 import { BatchImportStudentModal } from './BatchImportStudentModal';
-import { FileSpreadsheet } from 'lucide-react';
+import { BatchImportStudentPhotosModal } from './BatchImportStudentPhotosModal';
+import { FileSpreadsheet, CheckSquare, Square, Camera } from 'lucide-react';
+import { InfoTooltip } from '../common/InfoTooltip';
+import { BatchActionBar, BatchActionItem } from '../common/BatchActionBar';
+import { exportStudentsToCsv } from '../../utils/csvExport';
 
 interface AdminStudentManagementViewProps {
   students: Student[];
@@ -75,8 +79,18 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
   const [viewHistoryStudent, setViewHistoryStudent] = useState<Student | null>(null);
   const [deletingStudent, setDeletingStudent] = useState<Student | null>(null);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [isBatchPhotoModalOpen, setIsBatchPhotoModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ message: string; type: 'success' | 'error' | 'warning' | 'info' } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Batch selection states
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
+  const [batchAssignModalOpen, setBatchAssignModalOpen] = useState(false);
+  const [batchTargetClassId, setBatchTargetClassId] = useState('');
+  const [batchStatusModalOpen, setBatchStatusModalOpen] = useState(false);
+  const [batchTargetStatus, setBatchTargetStatus] = useState<EnrollmentStatus>('active');
+  const [batchDeleteConfirmOpen, setBatchDeleteConfirmOpen] = useState(false);
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info') => {
     setToastMessage({ message, type });
@@ -84,6 +98,156 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
       setToastMessage(null);
     }, 4000);
   };
+
+  const handleToggleSelectStudent = (studentId: string) => {
+    setSelectedStudentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(studentId)) {
+        next.delete(studentId);
+      } else {
+        next.add(studentId);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllCurrentPage = () => {
+    if (filteredStudents.length === 0) return;
+    const allSelected = filteredStudents.every((s) => selectedStudentIds.has(s.id));
+    if (allSelected) {
+      setSelectedStudentIds((prev) => {
+        const next = new Set(prev);
+        filteredStudents.forEach((s) => next.delete(s.id));
+        return next;
+      });
+    } else {
+      setSelectedStudentIds((prev) => {
+        const next = new Set(prev);
+        filteredStudents.forEach((s) => next.add(s.id));
+        return next;
+      });
+    }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedStudentIds(new Set());
+  };
+
+  const handleBatchExport = () => {
+    const selected = students.filter((s) => selectedStudentIds.has(s.id));
+    if (selected.length === 0) return;
+    exportStudentsToCsv(selected, '已選取學員名冊');
+    showToast(`✅ 已匯出 ${selected.length} 位學員資料 (CSV)！`, 'success');
+  };
+
+  const handleBatchAssignSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!batchTargetClassId) {
+      showToast('請選擇目標班級', 'warning');
+      return;
+    }
+    const targetClass = classes.find((c) => c.id === batchTargetClassId);
+    if (!targetClass) return;
+
+    setIsBatchProcessing(true);
+    try {
+      const selected = students.filter((s) => selectedStudentIds.has(s.id));
+      for (const student of selected) {
+        await onUpdateStudent({
+          ...student,
+          classId: targetClass.id,
+          className: targetClass.name,
+        });
+      }
+      showToast(`✅ 成功將 ${selected.length} 位學員分班至【${targetClass.name}】！`, 'success');
+      setBatchAssignModalOpen(false);
+      setSelectedStudentIds(new Set());
+    } catch (err: any) {
+      showToast(`批量分班失敗: ${err.message || String(err)}`, 'error');
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const handleBatchStatusSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsBatchProcessing(true);
+    try {
+      const selected = students.filter((s) => selectedStudentIds.has(s.id));
+      for (const student of selected) {
+        await onUpdateStudent({
+          ...student,
+          enrollmentStatus: batchTargetStatus,
+        });
+      }
+      const statusLabels: Record<string, string> = {
+        active: '在學中',
+        graduated: '已結業',
+        suspended: '休學中',
+        withdrawn: '已退學',
+      };
+      showToast(`✅ 成功將 ${selected.length} 位學員狀態變更為【${statusLabels[batchTargetStatus] || batchTargetStatus}】！`, 'success');
+      setBatchStatusModalOpen(false);
+      setSelectedStudentIds(new Set());
+    } catch (err: any) {
+      showToast(`批量變更狀態失敗: ${err.message || String(err)}`, 'error');
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const handleBatchDeleteSubmit = async () => {
+    if (!onDeleteStudent) return;
+    setIsBatchProcessing(true);
+    try {
+      const selectedIds = Array.from(selectedStudentIds);
+      for (const id of selectedIds) {
+        await onDeleteStudent(id);
+      }
+      showToast(`✅ 已成功刪除 ${selectedIds.length} 位學員資料！`, 'info');
+      setBatchDeleteConfirmOpen(false);
+      setSelectedStudentIds(new Set());
+    } catch (err: any) {
+      showToast(`批量刪除失敗: ${err.message || String(err)}`, 'error');
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const batchActions: BatchActionItem[] = [
+    {
+      key: 'assign',
+      label: '批量分班',
+      icon: <ArrowRightLeft className="w-3.5 h-3.5" />,
+      onClick: () => {
+        setBatchTargetClassId(classes[0]?.id || '');
+        setBatchAssignModalOpen(true);
+      },
+    },
+    {
+      key: 'status',
+      label: '批量變更狀態',
+      icon: <UserCheck className="w-3.5 h-3.5" />,
+      onClick: () => setBatchStatusModalOpen(true),
+    },
+    {
+      key: 'export',
+      label: '批量匯出 (CSV)',
+      icon: <Download className="w-3.5 h-3.5" />,
+      onClick: handleBatchExport,
+    },
+    ...(onDeleteStudent
+      ? [
+          {
+            key: 'delete',
+            label: '批量刪除',
+            icon: <Trash2 className="w-3.5 h-3.5" />,
+            variant: 'danger' as const,
+            onClick: () => setBatchDeleteConfirmOpen(true),
+          },
+        ]
+      : []),
+  ];
 
   const openEditModal = (student: Student) => {
     setEditingStudent(student);
@@ -341,19 +505,20 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
           <div className="flex items-center space-x-2">
             <Users className="w-5 h-5 text-[#536B7A]" />
             <h1 className="text-lg font-bold text-[#26313B]">全校外籍學員學籍管理</h1>
+            <InfoTooltip
+              title="外籍學員學籍管理"
+              content="管理全校外籍學員之基本學籍、護照居留證效期、分班狀態與學籍異動記錄。支援多選批量分班、批量狀態變更、名冊 CSV 匯出與新生個別學籍維護。"
+            />
             <span className="px-2.5 py-0.5 rounded-md text-xs font-semibold bg-[#E8EEF2] text-[#536B7A] border border-[#DCE2E6]">
               共 {students.length} 位
             </span>
             {isLoading && (
               <span className="inline-flex items-center text-xs text-slate-400 font-medium">
                 <Loader2 className="w-3.5 h-3.5 animate-spin mr-1 text-[#536B7A]" />
-                同步中...
+                載入中...
               </span>
             )}
           </div>
-          <p className="text-xs text-[#66717C] mt-1">
-            連線至 Supabase <code className="px-1 py-0.5 rounded bg-[#F5F7F9] font-mono text-[11px] text-[#26313B] border border-[#DCE2E6]">public.students</code> 資料庫，支援學員建立、學籍狀態異動與護照資料維護。
-          </p>
         </div>
 
         <div className="flex items-center space-x-2">
@@ -361,18 +526,41 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
             <button
               onClick={onRefresh}
               disabled={isLoading}
-              title="重新載入資料庫"
+              title="重新載入學員資料"
               className="p-2 text-[#536B7A] hover:text-[#26313B] hover:bg-[#E8EEF2] border border-[#DCE2E6] rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
             >
               <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
           )}
           <button
+            onClick={() => {
+              if (students.length === 0) {
+                showToast('目前尚無學員資料可匯出', 'warning');
+                return;
+              }
+              exportStudentsToCsv(students, '全體學員名冊');
+              showToast(`✅ 已匯出全校共 ${students.length} 位學員名冊 (CSV)！`, 'success');
+            }}
+            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-white hover:bg-[#F0F4F7] text-[#26313B] border border-[#DCE2E6] text-xs font-semibold rounded-lg shadow-2xs transition-colors"
+            title="匯出全校所有學員的名冊 (CSV)"
+          >
+            <Download className="w-4 h-4 text-slate-600" />
+            <span>匯出全體名冊</span>
+          </button>
+          <button
             onClick={() => setIsBatchModalOpen(true)}
             className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-white hover:bg-[#F0F4F7] text-[#26313B] border border-[#DCE2E6] text-xs font-semibold rounded-lg shadow-2xs transition-colors"
           >
             <FileSpreadsheet className="w-4 h-4 text-teal-600" />
             <span>批量匯入學生</span>
+          </button>
+          <button
+            onClick={() => setIsBatchPhotoModalOpen(true)}
+            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-white hover:bg-[#F0F4F7] text-[#26313B] border border-[#DCE2E6] text-xs font-semibold rounded-lg shadow-2xs transition-colors"
+            title="以學號為檔名批量匯入學生大頭照"
+          >
+            <Camera className="w-4 h-4 text-indigo-600" />
+            <span>批量匯入照片</span>
           </button>
           <button
             onClick={() => setIsAddModalOpen(true)}
@@ -411,38 +599,21 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
 
       {/* Error Message Alert Banner */}
       {errorMessage && (
-        <div className="p-4 rounded-xl bg-slate-800 text-slate-100 border border-slate-700 text-xs space-y-2 shadow-2xs">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-start space-x-2.5">
-              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-              <div>
-                <div className="font-bold text-white">Supabase 資料庫權限或查詢提示</div>
-                <div className="mt-0.5 text-slate-300 font-mono text-[11px] break-all">{errorMessage}</div>
-              </div>
+        <div className="p-4 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 text-xs flex items-start justify-between gap-3 shadow-2xs">
+          <div className="flex items-start space-x-2.5">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-bold">學員資料載入提示</div>
+              <div className="mt-0.5 text-amber-800 text-[11px]">{errorMessage}</div>
             </div>
-            {onRefresh && (
-              <button
-                onClick={onRefresh}
-                className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs font-semibold shrink-0 transition-colors border border-slate-600"
-              >
-                重新整理
-              </button>
-            )}
           </div>
-
-          {errorMessage.includes('42501') && (
-            <div className="mt-2 p-3 bg-slate-900 rounded-lg border border-slate-700 text-slate-300 text-[11px] space-y-1.5">
-              <div className="font-bold text-slate-200 flex items-center space-x-1">
-                <span>💡 PostgreSQL Table Grant 提示 (Permission Denied for table students)：</span>
-              </div>
-              <p className="text-slate-400">
-                此錯誤表示 PostgreSQL 資料表層級尚未授予 <code>authenticated</code> 角色存取權限。
-                請在 Supabase SQL Editor 中執行以下指令以開放已登入管理員之操作權限（不會更動現有 RLS 邏輯）：
-              </p>
-              <div className="p-2 bg-slate-950 text-slate-200 font-mono rounded text-[11px] overflow-x-auto select-all border border-slate-800">
-                GRANT ALL ON public.students TO authenticated, service_role;
-              </div>
-            </div>
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              className="px-3 py-1 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded-lg text-xs font-semibold shrink-0 transition-colors"
+            >
+              重新整理
+            </button>
           )}
         </div>
       )}
@@ -509,12 +680,31 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
         </div>
       </div>
 
+      {/* Batch Actions Toolbar */}
+      <BatchActionBar
+        selectedCount={selectedStudentIds.size}
+        totalCount={filteredStudents.length}
+        onClearSelection={handleClearSelection}
+        onSelectAllCurrentPage={handleSelectAllCurrentPage}
+        isAllSelected={filteredStudents.length > 0 && filteredStudents.every((s) => selectedStudentIds.has(s.id))}
+        actions={batchActions}
+      />
+
       {/* Students Data Table */}
       <div className="bg-white rounded-xl border border-[#DCE2E6] shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-[#F5F7F9] border-b border-[#DCE2E6] text-[#26313B] font-bold uppercase tracking-wider text-[11px]">
+                <th className="py-3.5 px-3 text-center w-10">
+                  <input
+                    type="checkbox"
+                    checked={filteredStudents.length > 0 && filteredStudents.every((s) => selectedStudentIds.has(s.id))}
+                    onChange={handleSelectAllCurrentPage}
+                    className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
+                    title={filteredStudents.every((s) => selectedStudentIds.has(s.id)) ? '取消全選' : '全選目前頁面'}
+                  />
+                </th>
                 <th className="py-3.5 px-4">學員資訊</th>
                 <th className="py-3.5 px-3">學號 / 護照號碼</th>
                 <th className="py-3.5 px-3">國籍 / 性別</th>
@@ -527,13 +717,13 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
             <tbody className="divide-y divide-[#F0F4F7]">
               {filteredStudents.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-16 text-center text-zinc-400 text-xs">
+                  <td colSpan={8} className="py-16 text-center text-zinc-400 text-xs">
                     {students.length === 0 ? (
                       <div className="space-y-2">
                         <Users className="w-8 h-8 text-zinc-300 mx-auto" />
-                        <div className="font-bold text-zinc-600">目前資料庫 (public.students) 尚無學員資料</div>
+                        <div className="font-bold text-zinc-600">目前尚無學員資料</div>
                         <p className="text-zinc-400 max-w-sm mx-auto">
-                          請點擊右上角「建立新生資料」新增學員，資料將即時寫入 Supabase 資料庫。
+                          請點擊右上角「建立新生資料」新增學員，或使用批量匯入功能。
                         </p>
                       </div>
                     ) : (
@@ -545,9 +735,21 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
                 filteredStudents.map((student) => {
                   const status = student.enrollmentStatus || 'active';
                   const isWarning = student.overallAttendanceRate < 85;
+                  const isSelected = selectedStudentIds.has(student.id);
 
                   return (
-                    <tr key={student.id} className="hover:bg-[#F8FAFC] transition-colors">
+                    <tr key={student.id} className={`hover:bg-[#F8FAFC] transition-colors ${isSelected ? 'bg-teal-50/40' : ''}`}>
+                      {/* Checkbox */}
+                      <td className="py-3 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleSelectStudent(student.id)}
+                          className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
+                          title={`選取學員 ${student.name}`}
+                        />
+                      </td>
+
                       {/* Photo & Name */}
                       <td className="py-3 px-4">
                         <div className="flex items-center space-x-3">
@@ -1258,7 +1460,7 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-800">確認刪除學員資料</h3>
-                <p className="text-xs text-slate-500">此動作將從 Supabase 資料庫永久刪除</p>
+                <p className="text-xs text-slate-500">此動作將永久刪除該學員學籍與歷史記錄</p>
               </div>
             </div>
 
@@ -1308,6 +1510,186 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
           }
         }}
         onShowToast={(msg, type) => showToast(msg, type)}
+      />
+
+      {/* Modal 7: Batch Assign Class */}
+      {batchAssignModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 my-8">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+              <div className="flex items-center space-x-2">
+                <ArrowRightLeft className="w-5 h-5 text-teal-600" />
+                <h3 className="text-base font-bold text-slate-800">批量分班</h3>
+              </div>
+              <button
+                onClick={() => setBatchAssignModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleBatchAssignSubmit} className="space-y-4">
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-700">
+                已選取 <strong className="text-teal-700 font-mono">{selectedStudentIds.size}</strong> 位學員進行分班調整。
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">目標班級</label>
+                <select
+                  value={batchTargetClassId}
+                  onChange={(e) => setBatchTargetClassId(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 bg-white"
+                  required
+                >
+                  <option value="">請選擇目標班級...</option>
+                  {classes.map((cls) => (
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name} ({cls.teacherName || '未指定教師'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isBatchProcessing}
+                  onClick={() => setBatchAssignModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={isBatchProcessing || !batchTargetClassId}
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-bold text-xs shadow-xs disabled:opacity-50 inline-flex items-center space-x-1.5"
+                >
+                  {isBatchProcessing && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
+                  <span>確認分班</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 8: Batch Change Status */}
+      {batchStatusModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 my-8">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+              <div className="flex items-center space-x-2">
+                <UserCheck className="w-5 h-5 text-teal-600" />
+                <h3 className="text-base font-bold text-slate-800">批量變更學籍狀態</h3>
+              </div>
+              <button
+                onClick={() => setBatchStatusModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleBatchStatusSubmit} className="space-y-4">
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-700">
+                已選取 <strong className="text-teal-700 font-mono">{selectedStudentIds.size}</strong> 位學員進行狀態變更。
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">新的學籍狀態</label>
+                <select
+                  value={batchTargetStatus}
+                  onChange={(e) => setBatchTargetStatus(e.target.value as EnrollmentStatus)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 bg-white"
+                >
+                  <option value="active">在學中 (Active)</option>
+                  <option value="graduated">已結業 (Graduated)</option>
+                  <option value="suspended">休學中 (Suspended)</option>
+                  <option value="withdrawn">退學 / 離校 (Withdrawn)</option>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isBatchProcessing}
+                  onClick={() => setBatchStatusModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={isBatchProcessing}
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-bold text-xs shadow-xs disabled:opacity-50 inline-flex items-center space-x-1.5"
+                >
+                  {isBatchProcessing && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
+                  <span>確認變更</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 9: Batch Delete Confirmation */}
+      {batchDeleteConfirmOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 my-8">
+            <div className="flex items-center space-x-3 text-rose-600 mb-3">
+              <div className="p-2.5 bg-rose-50 rounded-xl">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-800">確認批量刪除學員</h3>
+                <p className="text-xs text-slate-500">此動作將永久刪除選取的學籍資料，無法復原</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-1">
+              <p className="font-bold">
+                您即將刪除共 {selectedStudentIds.size} 位學員的檔案。
+              </p>
+              <p className="text-[11px] text-rose-700">
+                此操作將連同其分班紀錄一併移除，請再次確認。
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-4 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isBatchProcessing}
+                onClick={() => setBatchDeleteConfirmOpen(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={isBatchProcessing}
+                onClick={handleBatchDeleteSubmit}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-xs shadow-xs disabled:opacity-50 inline-flex items-center space-x-1.5"
+              >
+                {isBatchProcessing && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
+                <span>確認批量刪除</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 10: Batch Import Student Photos Modal */}
+      <BatchImportStudentPhotosModal
+        isOpen={isBatchPhotoModalOpen}
+        onClose={() => setIsBatchPhotoModalOpen(false)}
+        students={students}
+        onImportComplete={async () => {
+          if (onRefresh) await onRefresh();
+        }}
+        onShowToast={(msg, type) =>
+          showToast(msg, type === 'error' ? 'error' : type === 'warning' ? 'warning' : 'success')
+        }
       />
     </div>
   );

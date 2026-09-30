@@ -15,10 +15,14 @@ import {
   ShieldCheck,
   UserPlus,
   Layers,
-  GraduationCap
+  GraduationCap,
+  Download
 } from 'lucide-react';
 import { Student, ClassEntity, TransferClassRecord } from '../../types';
 import { StudentAvatar } from '../StudentAvatar';
+import { InfoTooltip } from '../common/InfoTooltip';
+import { BatchActionBar, BatchActionItem } from '../common/BatchActionBar';
+import { exportStudentsToCsv } from '../../utils/csvExport';
 
 interface AdminClassAssignmentViewProps {
   students: Student[];
@@ -49,6 +53,13 @@ export const AdminClassAssignmentView: React.FC<AdminClassAssignmentViewProps> =
   const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().split('T')[0]);
   const [operatorName, setOperatorName] = useState('教務行政組');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Batch Selection State
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [batchTargetClassId, setBatchTargetClassId] = useState<string>(classes?.[0]?.id || '');
+  const [batchTransferReason, setBatchTransferReason] = useState('教務行政批量分班調派');
+  const [isBatchSubmitting, setIsBatchSubmitting] = useState(false);
 
   // Unassigned students count
   const unassignedStudents = useMemo(() => {
@@ -206,6 +217,105 @@ export const AdminClassAssignmentView: React.FC<AdminClassAssignmentViewProps> =
     }
   };
 
+  // Batch Selection Handlers
+  const handleToggleSelectStudent = (studentId: string) => {
+    setSelectedStudentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(studentId)) {
+        next.delete(studentId);
+      } else {
+        next.add(studentId);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllCurrentPage = () => {
+    if (filteredStudents.length === 0) return;
+    const allSelected = filteredStudents.every((s) => selectedStudentIds.has(s.id));
+    if (allSelected) {
+      setSelectedStudentIds((prev) => {
+        const next = new Set(prev);
+        filteredStudents.forEach((s) => next.delete(s.id));
+        return next;
+      });
+    } else {
+      setSelectedStudentIds((prev) => {
+        const next = new Set(prev);
+        filteredStudents.forEach((s) => next.add(s.id));
+        return next;
+      });
+    }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedStudentIds(new Set());
+  };
+
+  const handleBatchAssignSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedStudentIds.size === 0 || !batchTargetClassId) return;
+    const targetClass = classes.find((c) => c.id === batchTargetClassId);
+    if (!targetClass) return;
+
+    setIsBatchSubmitting(true);
+    try {
+      const selectedList = students.filter((s) => selectedStudentIds.has(s.id));
+      for (const st of selectedList) {
+        const currentClass = classes.find(
+          (c) => c.name === st.className || c.id === st.classId
+        );
+        const record: TransferClassRecord = {
+          id: `trans_${Date.now()}_${st.id.slice(-4)}`,
+          studentId: st.id,
+          studentName: st.name,
+          fromClassId: currentClass?.id || '',
+          fromClassName: st.className || '尚未分班',
+          toClassId: targetClass.id,
+          toClassName: targetClass.name,
+          transferDate: effectiveDate,
+          reason: batchTransferReason || '教務行政批量分班調派',
+          operator: operatorName,
+          effectiveImmediately: true,
+        };
+        await onTransferStudent(record);
+      }
+      setIsBatchModalOpen(false);
+      setSelectedStudentIds(new Set());
+    } catch (err) {
+      console.error('Batch assign failed:', err);
+    } finally {
+      setIsBatchSubmitting(false);
+    }
+  };
+
+  const handleBatchExportStudents = () => {
+    const selected = filteredStudents.filter((s) => selectedStudentIds.has(s.id));
+    if (selected.length === 0) return;
+    exportStudentsToCsv(selected, `選取學員名冊_${selected.length}人`);
+  };
+
+  const batchActions: BatchActionItem[] = [
+    {
+      key: 'batch-assign',
+      label: '批量分班／轉班',
+      icon: <ArrowRightLeft className="w-4 h-4" />,
+      variant: 'primary',
+      onClick: () => {
+        if (classes.length > 0 && !batchTargetClassId) {
+          setBatchTargetClassId(classes[0].id);
+        }
+        setIsBatchModalOpen(true);
+      },
+    },
+    {
+      key: 'batch-export-students',
+      label: '匯出勾選學生名冊 (CSV)',
+      icon: <Download className="w-4 h-4" />,
+      onClick: handleBatchExportStudents,
+    },
+  ];
+
   const selectedClassInfo = classes.find(
     (c) => String(c.id) === String(activeTab) || c.name === activeTab
   );
@@ -216,12 +326,13 @@ export const AdminClassAssignmentView: React.FC<AdminClassAssignmentViewProps> =
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
         <div>
           <div className="flex items-center space-x-2">
-            <ArrowRightLeft className="w-6 h-6 text-blue-600" />
-            <h1 className="text-xl font-black text-slate-800">學生分班與轉班作業中樞</h1>
+            <ArrowRightLeft className="w-5 h-5 text-blue-600" />
+            <h1 className="text-lg font-bold text-slate-800">學生分班與轉班</h1>
+            <InfoTooltip
+              title="學生分班與轉班"
+              content="管理學員分班、調班派令與歷史異動稽核，維護學生與班級關聯並保留完整異動紀錄。支援多選批量分班與歷史軌跡查詢。"
+            />
           </div>
-          <p className="text-xs text-slate-500 mt-1">
-            透過 <code>public.class_students</code> 資料庫關聯表精確管理學員分班、調班派令與歷史異動稽核。
-          </p>
         </div>
 
         <div className="flex items-center space-x-2">
@@ -356,16 +467,40 @@ export const AdminClassAssignmentView: React.FC<AdminClassAssignmentViewProps> =
                 )}
               </div>
 
-              <div className="relative w-full sm:w-56">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="搜尋學號 / 姓名 / 國籍..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-8 pr-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                />
+              <div className="flex items-center space-x-2">
+                {selectedClassInfo && filteredStudents.length > 0 && (
+                  <button
+                    onClick={() => exportStudentsToCsv(filteredStudents, `${selectedClassInfo.name}_在班學員名冊`)}
+                    className="inline-flex items-center space-x-1 px-3 py-1.5 bg-white hover:bg-slate-50 text-teal-800 border border-teal-200 text-xs font-semibold rounded-lg shadow-2xs transition-colors shrink-0"
+                    title={`匯出【${selectedClassInfo.name}】學生名冊 (CSV)`}
+                  >
+                    <Download className="w-3.5 h-3.5 text-teal-600" />
+                    <span>匯出班級名冊</span>
+                  </button>
+                )}
+                <div className="relative w-full sm:w-56">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="搜尋學號 / 姓名 / 國籍..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-8 pr-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  />
+                </div>
               </div>
+            </div>
+
+            {/* Batch Action Bar */}
+            <div className="mt-3">
+              <BatchActionBar
+                selectedCount={selectedStudentIds.size}
+                totalCount={filteredStudents.length}
+                onClearSelection={handleClearSelection}
+                onSelectAllCurrentPage={handleSelectAllCurrentPage}
+                isAllSelected={filteredStudents.length > 0 && filteredStudents.every((s) => selectedStudentIds.has(s.id))}
+                actions={batchActions}
+              />
             </div>
 
             {/* Students Table */}
@@ -373,6 +508,15 @@ export const AdminClassAssignmentView: React.FC<AdminClassAssignmentViewProps> =
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                    <th className="py-2.5 px-3 text-center w-10">
+                      <input
+                        type="checkbox"
+                        checked={filteredStudents.length > 0 && filteredStudents.every((s) => selectedStudentIds.has(s.id))}
+                        onChange={handleSelectAllCurrentPage}
+                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        title={filteredStudents.every((s) => selectedStudentIds.has(s.id)) ? '取消全選' : '全選目前頁面'}
+                      />
+                    </th>
                     <th className="py-2.5 px-3">學號 / 姓名</th>
                     <th className="py-2.5 px-3">國籍 / 性別</th>
                     <th className="py-2.5 px-3">目前班級</th>
@@ -382,7 +526,7 @@ export const AdminClassAssignmentView: React.FC<AdminClassAssignmentViewProps> =
                 <tbody className="divide-y divide-slate-100">
                   {filteredStudents.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="py-8 text-center text-slate-400 text-xs">
+                      <td colSpan={5} className="py-8 text-center text-slate-400 text-xs">
                         {activeTab === 'UNASSIGNED'
                           ? '🎉 太棒了！目前所有學員均已完成分班！'
                           : '目前無符合條件之學員'}
@@ -394,9 +538,19 @@ export const AdminClassAssignmentView: React.FC<AdminClassAssignmentViewProps> =
                         !student.className ||
                         student.className === '尚未分班' ||
                         student.className.trim() === '';
+                      const isSelected = selectedStudentIds.has(student.id);
 
                       return (
-                        <tr key={student.id} className="hover:bg-slate-50/70 transition-colors">
+                        <tr key={student.id} className={`hover:bg-slate-50/70 transition-colors ${isSelected ? 'bg-blue-50/40' : ''}`}>
+                          <td className="py-3 px-3 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleToggleSelectStudent(student.id)}
+                              className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                              title={`選取學員 ${student.name}`}
+                            />
+                          </td>
                           <td className="py-3 px-3">
                             <div className="flex items-center space-x-2.5">
                               <StudentAvatar
@@ -566,7 +720,7 @@ export const AdminClassAssignmentView: React.FC<AdminClassAssignmentViewProps> =
               </div>
 
               <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-emerald-900 text-[11px] leading-relaxed">
-                💡 <strong>分班說明：</strong> 點擊「確認分班」後，系統將直接在 <code>public.class_students</code> 建立關聯，該學員即時歸入目標班級名冊與出缺席課表。
+                💡 <strong>分班說明：</strong> 點擊「確認分班」後，系統將直接建立班級關聯，該學員即時歸入目標班級名冊與出缺席課表。
               </div>
 
               <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
@@ -667,7 +821,7 @@ export const AdminClassAssignmentView: React.FC<AdminClassAssignmentViewProps> =
               </div>
 
               <div className="p-3 bg-blue-50 rounded-xl border border-blue-200 text-blue-900 text-[11px] leading-relaxed">
-                💡 <strong>轉班提醒：</strong> 執行轉班後，系統將安全更新 <code>public.class_students</code> 關聯，並記錄異動歷史。
+                💡 <strong>轉班提醒：</strong> 執行轉班後，系統將安全更新學員班級歸屬，並妥善保留異動歷史。
               </div>
 
               <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
@@ -684,6 +838,98 @@ export const AdminClassAssignmentView: React.FC<AdminClassAssignmentViewProps> =
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-xs disabled:opacity-50"
                 >
                   {isSubmitting ? '處理中...' : '確認轉班'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 3: Batch Assign / Transfer Modal */}
+      {isBatchModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-200 my-8">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+              <div className="flex items-center space-x-2">
+                <ArrowRightLeft className="w-5 h-5 text-blue-600" />
+                <h3 className="text-base font-bold text-slate-800">批量分班／轉班作業</h3>
+              </div>
+              <button
+                onClick={() => setIsBatchModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleBatchAssignSubmit} className="space-y-4 text-xs">
+              <div className="bg-blue-50 p-3 rounded-xl border border-blue-200 text-blue-900">
+                已選取 <strong className="font-mono text-blue-800">{selectedStudentIds.size}</strong> 位學員進行分班或調班。
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">目標指派班級 *</label>
+                <select
+                  value={batchTargetClassId}
+                  onChange={(e) => setBatchTargetClassId(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-semibold"
+                  required
+                >
+                  {classes.map((cls) => (
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name}（{cls.teacherName || '未指定教師'} • {cls.classroom}）
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">生效日期</label>
+                  <input
+                    type="date"
+                    value={effectiveDate}
+                    onChange={(e) => setEffectiveDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">行政經辦人</label>
+                  <input
+                    type="text"
+                    value={operatorName}
+                    onChange={(e) => setOperatorName(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">異動原因 / 說明</label>
+                <input
+                  type="text"
+                  value={batchTransferReason}
+                  onChange={(e) => setBatchTransferReason(e.target.value)}
+                  placeholder="例：開學統一分班安排"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  disabled={isBatchSubmitting}
+                  onClick={() => setIsBatchModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={isBatchSubmitting || selectedStudentIds.size === 0}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-xs disabled:opacity-50 inline-flex items-center space-x-1.5"
+                >
+                  <span>{isBatchSubmitting ? '處理中...' : `確認批量分班 (${selectedStudentIds.size}人)`}</span>
                 </button>
               </div>
             </form>

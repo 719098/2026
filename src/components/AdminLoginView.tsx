@@ -46,7 +46,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
 
     try {
       if (!isConfigured || !supabase) {
-        setErrorMessage('Supabase 尚未設定，請設定 VITE_SUPABASE_URL 與 VITE_SUPABASE_ANON_KEY');
+        setErrorMessage('系統連線設定未完成，請聯繫系統管理員');
         setLoading(false);
         return;
       }
@@ -104,11 +104,9 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
         await supabase.auth.signOut();
         
         if (profileError.code === '42501') {
-          setErrorMessage(
-            `資料庫權限未授予 (PostgreSQL 42501: permission denied for table profiles)。請在 Supabase SQL Editor 執行：GRANT SELECT ON public.profiles TO authenticated;`
-          );
+          setErrorMessage('資料庫存取權限不足，請聯繫系統管理員。');
         } else {
-          setErrorMessage(`查詢使用者資料庫失敗 [${profileError.code || 'ERROR'}]: ${profileError.message}`);
+          setErrorMessage(`查詢使用者資料失敗：${profileError.message}`);
         }
         setLoading(false);
         return;
@@ -117,7 +115,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
       if (!profile) {
         console.warn('Profile not found in public.profiles for auth user ID:', userId);
         await supabase.auth.signOut();
-        setErrorMessage(`找不到使用者 Profile（Auth ID: ${userId} 在 public.profiles 中無對應紀錄），請聯絡系統管理員。`);
+        setErrorMessage('找不到使用者個人檔案，請聯絡系統管理員協助建置。');
         setLoading(false);
         return;
       }
@@ -125,7 +123,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
       // 3. 檢查帳號是否啟用
       if (profile.is_active === false) {
         await supabase.auth.signOut();
-        setErrorMessage('此帳號目前已停用 (is_active = false)');
+        setErrorMessage('此帳號目前已停用，請聯繫教務管理員開通。');
         setLoading(false);
         return;
       }
@@ -183,7 +181,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
 
           if (!teacherByEmail) {
             await supabase.auth.signOut();
-            setErrorMessage(`已確認具備 TEACHER 角色，但在 public.teachers 資料表中找不到對應的教師檔案 (Profile ID: ${profile.id})。請聯絡管理員建檔。`);
+            setErrorMessage('已確認具備教師身分，但找不到對應的教師個人檔案，請聯絡教務管理員協助建置。');
             setLoading(false);
             return;
           }
@@ -267,10 +265,10 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
           <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs space-y-1.5">
             <div className="flex items-center space-x-2 font-bold text-amber-200">
               <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
-              <span>Supabase 尚未設定</span>
+              <span>系統服務尚未連線</span>
             </div>
             <p className="text-amber-300/90 leading-relaxed font-medium">
-              請於環境變數設定 <code className="bg-amber-950/60 px-1.5 py-0.5 rounded font-mono text-[11px] text-amber-200">VITE_SUPABASE_URL</code> 與對應的 Anon / Publishable Key。
+              系統連線環境設定尚未完成，請聯絡中心教務系統管理員進行服務設定。
             </p>
           </div>
         )}

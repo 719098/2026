@@ -1441,6 +1441,203 @@ export async function deleteClassSession(sessionId: string): Promise<{ success: 
 }
 
 /**
+ * 批量停課作業 (將多筆課堂狀態設定為 CANCELLED)
+ */
+export async function batchCancelSessions(
+  sessionIds: string[],
+  reason?: string
+): Promise<{ success: boolean; updatedCount: number; error: any }> {
+  if (!supabase) return { success: false, updatedCount: 0, error: new Error('Supabase client is not configured') };
+  const validIds = (sessionIds || []).filter(Boolean);
+  if (validIds.length === 0) return { success: true, updatedCount: 0, error: null };
+
+  try {
+    const noteText = reason ? `停課原因: ${reason}` : '因故停課';
+    const { data, error } = await supabase
+      .from('class_sessions')
+      .update({
+        status: 'CANCELLED',
+        notes: noteText,
+        updated_at: new Date().toISOString(),
+      })
+      .in('id', validIds)
+      .select('id');
+
+    if (error) {
+      console.error('[ScheduleService] Error in batchCancelSessions:', error);
+      return { success: false, updatedCount: 0, error };
+    }
+
+    return { success: true, updatedCount: (data || []).length, error: null };
+  } catch (err: any) {
+    return { success: false, updatedCount: 0, error: err };
+  }
+}
+
+/**
+ * 批量恢復上課作業 (將 CANCELLED 或 RESCHEDULED 課堂恢復為 NORMAL)
+ */
+export async function batchRestoreSessions(
+  sessionIds: string[]
+): Promise<{ success: boolean; updatedCount: number; error: any }> {
+  if (!supabase) return { success: false, updatedCount: 0, error: new Error('Supabase client is not configured') };
+  const validIds = (sessionIds || []).filter(Boolean);
+  if (validIds.length === 0) return { success: true, updatedCount: 0, error: null };
+
+  try {
+    const { data, error } = await supabase
+      .from('class_sessions')
+      .update({
+        status: 'NORMAL',
+        notes: '已恢復正常上課',
+        rescheduled_to_date: null,
+        updated_at: new Date().toISOString(),
+      })
+      .in('id', validIds)
+      .select('id');
+
+    if (error) {
+      console.error('[ScheduleService] Error in batchRestoreSessions:', error);
+      return { success: false, updatedCount: 0, error };
+    }
+
+    return { success: true, updatedCount: (data || []).length, error: null };
+  } catch (err: any) {
+    return { success: false, updatedCount: 0, error: err };
+  }
+}
+
+/**
+ * 批量安全刪除課堂 (檢查是否有出席紀錄或被補課引用，保護有紀錄者，刪除無紀錄者)
+ */
+export async function batchDeleteSessions(
+  sessionIds: string[]
+): Promise<{
+  success: boolean;
+  deletedCount: number;
+  blockedCount: number;
+  blockedDetails: { id: string; sessionDate: string; reason: string }[];
+  error: any;
+}> {
+  if (!supabase) {
+    return {
+      success: false,
+      deletedCount: 0,
+      blockedCount: 0,
+      blockedDetails: [],
+      error: new Error('Supabase client is not configured'),
+    };
+  }
+
+  const validIds = (sessionIds || []).filter(Boolean);
+  if (validIds.length === 0) {
+    return { success: true, deletedCount: 0, blockedCount: 0, blockedDetails: [], error: null };
+  }
+
+  try {
+    // 1. 查詢目標課堂資料
+    const { data: sessions, error: fetchErr } = await supabase
+      .from('class_sessions')
+      .select('id, class_id, session_date, status')
+      .in('id', validIds);
+
+    if (fetchErr) {
+      return { success: false, deletedCount: 0, blockedCount: 0, blockedDetails: [], error: fetchErr };
+    }
+
+    const toDeleteIds: string[] = [];
+    const blockedList: { id: string; sessionDate: string; reason: string }[] = [];
+
+    // 2. 逐一檢查安全性
+    for (const sess of sessions || []) {
+      // 檢查是否已有點名/出缺勤
+      const { data: csList } = await supabase
+        .from('course_sessions')
+        .select('id, is_attendance_submitted')
+        .eq('class_id', sess.class_id)
+        .eq('session_date', sess.session_date);
+
+      let hasAtt = false;
+      if (csList && csList.length > 0) {
+        if (csList.some((cs: any) => cs.is_attendance_submitted)) {
+          hasAtt = true;
+        } else {
+          const csIds = csList.map((cs: any) => cs.id);
+          const { data: attRecords } = await supabase
+            .from('attendance_records')
+            .select('id')
+            .in('session_id', csIds)
+            .limit(1);
+          if (attRecords && attRecords.length > 0) hasAtt = true;
+        }
+      }
+
+      if (hasAtt) {
+        blockedList.push({
+          id: sess.id,
+          sessionDate: sess.session_date,
+          reason: '已具備點名或出缺勤歷史紀錄',
+        });
+        continue;
+      }
+
+      // 檢查是否被其他 MAKEUP 堂次引用
+      const { data: childMakeups } = await supabase
+        .from('class_sessions')
+        .select('id, session_date')
+        .eq('rescheduled_from_session_id', sess.id);
+
+      if (childMakeups && childMakeups.length > 0) {
+        blockedList.push({
+          id: sess.id,
+          sessionDate: sess.session_date,
+          reason: '已有對應的調課補課堂次',
+        });
+        continue;
+      }
+
+      toDeleteIds.push(sess.id);
+    }
+
+    // 3. 執行批次刪除
+    if (toDeleteIds.length > 0) {
+      const { error: delErr } = await supabase
+        .from('class_sessions')
+        .delete()
+        .in('id', toDeleteIds);
+
+      if (delErr) {
+        console.error('[ScheduleService] Error deleting sessions in batch:', delErr);
+        return {
+          success: false,
+          deletedCount: 0,
+          blockedCount: blockedList.length,
+          blockedDetails: blockedList,
+          error: delErr,
+        };
+      }
+    }
+
+    return {
+      success: true,
+      deletedCount: toDeleteIds.length,
+      blockedCount: blockedList.length,
+      blockedDetails: blockedList,
+      error: null,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      deletedCount: 0,
+      blockedCount: 0,
+      blockedDetails: [],
+      error: err,
+    };
+  }
+}
+
+
+/**
  * 計算指定班級的目標時數與目前有效排課進度 (165 小時進度)
  * 有效時數 = NORMAL 堂數 * 節數 + MAKEUP 堂數 * 節數 (CANCELLED 與 RESCHEDULED 不重複計入)
  */

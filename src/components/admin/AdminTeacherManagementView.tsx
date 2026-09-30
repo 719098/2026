@@ -37,6 +37,8 @@ import {
   deleteTeacherAvatar,
   validateTeacherAvatarFile
 } from '../../lib/storageService';
+import { InfoTooltip } from '../common/InfoTooltip';
+import { BatchActionBar, BatchActionItem } from '../common/BatchActionBar';
 
 interface AdminTeacherManagementViewProps {
   teachers: Teacher[];
@@ -106,7 +108,7 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
         const updatedTeacher = { ...editingTeacher, avatarUrl: result.signedUrl };
         setEditingTeacher(updatedTeacher);
         onUpdateTeacher(updatedTeacher);
-        setPhotoSuccessMsg('教師照片已成功上傳並儲存至 Supabase Storage！');
+        setPhotoSuccessMsg('教師照片已成功上傳儲存！');
         onRefresh?.();
       }
     } catch (err: any) {
@@ -128,12 +130,12 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
     try {
       const result = await deleteTeacherAvatar(editingTeacher.id);
       if (!result.success) {
-        setPhotoError(result.error || '從 Supabase Storage 刪除照片失敗');
+        setPhotoError(result.error || '刪除照片失敗');
       } else {
         const updatedTeacher = { ...editingTeacher, avatarUrl: undefined };
         setEditingTeacher(updatedTeacher);
         onUpdateTeacher(updatedTeacher);
-        setPhotoSuccessMsg('教師照片已成功從 Supabase Storage 刪除！');
+        setPhotoSuccessMsg('教師照片已成功刪除！');
         onRefresh?.();
       }
     } catch (err: any) {
@@ -142,6 +144,90 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
       setPhotoDeleting(false);
     }
   };
+
+  // Toast message state
+  const [toastMessage, setToastMessage] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null);
+  const showToast = (message: string, type: 'success' | 'error' | 'warning' = 'success') => {
+    setToastMessage({ message, type });
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
+  };
+
+  // Batch selection states
+  const [selectedTeacherIds, setSelectedTeacherIds] = useState<Set<string>>(new Set());
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
+
+  const handleToggleSelectTeacher = (teacherId: string) => {
+    setSelectedTeacherIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(teacherId)) {
+        next.delete(teacherId);
+      } else {
+        next.add(teacherId);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllCurrentPage = () => {
+    if (filteredTeachers.length === 0) return;
+    const allSelected = filteredTeachers.every((t) => selectedTeacherIds.has(t.id));
+    if (allSelected) {
+      setSelectedTeacherIds((prev) => {
+        const next = new Set(prev);
+        filteredTeachers.forEach((t) => next.delete(t.id));
+        return next;
+      });
+    } else {
+      setSelectedTeacherIds((prev) => {
+        const next = new Set(prev);
+        filteredTeachers.forEach((t) => next.add(t.id));
+        return next;
+      });
+    }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedTeacherIds(new Set());
+  };
+
+  const handleBatchToggleStatus = async (nextStatus: 'active' | 'inactive') => {
+    if (!onToggleTeacherStatus) return;
+    setIsBatchProcessing(true);
+    try {
+      const selected = teachers.filter((t) => selectedTeacherIds.has(t.id));
+      for (const teacher of selected) {
+        await onToggleTeacherStatus(teacher.id, nextStatus);
+      }
+      showToast(`✅ 已將 ${selected.length} 位教師狀態設定為【${nextStatus === 'active' ? '在職中' : '已停用'}】！`, 'success');
+      setSelectedTeacherIds(new Set());
+      onRefresh?.();
+    } catch (err: any) {
+      showToast(`批量更新教師狀態失敗: ${err.message || String(err)}`, 'error');
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const batchActions: BatchActionItem[] = [
+    {
+      key: 'activate',
+      label: '批量恢復啟用',
+      icon: <UserCheck className="w-3.5 h-3.5 text-emerald-600" />,
+      onClick: () => handleBatchToggleStatus('active'),
+      disabled: isBatchProcessing,
+    },
+    {
+      key: 'deactivate',
+      label: '批量設為停用',
+      icon: <UserX className="w-3.5 h-3.5 text-amber-600" />,
+      variant: 'warning',
+      onClick: () => handleBatchToggleStatus('inactive'),
+      disabled: isBatchProcessing,
+    },
+  ];
 
   // Reset Password Modal State
   const [resettingTeacher, setResettingTeacher] = useState<Teacher | null>(null);
@@ -260,15 +346,21 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const filteredTeachers = teachers.filter(
-    (t) =>
+  const filteredTeachers = teachers.filter((t) => {
+    const matchesSearch =
       t.name.includes(searchTerm) ||
       (t.englishName && t.englishName.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (t.teacherNo && t.teacherNo.toLowerCase().includes(searchTerm.toLowerCase())) ||
       t.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
       t.department.includes(searchTerm) ||
-      (t.specialty && t.specialty.includes(searchTerm))
-  );
+      (t.specialty && t.specialty.includes(searchTerm));
+
+    let matchesStatus = true;
+    if (statusFilter === 'ACTIVE') matchesStatus = t.status !== 'inactive';
+    if (statusFilter === 'INACTIVE') matchesStatus = t.status === 'inactive';
+
+    return matchesSearch && matchesStatus;
+  });
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -399,19 +491,43 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
 
   return (
     <div className="space-y-6">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 transition-all duration-300">
+          <div
+            className={`px-4 py-3 rounded-xl shadow-lg border text-xs font-bold flex items-center space-x-2 ${
+              toastMessage.type === 'success'
+                ? 'bg-emerald-800 text-white border-emerald-700'
+                : toastMessage.type === 'error'
+                ? 'bg-rose-800 text-white border-rose-700'
+                : 'bg-amber-800 text-white border-amber-700'
+            }`}
+          >
+            <span>{toastMessage.message}</span>
+            <button
+              onClick={() => setToastMessage(null)}
+              className="ml-2 text-white/70 hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-5 rounded-xl border border-[#DCE2E6] shadow-2xs">
         <div>
           <div className="flex items-center space-x-2">
             <GraduationCap className="w-5 h-5 text-[#536B7A]" />
             <h1 className="text-lg font-bold text-[#26313B]">全校專兼任教師師資管理</h1>
+            <InfoTooltip
+              title="教師師資管理"
+              content="維護全校教師基本資料、聯絡電話、專長領域、研究室分機與開課班級指派調動。支援多選批量狀態設定與登入密碼重設。"
+            />
             <span className="px-2.5 py-0.5 rounded-md text-xs font-semibold bg-[#E8EEF2] text-[#536B7A] border border-[#DCE2E6]">
               共 {teachers.length} 位專任教師
             </span>
           </div>
-          <p className="text-xs text-[#66717C] mt-1">
-            維護全校教師基本資料、聯絡電話、專長領域、研究室分機與開課班級指派調動。
-          </p>
         </div>
 
         <button
@@ -442,9 +558,9 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
         </div>
       )}
 
-      {/* Search Bar & Refresh */}
-      <div className="bg-white p-4 rounded-xl border border-[#DCE2E6] shadow-2xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="relative w-full sm:w-80">
+      {/* Search Bar & Status Filters */}
+      <div className="bg-white p-4 rounded-xl border border-[#DCE2E6] shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="relative w-full md:w-72">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -455,35 +571,68 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
           />
         </div>
 
-        {onRefresh && (
-          <button
-            onClick={onRefresh}
-            disabled={isLoading}
-            className="self-end sm:self-auto inline-flex items-center space-x-1.5 px-3 py-2 bg-[#F0F4F7] hover:bg-[#E8EEF2] text-[#26313B] text-xs font-semibold border border-[#DCE2E6] rounded-lg transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>重新整理 Supabase 資料</span>
-          </button>
-        )}
+        <div className="flex items-center space-x-2 w-full md:w-auto overflow-x-auto">
+          {(
+            [
+              { key: 'ALL', label: `全部教師 (${teachers.length})` },
+              { key: 'ACTIVE', label: `在職中 (${teachers.filter((t) => t.status !== 'inactive').length})` },
+              { key: 'INACTIVE', label: `已停用 (${teachers.filter((t) => t.status === 'inactive').length})` },
+            ] as const
+          ).map((filter) => (
+            <button
+              key={filter.key}
+              onClick={() => setStatusFilter(filter.key)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 ${
+                statusFilter === filter.key
+                  ? 'bg-[#536B7A] text-white shadow-2xs'
+                  : 'bg-[#F0F4F7] hover:bg-[#E8EEF2] text-[#26313B]'
+              }`}
+            >
+              {filter.label}
+            </button>
+          ))}
+
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              disabled={isLoading}
+              className="inline-flex items-center space-x-1 px-3 py-1.5 bg-[#F0F4F7] hover:bg-[#E8EEF2] text-[#26313B] text-xs font-semibold border border-[#DCE2E6] rounded-lg transition-colors disabled:opacity-50 shrink-0"
+              title="重新載入教師資料"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              <span>重新整理</span>
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Batch Actions Toolbar */}
+      <BatchActionBar
+        selectedCount={selectedTeacherIds.size}
+        totalCount={filteredTeachers.length}
+        onClearSelection={handleClearSelection}
+        onSelectAllCurrentPage={handleSelectAllCurrentPage}
+        isAllSelected={filteredTeachers.length > 0 && filteredTeachers.every((t) => selectedTeacherIds.has(t.id))}
+        actions={batchActions}
+      />
 
       {/* Loading State */}
       {isLoading ? (
         <div className="bg-white rounded-xl border border-[#DCE2E6] p-12 text-center text-[#66717C]">
           <Loader2 className="w-8 h-8 animate-spin mx-auto text-[#536B7A] mb-2" />
-          <p className="text-xs font-semibold">正在從 Supabase 讀取教師資料表 (public.teachers)...</p>
+          <p className="text-xs font-semibold">正在載入教師資料...</p>
         </div>
       ) : filteredTeachers.length === 0 ? (
         /* Empty State */
         <div className="bg-white rounded-xl border border-[#DCE2E6] p-12 text-center text-[#66717C]">
           <GraduationCap className="w-12 h-12 text-slate-300 mx-auto mb-3" />
           <h3 className="text-sm font-bold text-[#26313B] mb-1">
-            {searchTerm ? '找不到符合搜尋條件的教師' : 'Supabase 目前無教師資料 (0 筆)'}
+            {searchTerm ? '找不到符合搜尋條件的教師' : '目前尚無教師資料 (0 筆)'}
           </h3>
           <p className="text-xs text-slate-400 max-w-md mx-auto mb-4">
             {searchTerm
               ? '請嘗試切換搜尋關鍵字，或清除搜尋條件。'
-              : '目前資料庫 public.teachers 尚未有任何教師資料。請點擊上方按鈕建立第一位專任或兼任教師。'}
+              : '目前尚未有任何教師資料。請點擊上方按鈕建立第一位專任或兼任教師。'}
           </p>
           {!searchTerm && (
             <button
@@ -503,16 +652,26 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
           const teacherClasses = classes.filter(
             (c) => c.teacherId === teacher.id || c.teacherName === teacher.name
           );
+          const isSelected = selectedTeacherIds.has(teacher.id);
 
           return (
             <div
               key={teacher.id}
-              className="bg-white rounded-xl border border-[#DCE2E6] p-5 shadow-2xs hover:border-[#536B7A]/40 transition-all flex flex-col justify-between"
+              className={`bg-white rounded-xl border p-5 shadow-2xs hover:border-[#536B7A]/40 transition-all flex flex-col justify-between ${
+                isSelected ? 'border-teal-500 ring-2 ring-teal-500/20 bg-teal-50/20' : 'border-[#DCE2E6]'
+              }`}
             >
               <div>
                 {/* Header Profile */}
                 <div className="flex items-start justify-between">
                   <div className="flex items-center space-x-3.5">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => handleToggleSelectTeacher(teacher.id)}
+                      className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer self-start mt-2"
+                      title={`選取 ${teacher.name} 老師`}
+                    />
                     <TeacherAvatar
                       avatarUrl={teacher.avatarUrl}
                       name={teacher.name}
@@ -559,20 +718,21 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
                     <button
                       onClick={() => handleToggleStatus(teacher)}
                       disabled={statusTogglingId === teacher.id}
-                      className={`p-1.5 rounded-md transition-colors ${
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center space-x-1 shadow-2xs ${
                         teacher.status === 'inactive'
-                          ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50'
-                          : 'text-amber-600 hover:text-amber-700 hover:bg-amber-50'
+                          ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300'
+                          : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300'
                       }`}
-                      title={teacher.status === 'inactive' ? '重新啟用教師' : '停用教師 (保留所有歷史課堂與點名紀錄)'}
+                      title={teacher.status === 'inactive' ? '恢復為在職狀態' : '停用教師 (保留所有歷史課堂與點名紀錄)'}
                     >
                       {statusTogglingId === teacher.id ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       ) : teacher.status === 'inactive' ? (
-                        <UserCheck className="w-4 h-4" />
+                        <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
                       ) : (
-                        <UserX className="w-4 h-4" />
+                        <UserX className="w-3.5 h-3.5 text-amber-600" />
                       )}
+                      <span>{teacher.status === 'inactive' ? '恢復啟用' : '停用'}</span>
                     </button>
 
                     <button
@@ -652,7 +812,7 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
                       setResetPasswordSuccessMsg(null);
                     }}
                     className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-md font-semibold text-[11px] flex items-center space-x-1 transition-colors"
-                    title="管理員重設此教師 Supabase Auth 登入密碼"
+                    title="重設教師登入密碼"
                   >
                     <KeyRound className="w-3.5 h-3.5 text-amber-700" />
                     <span>重設密碼</span>
@@ -772,11 +932,11 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
                 />
               </div>
 
-              {/* Login Credentials (Supabase Auth) */}
+              {/* Login Credentials */}
               <div className="pt-3 border-t border-slate-200">
                 <div className="flex items-center space-x-1.5 text-slate-800 font-bold mb-2">
                   <KeyRound className="w-4 h-4 text-amber-600" />
-                  <span>登入帳號與初始密碼設定 (Supabase Auth)</span>
+                  <span>登入帳號與初始密碼設定</span>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -805,7 +965,7 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
                   </div>
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1.5">
-                  密碼將透過加密安全創建於 Supabase Auth，不會以明碼儲存於公開資料表。
+                  密碼將透過加密安全保護，不會以明碼形式儲存。
                 </p>
               </div>
 
@@ -829,10 +989,10 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
                   {isSubmitting ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>正在寫入 Supabase...</span>
+                      <span>正在儲存...</span>
                     </>
                   ) : (
-                    <span>確認建立教師 (寫入 public.teachers)</span>
+                    <span>確認建立教師檔案</span>
                   )}
                 </button>
               </div>
@@ -923,12 +1083,12 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
                 />
               </div>
 
-              {/* Teacher Photo Section (Supabase Storage: teacher-avatars) */}
+              {/* Teacher Photo Section */}
               <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="font-bold text-slate-800 flex items-center space-x-1.5">
                     <Camera className="w-4 h-4 text-indigo-600" />
-                    <span>教師照片 (Supabase Storage)</span>
+                    <span>教師個人照片</span>
                   </label>
                   <span className="text-[10px] text-slate-400">JPG / PNG / WebP, 上限 5MB</span>
                 </div>
@@ -984,10 +1144,6 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
                         </button>
                       )}
                     </div>
-
-                    <p className="text-[10px] text-slate-500 font-mono">
-                      Path: teacher-avatars/{editingTeacher.id}/avatar
-                    </p>
                   </div>
                 </div>
 
@@ -1117,7 +1273,7 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
             </div>
             <h3 className="text-base font-bold text-slate-800 text-center mb-1">教師建立成功</h3>
             <p className="text-xs text-slate-500 text-center mb-5">
-              已於 Supabase 安全建立 Auth 登入帳號與 public.teachers 基本檔案
+              已安全建立登入帳號與基本檔案
             </p>
 
             <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-2.5 text-xs text-slate-700">
@@ -1168,9 +1324,9 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
                   <KeyRound className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-800">重設教師 Auth 登入密碼</h3>
+                  <h3 className="text-base font-bold text-slate-800">重設教師登入密碼</h3>
                   <p className="text-xs text-slate-500">
-                    管理員可直接在服務端重設【{resettingTeacher.name} 老師】的 Supabase 登入密碼
+                    管理員可直接重設【{resettingTeacher.name} 老師】的登入密碼
                   </p>
                 </div>
               </div>
@@ -1223,7 +1379,7 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
                   minLength={6}
                 />
                 <p className="text-[11px] text-slate-400 mt-1">
-                  密碼設定後將立即同步寫入 Supabase Auth 認證資料庫，不儲存於文字欄位。
+                  密碼設定後將立即生效，不儲存於明碼欄位。
                 </p>
               </div>
 
@@ -1373,12 +1529,12 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
                     <span>經檢查：此教師無任何授課班級與課堂關聯，可安全刪除</span>
                   </div>
                   <p className="text-[11px] text-emerald-700">
-                    此操作將同步自 Supabase 資料庫完整清除以下內容：
+                    此操作將完整清除以下內容：
                   </p>
                   <ul className="list-disc list-inside text-[11px] text-emerald-700 space-y-0.5 pl-1">
-                    <li>刪除 <code>public.teachers</code> 教師檔案資料</li>
-                    <li>刪除 <code>Supabase Auth</code> 登入使用者帳號與 Profile，不留孤兒帳號</li>
-                    <li>清理 <code>Storage: teacher-avatars</code> 資料夾中的教師照片</li>
+                    <li>刪除教師檔案基本資料</li>
+                    <li>刪除系統登入使用者帳號與權限，不留孤兒帳號</li>
+                    <li>清理教師照片檔案</li>
                   </ul>
                 </div>
 

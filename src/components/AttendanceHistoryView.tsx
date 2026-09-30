@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { CourseSession, Student, Teacher } from '../types';
 import { calculateAttendanceStats } from '../utils/attendanceUtils';
+import { exportAttendanceSummaryToCsv } from '../utils/csvExport';
 
 interface AttendanceHistoryViewProps {
   courses: CourseSession[];
@@ -60,7 +61,45 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
   });
 
   const handleExportCSV = () => {
-    onShowToast('📥 點名紀錄已成功匯出為 CSV 試算表（符合教育部華語生出缺席格式）', 'success');
+    if (completedOrPastCourses.length === 0) {
+      onShowToast('目前查無符合條件之點名紀錄可匯出', 'warning');
+      return;
+    }
+    const records = completedOrPastCourses.map((c) => {
+      let stats = undefined;
+      if (c.status === 'completed' && c.attendanceData) {
+        const studentList = (c.studentIds || []).map((id) => ({ id, name: id } as Student));
+        stats = calculateAttendanceStats(studentList, c.attendanceData);
+      }
+      const statusText =
+        c.status === 'completed'
+          ? '已完成點名'
+          : c.status === 'unmarked'
+          ? '待點名'
+          : c.status === 'rescheduled_out'
+          ? '已調課移出'
+          : c.status === 'rescheduled_in'
+          ? '調課移入'
+          : c.status === 'locked'
+          ? '已鎖定'
+          : c.status;
+
+      return {
+        date: c.date,
+        timeSlot: c.timeSlot,
+        courseName: c.courseName,
+        className: c.className,
+        classroom: c.classroom,
+        textbook: c.textbook,
+        studentCount: c.studentCount,
+        attendanceRate: stats?.attendanceRate,
+        presentHours: stats?.totalPresentHours,
+        totalHours: stats?.totalHours,
+        statusText,
+      };
+    });
+    exportAttendanceSummaryToCsv(records, `學生出席紀錄總表_${selectedClassFilter !== 'all' ? selectedClassFilter : '全部班級'}`);
+    onShowToast(`📥 已成功匯出 ${records.length} 筆點名與出席紀錄 (CSV)！`, 'success');
   };
 
   return (

@@ -999,7 +999,10 @@ export async function fetchStudentGradesFromSupabase(
         };
 
         gradeMap[s.id] = initialGrade;
-        saveStudentGradeToSupabase(initialGrade, s.classId);
+        // Only trigger DB persistence if student has a valid class assigned
+        if (s.classId && isValidUuid(s.classId)) {
+          saveStudentGradeToSupabase(initialGrade, s.classId);
+        }
       }
     }
 
@@ -1026,24 +1029,83 @@ export async function saveStudentGradeToSupabase(
       .eq('student_id', grade.studentId)
       .maybeSingle();
 
-    let targetClassId = classId || grade.classId || existingRow?.class_id || null;
-    if (!targetClassId) {
+    let targetClassId: string | null = classId || grade.classId || existingRow?.class_id || null;
+
+    // 1. If not found or not a valid UUID, search class_students
+    if (!targetClassId || !isValidUuid(targetClassId)) {
       const { data: csRow } = await supabase
         .from('class_students')
         .select('class_id')
         .eq('student_id', grade.studentId)
         .maybeSingle();
-      if (csRow?.class_id) {
+      if (csRow?.class_id && isValidUuid(csRow.class_id)) {
         targetClassId = csRow.class_id;
       }
     }
 
-    const validClassId = targetClassId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetClassId)
-      ? targetClassId
-      : null;
+    // 2. If still not a valid UUID, attempt matching classes table by name or code
+    if (!targetClassId || !isValidUuid(targetClassId)) {
+      const candidateName = (grade.className || '').trim();
+      if (candidateName && candidateName !== '未設定班級' && candidateName !== '尚未分班') {
+        const { data: matchedClass } = await supabase
+          .from('classes')
+          .select('id')
+          .eq('name', candidateName)
+          .maybeSingle();
+        if (matchedClass?.id && isValidUuid(matchedClass.id)) {
+          targetClassId = matchedClass.id;
+        }
+      }
+    }
 
-    const payload: Record<string, any> = {
+    const hasValidClassId = Boolean(targetClassId && isValidUuid(targetClassId));
+
+    // Case A: Existing row already exists in student_grades
+    if (existingRow?.id) {
+      const updatePayload: Record<string, any> = {
+        attendance_score: grade.attendanceScore,
+        quiz_score: grade.quizScore,
+        midterm_score: grade.midtermScore,
+        final_score: grade.finalScore,
+        homework_score: grade.homeworkScore,
+        attitude_score: grade.attitudeScore,
+        total_score: grade.totalScore,
+        grade_letter: getLetterGrade(grade.totalScore).letter,
+        updated_at: new Date().toISOString(),
+      };
+
+      // Only update class_id if we have a valid UUID
+      if (hasValidClassId) {
+        updatePayload.class_id = targetClassId;
+      }
+
+      const { error: updateErr } = await supabase
+        .from('student_grades')
+        .update(updatePayload)
+        .eq('id', existingRow.id);
+
+      if (updateErr) {
+        console.error('[StudentService] Error updating existing student_grade:', updateErr);
+        return { success: false, error: updateErr };
+      }
+
+      return { success: true, error: null };
+    }
+
+    // Case B: New record, but student has no class_id assigned yet
+    // Since public.student_grades has a NOT NULL constraint on class_id,
+    // we cannot insert an unassigned student record into this relation.
+    if (!hasValidClassId) {
+      console.warn(
+        `[StudentService] Notice: Student ${grade.studentId} (${grade.studentName}) is currently unassigned to any class. Skipping student_grades insert to satisfy database NOT NULL constraint on class_id.`
+      );
+      return { success: true, error: null };
+    }
+
+    // Case C: New record with valid class_id -> safe to insert
+    const insertPayload: Record<string, any> = {
       student_id: grade.studentId,
+      class_id: targetClassId,
       attendance_score: grade.attendanceScore,
       quiz_score: grade.quizScore,
       midterm_score: grade.midtermScore,
@@ -1055,25 +1117,11 @@ export async function saveStudentGradeToSupabase(
       updated_at: new Date().toISOString(),
     };
 
-    if (validClassId) {
-      payload.class_id = validClassId;
-    }
+    const { error: insertErr } = await supabase.from('student_grades').insert(insertPayload);
 
-    if (existingRow?.id) {
-      payload.id = existingRow.id;
-    }
-
-    const { error } = await supabase.from('student_grades').upsert(payload);
-
-    if (error) {
-      console.error('[StudentService] Error saving student_grade:', error);
-      const { error: updateErr } = await supabase
-        .from('student_grades')
-        .update(payload)
-        .eq('student_id', grade.studentId);
-      if (updateErr) {
-        return { success: false, error: updateErr };
-      }
+    if (insertErr) {
+      console.error('[StudentService] Error inserting student_grade:', insertErr);
+      return { success: false, error: insertErr };
     }
 
     return { success: true, error: null };

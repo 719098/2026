@@ -302,11 +302,11 @@ export const BatchImportStudentModal: React.FC<BatchImportStudentModalProps> = (
     setImportProgress(null);
 
     if (successCount > 0) {
-      onShowToast(`🎉 成功匯入 ${successCount} 位學員資料至 Supabase 資料庫！`, 'success');
+      onShowToast(`🎉 成功匯入 ${successCount} 位學員資料！`, 'success');
       await onImportComplete();
       onClose();
     } else {
-      onShowToast(`❌ 匯入失敗：共 ${failCount} 筆資料寫入失敗，請檢查資料庫連線或權限`, 'error');
+      onShowToast(`❌ 匯入失敗：共 ${failCount} 筆資料寫入失敗，請檢查資料格式與系統連線`, 'error');
     }
   };
 
@@ -471,7 +471,7 @@ export const BatchImportStudentModal: React.FC<BatchImportStudentModalProps> = (
             <div className="flex items-center justify-between text-xs font-bold text-teal-900">
               <span className="flex items-center space-x-1.5">
                 <Loader2 className="w-4 h-4 animate-spin text-teal-600" />
-                <span>正在寫入 Supabase 資料庫...</span>
+                <span>正在寫入學員資料...</span>
               </span>
               <span className="font-mono">
                 {importProgress.current} / {importProgress.total} 筆

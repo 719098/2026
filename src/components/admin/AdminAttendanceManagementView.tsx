@@ -21,6 +21,7 @@ import { getTodayDateStr } from '../../utils/quarterScheduler';
 import { formatDateFull } from '../../utils/dateUtils';
 import { calculateAttendanceStats } from '../../utils/attendanceUtils';
 import { StudentAvatar } from '../StudentAvatar';
+import { InfoTooltip } from '../common/InfoTooltip';
 
 interface AdminAttendanceManagementViewProps {
   allCourses: CourseSession[];
@@ -122,10 +123,11 @@ export const AdminAttendanceManagementView: React.FC<AdminAttendanceManagementVi
           <div className="flex items-center space-x-2">
             <CheckCircle2 className="w-5 h-5 text-[#536B7A]" />
             <h1 className="text-lg font-bold text-[#26313B]">全校班級點名即時監控與歷史存檔</h1>
+            <InfoTooltip
+              title="點名監控與歷史存檔"
+              content="即時監控全校所有班級與各排課日期的點名執行狀態、到課率、請假缺席事由備註與佐證照片檢視。"
+            />
           </div>
-          <p className="text-xs text-[#66717C] mt-1">
-            行政端具備全校所有班級、所有日期的即時點名數據監控、事由備註稽核與佐證照片檢視權限。
-          </p>
         </div>
 
         {/* Date & Class Selectors */}

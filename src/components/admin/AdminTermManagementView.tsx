@@ -20,6 +20,8 @@ import {
   Info
 } from 'lucide-react';
 import { Term, ClassEntity } from '../../types';
+import { InfoTooltip } from '../common/InfoTooltip';
+import { BatchActionBar, BatchActionItem } from '../common/BatchActionBar';
 
 interface AdminTermManagementViewProps {
   terms: Term[];
@@ -55,6 +57,10 @@ export const AdminTermManagementView: React.FC<AdminTermManagementViewProps> = (
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+
+  // Batch selection states
+  const [selectedTermIds, setSelectedTermIds] = useState<Set<string>>(new Set());
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
 
   // New Term Form State
   const [newForm, setNewForm] = useState({
@@ -221,6 +227,111 @@ export const AdminTermManagementView: React.FC<AdminTermManagementViewProps> = (
     }
   };
 
+  // Batch Selection Handlers
+  const handleToggleSelectTerm = (termId: string) => {
+    setSelectedTermIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(termId)) next.delete(termId);
+      else next.add(termId);
+      return next;
+    });
+  };
+
+  const handleSelectAllTerms = () => {
+    if (filteredTerms.length === 0) return;
+    const allSelected = filteredTerms.every((t) => selectedTermIds.has(t.id));
+    if (allSelected) {
+      setSelectedTermIds((prev) => {
+        const next = new Set(prev);
+        filteredTerms.forEach((t) => next.delete(t.id));
+        return next;
+      });
+    } else {
+      setSelectedTermIds((prev) => {
+        const next = new Set(prev);
+        filteredTerms.forEach((t) => next.add(t.id));
+        return next;
+      });
+    }
+  };
+
+  const handleClearTermSelection = () => {
+    setSelectedTermIds(new Set());
+  };
+
+  const handleBatchToggleActive = async (targetActive: boolean) => {
+    const ids = Array.from(selectedTermIds);
+    if (ids.length === 0) return;
+    setIsBatchProcessing(true);
+    setActionError(null);
+    try {
+      for (const id of ids) {
+        const term = terms.find((t) => t.id === id);
+        if (term && term.isActive !== targetActive) {
+          await onToggleActive(id, term.isActive);
+        }
+      }
+      setActionSuccess(`已成功將 ${ids.length} 個學期設定為【${targetActive ? '啟用中' : '已停用'}】！`);
+      setSelectedTermIds(new Set());
+    } catch (err: any) {
+      setActionError(`批量變更學期開放狀態失敗: ${err.message || String(err)}`);
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const handleBatchToggleLock = async (targetLocked: boolean) => {
+    const ids = Array.from(selectedTermIds);
+    if (ids.length === 0) return;
+    setIsBatchProcessing(true);
+    setActionError(null);
+    try {
+      for (const id of ids) {
+        const term = terms.find((t) => t.id === id);
+        if (term && term.isLocked !== targetLocked) {
+          await onToggleLock(id, term.isLocked);
+        }
+      }
+      setActionSuccess(`已成功將 ${ids.length} 個學期設定為【${targetLocked ? '已鎖定封存' : '開放編輯'}】！`);
+      setSelectedTermIds(new Set());
+    } catch (err: any) {
+      setActionError(`批量切換學期鎖定狀態失敗: ${err.message || String(err)}`);
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const termBatchActions: BatchActionItem[] = [
+    {
+      key: 'activate',
+      label: '批量啟用',
+      icon: <ToggleRight className="w-3.5 h-3.5 text-emerald-600" />,
+      onClick: () => handleBatchToggleActive(true),
+      disabled: isBatchProcessing,
+    },
+    {
+      key: 'deactivate',
+      label: '批量停用',
+      icon: <ToggleLeft className="w-3.5 h-3.5 text-slate-500" />,
+      onClick: () => handleBatchToggleActive(false),
+      disabled: isBatchProcessing,
+    },
+    {
+      key: 'lock',
+      label: '批量鎖定封存',
+      icon: <Lock className="w-3.5 h-3.5 text-amber-600" />,
+      onClick: () => handleBatchToggleLock(true),
+      disabled: isBatchProcessing,
+    },
+    {
+      key: 'unlock',
+      label: '批量解除鎖定',
+      icon: <Unlock className="w-3.5 h-3.5 text-indigo-600" />,
+      onClick: () => handleBatchToggleLock(false),
+      disabled: isBatchProcessing,
+    },
+  ];
+
   return (
     <div className="space-y-6">
       {/* Toast Alert Messages */}
@@ -249,17 +360,18 @@ export const AdminTermManagementView: React.FC<AdminTermManagementViewProps> = (
       )}
 
       {/* Header Section */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
         <div>
           <div className="flex items-center space-x-3">
-            <div className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-100">
-              <CalendarDays className="w-6 h-6" />
+            <div className="p-2 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-100">
+              <CalendarDays className="w-5 h-5" />
             </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight">學期期別管理 (Term Management)</h1>
-              <p className="text-sm text-slate-500 mt-0.5">
-                管理中心正式學期期別、開課日期區間、開班狀態與歷史學期封存鎖定（即時同步 Supabase）
-              </p>
+            <div className="flex items-center space-x-2">
+              <h1 className="text-lg font-bold text-slate-900 tracking-tight">學期期別管理</h1>
+              <InfoTooltip
+                title="學期期別管理"
+                content="維護中心正式學期期別、開課與結業日期區間、排課狀態與歷史學期封存保護。"
+              />
             </div>
           </div>
         </div>
@@ -270,7 +382,7 @@ export const AdminTermManagementView: React.FC<AdminTermManagementViewProps> = (
               setActionError(null);
               setIsAddModalOpen(true);
             }}
-            className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold transition-all shadow-sm active:scale-95"
+            className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold transition-all shadow-sm active:scale-95 text-xs"
           >
             <Plus className="w-4 h-4" />
             <span>新增學期期別</span>
@@ -286,7 +398,7 @@ export const AdminTermManagementView: React.FC<AdminTermManagementViewProps> = (
             <CalendarDays className="w-4 h-4 text-slate-400" />
           </div>
           <p className="text-2xl font-black text-slate-900 mt-2 font-mono">{totalTermsCount}</p>
-          <span className="text-xs text-slate-400 mt-1 block">Supabase terms 總筆數</span>
+          <span className="text-xs text-slate-400 mt-1 block">全校累計開課學期</span>
         </div>
 
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
@@ -355,12 +467,22 @@ export const AdminTermManagementView: React.FC<AdminTermManagementViewProps> = (
         </div>
       </div>
 
+      {/* Batch Actions Toolbar */}
+      <BatchActionBar
+        selectedCount={selectedTermIds.size}
+        totalCount={filteredTerms.length}
+        onClearSelection={handleClearTermSelection}
+        onSelectAllCurrentPage={handleSelectAllTerms}
+        isAllSelected={filteredTerms.length > 0 && filteredTerms.every((t) => selectedTermIds.has(t.id))}
+        actions={termBatchActions}
+      />
+
       {/* Terms Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         {isLoading ? (
           <div className="p-12 text-center text-slate-500">
             <div className="inline-block animate-spin w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full mb-3" />
-            <p className="font-bold">正在讀取 Supabase 學期資料...</p>
+            <p className="font-bold">正在載入學期資料...</p>
           </div>
         ) : filteredTerms.length === 0 ? (
           <div className="p-12 text-center text-slate-400">
@@ -373,6 +495,15 @@ export const AdminTermManagementView: React.FC<AdminTermManagementViewProps> = (
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-[13px] font-bold text-slate-600 uppercase tracking-wider">
+                  <th className="py-3.5 px-3 w-10 text-center">
+                    <input
+                      type="checkbox"
+                      checked={filteredTerms.length > 0 && filteredTerms.every((t) => selectedTermIds.has(t.id))}
+                      onChange={handleSelectAllTerms}
+                      className="w-4 h-4 rounded text-emerald-600 border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                      title="全選 / 取消全選目前學期"
+                    />
+                  </th>
                   <th className="py-3.5 px-4">學期名稱與期別代碼</th>
                   <th className="py-3.5 px-4">開課～結課日期區間</th>
                   <th className="py-3.5 px-4 text-center">關聯班級數</th>
@@ -384,8 +515,24 @@ export const AdminTermManagementView: React.FC<AdminTermManagementViewProps> = (
               <tbody className="divide-y divide-slate-100 text-sm">
                 {filteredTerms.map((term) => {
                   const boundCount = getClassCountForTerm(term);
+                  const isSelected = selectedTermIds.has(term.id);
                   return (
-                    <tr key={term.id} className="hover:bg-slate-50/70 transition-colors">
+                    <tr
+                      key={term.id}
+                      className={`hover:bg-slate-50/70 transition-colors ${
+                        isSelected ? 'bg-emerald-50/40 ring-1 ring-emerald-400' : ''
+                      }`}
+                    >
+                      {/* Checkbox */}
+                      <td className="py-4 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleSelectTerm(term.id)}
+                          className="w-4 h-4 rounded text-emerald-600 border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                        />
+                      </td>
+
                       {/* Name & Code */}
                       <td className="py-4 px-4">
                         <div className="flex items-center space-x-3">
@@ -608,7 +755,7 @@ export const AdminTermManagementView: React.FC<AdminTermManagementViewProps> = (
                   disabled={isSubmitting}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-xs disabled:opacity-50"
                 >
-                  {isSubmitting ? '正在寫入 Supabase...' : '確認新增'}
+                  {isSubmitting ? '正在儲存中...' : '確認新增'}
                 </button>
               </div>
             </form>
@@ -721,7 +868,7 @@ export const AdminTermManagementView: React.FC<AdminTermManagementViewProps> = (
                   disabled={isSubmitting}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-xs disabled:opacity-50"
                 >
-                  {isSubmitting ? '正在儲存至 Supabase...' : '儲存變更'}
+                  {isSubmitting ? '正在儲存中...' : '儲存變更'}
                 </button>
               </div>
             </form>
@@ -812,7 +959,7 @@ export const AdminTermManagementView: React.FC<AdminTermManagementViewProps> = (
             ) : (
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 mb-5">
                 <p>
-                  您確定要從 Supabase 資料庫永久刪除學期「<strong>{deletingTerm.name}</strong>」（代碼：
+                  您確定要永久刪除學期「<strong>{deletingTerm.name}</strong>」（代碼：
                   <span className="font-mono font-bold text-slate-800">{deletingTerm.termCode}</span>）嗎？此操作無法復原。
                 </p>
               </div>

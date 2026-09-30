@@ -75,6 +75,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
 
   const [modalStudent, setModalStudent] = useState<Student | null>(null);
   const [filterQuery, setFilterQuery] = useState<string>('');
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
 
   // Calculate live statistics
   const stats = useMemo(() => {
@@ -98,6 +99,75 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
         s.nationality.toLowerCase().includes(q)
     );
   }, [students, filterQuery]);
+
+  // Multi-Student Selection Handlers
+  const handleToggleSelectStudent = (studentId: string) => {
+    if (isReadOnly) return;
+    setSelectedStudentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(studentId)) next.delete(studentId);
+      else next.add(studentId);
+      return next;
+    });
+  };
+
+  const handleSelectAllFilteredStudents = () => {
+    if (isReadOnly || filteredStudents.length === 0) return;
+    const allSelected = filteredStudents.every((s) => selectedStudentIds.has(s.id));
+    if (allSelected) {
+      setSelectedStudentIds((prev) => {
+        const next = new Set(prev);
+        filteredStudents.forEach((s) => next.delete(s.id));
+        return next;
+      });
+    } else {
+      setSelectedStudentIds((prev) => {
+        const next = new Set(prev);
+        filteredStudents.forEach((s) => next.add(s.id));
+        return next;
+      });
+    }
+  };
+
+  const handleClearStudentSelection = () => {
+    setSelectedStudentIds(new Set());
+  };
+
+  // Batch set status for selected students (respecting period_1 ~ period_4)
+  const handleBatchSetSelectedStatus = (status: AttendanceStatus) => {
+    if (isReadOnly) return;
+    const ids: string[] = Array.from(selectedStudentIds);
+    if (ids.length === 0) return;
+
+    setAttendance((prev) => {
+      const updated = { ...prev };
+      ids.forEach((id: string) => {
+        const current = updated[id] || {
+          period1: 'present',
+          period2: 'present',
+          period3: is3H ? 'present' : undefined,
+          period4: is4H ? 'present' : undefined,
+        };
+        updated[id] = {
+          ...current,
+          period1: status,
+          period2: status,
+          period3: is3H ? status : undefined,
+          period4: is4H ? status : undefined,
+          remarks:
+            status === 'leave'
+              ? current.remarks || '整堂請假'
+              : status === 'absent'
+              ? current.remarks || '整堂曠課缺席'
+              : current.remarks,
+        };
+      });
+      return updated;
+    });
+
+    const statusLabel = status === 'present' ? '出席' : status === 'leave' ? '請假' : '缺席';
+    onShowToast(`已將已選取的 ${ids.length} 位學生 ${periodsCount} 節課全數設為「${statusLabel}」`, 'success');
+  };
 
   // Set single period status
   const handleSetPeriodStatus = (
@@ -340,13 +410,62 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
         </div>
       </div>
 
+      {/* Multi-Student Selection Batch Action Bar */}
+      {selectedStudentIds.size > 0 && !isReadOnly && (
+        <div className="bg-teal-50 border border-teal-200 rounded-2xl p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-2xs animate-in fade-in duration-200">
+          <div className="flex items-center space-x-2 text-teal-900 font-bold text-xs">
+            <span className="w-2.5 h-2.5 rounded-full bg-teal-500 animate-pulse"></span>
+            <span>已選取 {selectedStudentIds.size} 位學生（共 {filteredStudents.length} 位）</span>
+          </div>
+          <div className="flex items-center flex-wrap gap-2 text-xs">
+            <button
+              onClick={() => handleBatchSetSelectedStatus('present')}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center space-x-1 shadow-2xs transition-colors"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>設為出席</span>
+            </button>
+            <button
+              onClick={() => handleBatchSetSelectedStatus('leave')}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center space-x-1 shadow-2xs transition-colors"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>設為請假</span>
+            </button>
+            <button
+              onClick={() => handleBatchSetSelectedStatus('absent')}
+              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold flex items-center space-x-1 shadow-2xs transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>設為缺席</span>
+            </button>
+            <button
+              onClick={handleClearStudentSelection}
+              className="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-xl font-medium transition-colors"
+            >
+              取消選取
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Student Attendance Roster Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50 text-slate-700 text-xs font-bold border-b border-slate-200">
-                <th className="py-3.5 px-4 w-12 text-center">#</th>
+                <th className="py-3.5 px-3 w-10 text-center">
+                  <input
+                    type="checkbox"
+                    disabled={isReadOnly}
+                    checked={filteredStudents.length > 0 && filteredStudents.every((s) => selectedStudentIds.has(s.id))}
+                    onChange={handleSelectAllFilteredStudents}
+                    className="w-4 h-4 rounded text-teal-600 border-slate-300 focus:ring-teal-500 cursor-pointer disabled:opacity-50"
+                    title="全選 / 取消全選目前學生"
+                  />
+                </th>
+                <th className="py-3.5 px-3 w-10 text-center">#</th>
                 <th className="py-3.5 px-4 min-w-[200px]">學生資訊</th>
                 <th className="py-3.5 px-3 text-center min-w-[150px]">
                   <div>第 1 節</div>
@@ -386,17 +505,33 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                 );
 
                 const hasIssue = record.period1 !== 'present' || record.period2 !== 'present' || (is3H && record.period3 !== 'present');
+                const isSelected = selectedStudentIds.has(student.id);
 
                 return (
                   <tr
                     key={student.id}
                     id={`student-row-${student.id}`}
                     className={`transition-colors hover:bg-slate-50/80 ${
-                      hasIssue ? 'bg-amber-50/20' : ''
+                      isSelected
+                        ? 'bg-teal-50/50 ring-1 ring-teal-400'
+                        : hasIssue
+                        ? 'bg-amber-50/20'
+                        : ''
                     }`}
                   >
+                    {/* Checkbox */}
+                    <td className="py-3 px-3 text-center">
+                      <input
+                        type="checkbox"
+                        disabled={isReadOnly}
+                        checked={isSelected}
+                        onChange={() => handleToggleSelectStudent(student.id)}
+                        className="w-4 h-4 rounded text-teal-600 border-slate-300 focus:ring-teal-500 cursor-pointer disabled:opacity-50"
+                      />
+                    </td>
+
                     {/* Index */}
-                    <td className="py-3 px-4 text-center font-mono text-slate-400 font-semibold">
+                    <td className="py-3 px-3 text-center font-mono text-slate-400 font-semibold">
                       {index + 1}
                     </td>
 
