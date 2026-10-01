@@ -91,22 +91,14 @@ export default async function handler(req: any, res: any) {
       process.env.SUPABASE_SERVICE_ROLE_KEY ||
       process.env.SUPABASE_SERVICE_KEY;
 
-    const anonKey =
-      process.env.VITE_SUPABASE_ANON_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-      process.env.SUPABASE_ANON_KEY ||
-      'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
-
-    const activeKey = serviceRoleKey || anonKey;
-
-    if (!activeKey) {
+    if (!serviceRoleKey) {
       return sendJsonResponse(res, 500, {
         success: false,
         error: '伺服器未設定 Supabase 金鑰 (SUPABASE_SERVICE_ROLE_KEY)',
       });
     }
 
-    const adminSupabase = createClient(supabaseUrl, activeKey, {
+    const adminSupabase = createClient(supabaseUrl, serviceRoleKey, {
       auth: {
         persistSession: false,
         autoRefreshToken: false,
@@ -183,33 +175,91 @@ export default async function handler(req: any, res: any) {
     }
 
     // ACTION: Toggle Status (Deactivate / Reactivate)
-    // Note: public.teachers has employment_status, and public.profiles has is_active.
+    // Synchronize public.teachers (employment_status) AND public.profiles (is_active)
     if (action === 'toggle_status') {
       const resolvedStatus = nextStatus === 'inactive' ? 'inactive' : 'active';
       const isActive = resolvedStatus === 'active';
-      const employmentStatus = isActive ? 'ACTIVE' : 'INACTIVE';
+      const prevEmploymentStatus = teacher.employment_status || (teacher.is_active === false ? 'INACTIVE' : 'ACTIVE');
 
-      // Update public.teachers existing employment_status
-      await adminSupabase
+      // 1. Update public.teachers
+      let targetEmploymentStatus = isActive ? 'ACTIVE' : 'INACTIVE';
+      let { error: updateTeacherErr } = await adminSupabase
         .from('teachers')
         .update({
-          employment_status: employmentStatus,
+          employment_status: targetEmploymentStatus,
           updated_at: new Date().toISOString(),
         })
         .eq('id', teacherId);
 
-      if (teacher.profile_id) {
+      // If check constraint rejects 'INACTIVE', fallback to 'RESIGNED'
+      if (updateTeacherErr && !isActive && updateTeacherErr.code === '23514') {
+        targetEmploymentStatus = 'RESIGNED';
+        const retryRes = await adminSupabase
+          .from('teachers')
+          .update({
+            employment_status: targetEmploymentStatus,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', teacherId);
+        updateTeacherErr = retryRes.error;
+      }
+
+      if (updateTeacherErr) {
+        console.error('[API delete-teacher] Failed to update teacher employment_status:', updateTeacherErr);
+        return sendJsonResponse(res, 400, {
+          success: false,
+          error: `更新教師在職狀態失敗 (public.teachers): ${updateTeacherErr.message}`,
+        });
+      }
+
+      // 2. Identify and update public.profiles (is_active)
+      let targetProfileId = teacher.profile_id;
+
+      if (!targetProfileId && (teacher.emp_email || teacher.email)) {
+        const teacherEmail = (teacher.emp_email || teacher.email || '').trim();
+        const { data: foundProfile } = await adminSupabase
+          .from('profiles')
+          .select('id')
+          .eq('email', teacherEmail)
+          .maybeSingle();
+
+        if (foundProfile) {
+          targetProfileId = foundProfile.id;
+          // Backfill profile_id in public.teachers
+          await adminSupabase
+            .from('teachers')
+            .update({ profile_id: foundProfile.id })
+            .eq('id', teacherId);
+        }
+      }
+
+      if (targetProfileId) {
         const { error: updateProfileErr } = await adminSupabase
           .from('profiles')
-          .update({ is_active: isActive, updated_at: new Date().toISOString() })
-          .eq('id', teacher.profile_id);
+          .update({
+            is_active: isActive,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', targetProfileId);
 
         if (updateProfileErr) {
+          console.error('[API delete-teacher] Failed to update profiles is_active:', updateProfileErr);
+          // Rollback teachers table to ensure zero partial-failure / inconsistency!
+          await adminSupabase
+            .from('teachers')
+            .update({
+              employment_status: prevEmploymentStatus,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', teacherId);
+
           return sendJsonResponse(res, 400, {
             success: false,
-            error: `更新教師登入狀態失敗: ${updateProfileErr.message}`,
+            error: `更新教師個人登入權限失敗 (public.profiles): ${updateProfileErr.message}`,
           });
         }
+      } else {
+        console.warn(`[API delete-teacher] Notice: Teacher ${teacherId} has no linked profile_id, updated teachers table only.`);
       }
 
       return sendJsonResponse(res, 200, {

@@ -555,11 +555,13 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
             <span>批量匯入學生</span>
           </button>
           <button
+            type="button"
+            id="btn-batch-import-photos"
             onClick={() => setIsBatchPhotoModalOpen(true)}
-            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-white hover:bg-[#F0F4F7] text-[#26313B] border border-[#DCE2E6] text-xs font-semibold rounded-lg shadow-2xs transition-colors"
-            title="以學號為檔名批量匯入學生大頭照"
+            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-white hover:bg-[#F0F4F7] active:bg-[#E8EEF2] text-[#26313B] border border-[#DCE2E6] text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
+            title="以學號為檔名批量匯入學生個人照片"
           >
-            <Camera className="w-4 h-4 text-indigo-600" />
+            <Camera className="w-4 h-4 text-indigo-600 shrink-0" />
             <span>批量匯入照片</span>
           </button>
           <button

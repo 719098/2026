@@ -24,8 +24,19 @@ export function validateAvatarFile(file: File): AvatarValidationResult {
     return { valid: false, error: '請選擇照片檔案' };
   }
 
-  // Check file mime type
-  if (!ALLOWED_MIME_TYPES.includes(file.type.toLowerCase())) {
+  const nameParts = file.name.split('.');
+  const ext = nameParts.length > 1 ? nameParts[nameParts.length - 1].toLowerCase() : '';
+  const validExts = ['jpg', 'jpeg', 'png', 'webp'];
+  const mimeType = file.type ? file.type.toLowerCase() : '';
+
+  const isValidMime =
+    ALLOWED_MIME_TYPES.includes(mimeType) ||
+    mimeType === 'image/jpg' ||
+    mimeType === 'image/pjpeg' ||
+    mimeType === 'image/x-png';
+  const isValidExt = validExts.includes(ext);
+
+  if (!isValidMime && !isValidExt) {
     return {
       valid: false,
       error: '照片格式不符：僅支援 JPEG (.jpg, .jpeg)、PNG (.png) 或 WebP (.webp) 格式',

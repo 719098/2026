@@ -196,12 +196,29 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
   const handleBatchToggleStatus = async (nextStatus: 'active' | 'inactive') => {
     if (!onToggleTeacherStatus) return;
     setIsBatchProcessing(true);
+    let successCount = 0;
+    const failedNames: string[] = [];
     try {
       const selected = teachers.filter((t) => selectedTeacherIds.has(t.id));
       for (const teacher of selected) {
-        await onToggleTeacherStatus(teacher.id, nextStatus);
+        try {
+          await onToggleTeacherStatus(teacher.id, nextStatus);
+          successCount++;
+        } catch (err: any) {
+          failedNames.push(teacher.name || teacher.empName || teacher.id);
+        }
       }
-      showToast(`✅ 已將 ${selected.length} 位教師狀態設定為【${nextStatus === 'active' ? '在職中' : '已停用'}】！`, 'success');
+      if (failedNames.length > 0) {
+        showToast(
+          `⚠️ 批量處理部分完成：${successCount} 位成功，${failedNames.length} 位失敗（${failedNames.join('、')}）`,
+          'warning'
+        );
+      } else {
+        showToast(
+          `✅ 已將 ${selected.length} 位教師狀態設定為【${nextStatus === 'active' ? '在職中' : '已停用'}】！`,
+          'success'
+        );
+      }
       setSelectedTeacherIds(new Set());
       onRefresh?.();
     } catch (err: any) {
@@ -317,7 +334,7 @@ export const AdminTeacherManagementView: React.FC<AdminTeacherManagementViewProp
       }
       onRefresh?.();
     } catch (err: any) {
-      alert(`更新教師狀態失敗: ${err.message || String(err)}`);
+      showToast(`更新教師狀態失敗: ${err.message || String(err)}`, 'error');
     } finally {
       setStatusTogglingId(null);
     }

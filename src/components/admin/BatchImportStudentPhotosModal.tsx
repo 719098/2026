@@ -1,25 +1,25 @@
-import React, { useState, useRef, useMemo, useEffect } from 'react';
-import { 
-  X, 
-  Upload, 
-  Camera, 
-  AlertCircle, 
-  CheckCircle2, 
-  AlertTriangle, 
-  Loader2, 
-  Check, 
-  RefreshCw, 
-  ImageIcon, 
-  Trash2, 
-  Eye,
-  HelpCircle,
-  FileQuestion
+import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  X,
+  Upload,
+  Camera,
+  AlertCircle,
+  CheckCircle2,
+  AlertTriangle,
+  Loader2,
+  Check,
+  Trash2,
+  FileQuestion,
+  Sparkles,
+  Info,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { Student } from '../../types';
 import { uploadStudentAvatar } from '../../lib/storageService';
 import { updateStudentInSupabase } from '../../lib/studentService';
 
-interface BatchImportStudentPhotosModalProps {
+export interface BatchImportStudentPhotosModalProps {
   isOpen: boolean;
   onClose: () => void;
   students: Student[];
@@ -27,37 +27,52 @@ interface BatchImportStudentPhotosModalProps {
   onShowToast: (message: string, type: 'success' | 'error' | 'warning' | 'info') => void;
 }
 
-interface ParsedPhotoItem {
+export interface ParsedPhotoItem {
   id: string;
   file: File;
   fileName: string;
   baseName: string;
+  extension: string;
   previewUrl: string;
   fileSize: number;
-  status: 'matched' | 'unmatched' | 'conflict' | 'unsupported_format' | 'invalid_name';
+  status: 'matched' | 'unmatched' | 'conflict' | 'unsupported_format' | 'file_too_large' | 'invalid_name';
   errorMessage?: string;
   matchedStudent?: Student;
+  hasExistingPhoto?: boolean;
   uploadStatus?: 'pending' | 'uploading' | 'success' | 'failed';
   uploadError?: string;
 }
 
 const SUPPORTED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
+const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
 export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosModalProps> = ({
   isOpen,
   onClose,
-  students,
+  students = [],
   onImportComplete,
   onShowToast,
 }) => {
   const [photoItems, setPhotoItems] = useState<ParsedPhotoItem[]>([]);
   const [filterTab, setFilterTab] = useState<'ALL' | 'MATCHED' | 'ISSUES'>('ALL');
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; currentName?: string } | null>(null);
   const [uploadSummary, setUploadSummary] = useState<{ success: number; failed: number } | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Revoke object URLs on unmount or items cleanup
+  // Prevent background scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      const originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = originalOverflow;
+      };
+    }
+  }, [isOpen]);
+
+  // Clean up object URLs on unmount or on clear
   useEffect(() => {
     return () => {
       photoItems.forEach((item) => {
@@ -68,35 +83,103 @@ export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosMod
         }
       });
     };
-  }, []);
+  }, [photoItems]);
 
-  if (!isOpen) return null;
+  // Handle ESC key to close modal if not uploading
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen && !isUploading) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isUploading, onClose]);
 
-  // Handle files selected
+  // Re-evaluates matching and conflicts across all current items
+  const recomputeStatusForItems = useCallback(
+    (items: ParsedPhotoItem[]): ParsedPhotoItem[] => {
+      // 1. Group candidate student numbers among valid format items to detect conflicts
+      const studentNumberCounts = new Map<string, number>();
+
+      items.forEach((it) => {
+        if (it.status !== 'unsupported_format' && it.status !== 'file_too_large' && it.status !== 'invalid_name') {
+          const cleanKey = it.baseName.toLowerCase().trim();
+          if (cleanKey) {
+            studentNumberCounts.set(cleanKey, (studentNumberCounts.get(cleanKey) || 0) + 1);
+          }
+        }
+      });
+
+      return items.map((item) => {
+        // If it was already a format or size issue, keep as is
+        if (
+          item.status === 'unsupported_format' ||
+          item.status === 'file_too_large' ||
+          item.status === 'invalid_name'
+        ) {
+          return item;
+        }
+
+        const cleanBase = item.baseName.toLowerCase().trim();
+        const count = studentNumberCounts.get(cleanBase) || 0;
+
+        // Strictly match student_number / stno
+        const matched = students.find((s) => {
+          const sNum = (s.studentNumber || s.stno || '').trim().toLowerCase();
+          return sNum === cleanBase;
+        });
+
+        if (!matched) {
+          return {
+            ...item,
+            status: 'unmatched',
+            matchedStudent: undefined,
+            errorMessage: `查無學號為「${item.baseName}」之學生檔案`,
+          };
+        }
+
+        if (count > 1) {
+          return {
+            ...item,
+            status: 'conflict',
+            matchedStudent: matched,
+            hasExistingPhoto: Boolean(matched.avatarUrl && matched.avatarUrl.trim() !== ''),
+            errorMessage: `此學號 (${matched.studentNumber}) 於本次選擇中存在多張照片，請刪除重複項`,
+          };
+        }
+
+        return {
+          ...item,
+          status: 'matched',
+          matchedStudent: matched,
+          hasExistingPhoto: Boolean(matched.avatarUrl && matched.avatarUrl.trim() !== ''),
+          errorMessage: undefined,
+        };
+      });
+    },
+    [students]
+  );
+
+  // Handle files selected (from file input or drop)
   const handleFilesSelect = (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
-    const newItems: ParsedPhotoItem[] = [];
-    const studentCountMap = new Map<string, number>();
-
-    // First, register any previously matched students if we keep existing items
-    photoItems.forEach((item) => {
-      if (item.matchedStudent) {
-        studentCountMap.set(item.matchedStudent.id, (studentCountMap.get(item.matchedStudent.id) || 0) + 1);
-      }
-    });
+    const newRawItems: ParsedPhotoItem[] = [];
 
     Array.from(files).forEach((file, index) => {
       const fileName = file.name;
       const lastDotIndex = fileName.lastIndexOf('.');
       const previewUrl = URL.createObjectURL(file);
 
+      // Check for missing extension
       if (lastDotIndex === -1) {
-        newItems.push({
-          id: `${file.name}-${index}-${Date.now()}`,
+        newRawItems.push({
+          id: `${file.name}-${index}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           file,
           fileName,
           baseName: fileName,
+          extension: '',
           previewUrl,
           fileSize: file.size,
           status: 'unsupported_format',
@@ -105,90 +188,75 @@ export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosMod
         return;
       }
 
-      const ext = fileName.slice(lastDotIndex).toLowerCase();
+      const extension = fileName.slice(lastDotIndex).toLowerCase();
       const baseName = fileName.slice(0, lastDotIndex).trim();
 
-      if (!SUPPORTED_EXTENSIONS.includes(ext)) {
-        newItems.push({
-          id: `${file.name}-${index}-${Date.now()}`,
+      // Check supported format
+      if (!SUPPORTED_EXTENSIONS.includes(extension)) {
+        newRawItems.push({
+          id: `${file.name}-${index}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           file,
           fileName,
           baseName,
+          extension,
           previewUrl,
           fileSize: file.size,
           status: 'unsupported_format',
-          errorMessage: `不支援的檔案格式 (${ext})，僅支援 .jpg, .jpeg, .png, .webp`,
+          errorMessage: `不支援的格式 (${extension})，僅支援 .jpg, .jpeg, .png, .webp`,
         });
         return;
       }
 
-      if (!baseName) {
-        newItems.push({
-          id: `${file.name}-${index}-${Date.now()}`,
+      // Check file size (5MB max)
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        newRawItems.push({
+          id: `${file.name}-${index}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           file,
           fileName,
           baseName,
+          extension,
+          previewUrl,
+          fileSize: file.size,
+          status: 'file_too_large',
+          errorMessage: `檔案過大 (${(file.size / (1024 * 1024)).toFixed(1)} MB)，單檔上限為 5MB`,
+        });
+        return;
+      }
+
+      // Check empty baseName
+      if (!baseName) {
+        newRawItems.push({
+          id: `${file.name}-${index}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          file,
+          fileName,
+          baseName,
+          extension,
           previewUrl,
           fileSize: file.size,
           status: 'invalid_name',
-          errorMessage: '檔案名稱不可為空白',
+          errorMessage: '照片檔名不可為空白',
         });
         return;
       }
 
-      // Match against students
-      const cleanBase = baseName.toLowerCase();
-      const matched = students.find((s) => {
-        const sNum = (s.studentNumber || '').trim().toLowerCase();
-        return sNum === cleanBase;
+      // Temporary placeholder item (will be evaluated by recomputeStatusForItems)
+      newRawItems.push({
+        id: `${file.name}-${index}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        file,
+        fileName,
+        baseName,
+        extension,
+        previewUrl,
+        fileSize: file.size,
+        status: 'unmatched',
       });
-
-      if (!matched) {
-        newItems.push({
-          id: `${file.name}-${index}-${Date.now()}`,
-          file,
-          fileName,
-          baseName,
-          previewUrl,
-          fileSize: file.size,
-          status: 'unmatched',
-          errorMessage: `在學生名冊中找不到學號為「${baseName}」的學生`,
-        });
-      } else {
-        const currentCount = studentCountMap.get(matched.id) || 0;
-        studentCountMap.set(matched.id, currentCount + 1);
-
-        if (currentCount > 0) {
-          newItems.push({
-            id: `${file.name}-${index}-${Date.now()}`,
-            file,
-            fileName,
-            baseName,
-            previewUrl,
-            fileSize: file.size,
-            status: 'conflict',
-            matchedStudent: matched,
-            errorMessage: `學生「${matched.name}」(${matched.studentNumber}) 已有其他照片，重複衝突`,
-          });
-        } else {
-          newItems.push({
-            id: `${file.name}-${index}-${Date.now()}`,
-            file,
-            fileName,
-            baseName,
-            previewUrl,
-            fileSize: file.size,
-            status: 'matched',
-            matchedStudent: matched,
-          });
-        }
-      }
     });
 
-    setPhotoItems((prev) => [...prev, ...newItems]);
+    setPhotoItems((prev) => recomputeStatusForItems([...prev, ...newRawItems]));
     setUploadSummary(null);
   };
 
+  // Remove a single item
   const handleRemoveItem = (id: string) => {
     setPhotoItems((prev) => {
       const target = prev.find((i) => i.id === id);
@@ -199,10 +267,12 @@ export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosMod
           // ignore
         }
       }
-      return prev.filter((i) => i.id !== id);
+      const remaining = prev.filter((i) => i.id !== id);
+      return recomputeStatusForItems(remaining);
     });
   };
 
+  // Clear all items
   const handleClearAll = () => {
     photoItems.forEach((item) => {
       try {
@@ -213,15 +283,40 @@ export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosMod
     });
     setPhotoItems([]);
     setUploadSummary(null);
+    setUploadProgress(null);
   };
 
-  // Metrics
+  // Drag and Drop handlers
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isUploading) {
+      setIsDragOver(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    if (!isUploading && e.dataTransfer.files) {
+      handleFilesSelect(e.dataTransfer.files);
+    }
+  };
+
+  // Metric counts
   const totalCount = photoItems.length;
   const matchedCount = photoItems.filter((i) => i.status === 'matched').length;
   const unmatchedCount = photoItems.filter((i) => i.status === 'unmatched').length;
   const conflictCount = photoItems.filter((i) => i.status === 'conflict').length;
-  const formatErrorCount = photoItems.filter(
-    (i) => i.status === 'unsupported_format' || i.status === 'invalid_name'
+  const errorCount = photoItems.filter(
+    (i) => i.status === 'unsupported_format' || i.status === 'file_too_large' || i.status === 'invalid_name'
   ).length;
 
   const filteredItems = useMemo(() => {
@@ -230,46 +325,51 @@ export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosMod
     return photoItems;
   }, [photoItems, filterTab]);
 
-  // Execute Upload
+  // Execute upload process for matched items
   const handleStartUpload = async () => {
     const uploadableItems = photoItems.filter((i) => i.status === 'matched' && i.matchedStudent);
     if (uploadableItems.length === 0) {
-      onShowToast('沒有可上傳的匹配照片', 'warning');
+      onShowToast('目前無符合條件之匹配照片可上傳', 'warning');
       return;
     }
 
     setIsUploading(true);
-    setUploadProgress({ current: 0, total: uploadableItems.length });
+    setUploadProgress({ current: 0, total: uploadableItems.length, currentName: '' });
     let successCount = 0;
     let failedCount = 0;
 
     for (let i = 0; i < uploadableItems.length; i++) {
       const item = uploadableItems[i];
-      setUploadProgress({ current: i + 1, total: uploadableItems.length });
+      const student = item.matchedStudent!;
 
-      // Update item status in state
+      setUploadProgress({
+        current: i + 1,
+        total: uploadableItems.length,
+        currentName: `${student.name} (${student.studentNumber || student.stno})`,
+      });
+
+      // Update state to uploading
       setPhotoItems((prev) =>
         prev.map((it) => (it.id === item.id ? { ...it, uploadStatus: 'uploading' } : it))
       );
 
       try {
-        const student = item.matchedStudent!;
-        // 1. Upload to Supabase Storage
+        // 1. Upload file to Supabase Storage private 'student-avatars' bucket
         const uploadRes = await uploadStudentAvatar(student.id, item.file);
 
         if (!uploadRes.success || !uploadRes.storagePath) {
-          throw new Error(uploadRes.error || '照片上傳 Storage 失敗');
+          throw new Error(uploadRes.error || '照片上傳至 Storage 失敗');
         }
 
-        // 2. Update student avatarUrl in Supabase public.students
+        // 2. Update student avatarUrl in public.students table
         const updatedStudent: Student = {
           ...student,
-          avatarUrl: uploadRes.storagePath,
+          avatarUrl: uploadRes.signedUrl || uploadRes.storagePath,
         };
-        const updateRes = await updateStudentInSupabase(updatedStudent);
 
+        const updateRes = await updateStudentInSupabase(updatedStudent);
         if (updateRes.error) {
-          throw new Error(updateRes.error.message || '更新學生資料庫照片連結失敗');
+          throw new Error(updateRes.error.message || '更新學生資料庫個人照片連結失敗');
         }
 
         successCount++;
@@ -278,7 +378,7 @@ export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosMod
         );
       } catch (err: any) {
         failedCount++;
-        const errMsg = err.message || String(err);
+        const errMsg = err?.message || String(err);
         setPhotoItems((prev) =>
           prev.map((it) =>
             it.id === item.id ? { ...it, uploadStatus: 'failed', uploadError: errMsg } : it
@@ -292,303 +392,481 @@ export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosMod
 
     if (successCount > 0) {
       await onImportComplete();
-      onShowToast(`🎉 成功為 ${successCount} 位學生匯入個人照片！`, 'success');
+      onShowToast(
+        `🎉 成功為 ${successCount} 位學員更新個人大頭照！${failedCount > 0 ? ` (失敗 ${failedCount} 位)` : ''}`,
+        'success'
+      );
     } else {
-      onShowToast('照片上傳失敗，請檢查網路連線或儲存空間權限', 'error');
+      onShowToast('照片上傳失敗，請檢查網路連線或儲存庫權限', 'error');
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-3xl max-w-3xl w-full p-6 shadow-2xl border border-slate-200 my-8 space-y-4">
+  if (!isOpen) return null;
+
+  // Render modal into document.body with createPortal for top-level stacking context
+  return createPortal(
+    <div
+      className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[9999] flex items-center justify-center p-3 sm:p-5 overflow-y-auto"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="batch-photo-modal-title"
+      onClick={(e) => {
+        if (!isUploading && e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div
+        className="bg-white rounded-2xl max-w-4xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 my-auto max-h-[92vh] flex flex-col transition-all duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Modal Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-          <div className="flex items-center space-x-2.5">
-            <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center">
+        <div className="flex items-center justify-between pb-4 border-b border-slate-100 shrink-0">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-700 flex items-center justify-center shrink-0 shadow-2xs">
               <Camera className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-800">學生照片批量匯入</h2>
-              <p className="text-xs text-slate-500">
-                以「學號」作為照片檔名進行批次比對與上傳
+              <h2 id="batch-photo-modal-title" className="text-base font-bold text-slate-800 flex items-center space-x-2">
+                <span>批量匯入學生照片</span>
+                <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">
+                  以學號自動配對
+                </span>
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                系統依檔案名稱中的「學生學號」自動精準配對學生，支援即時預覽、覆蓋更新與防呆驗證。
               </p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             disabled={isUploading}
-            className="text-slate-400 hover:text-slate-600 p-1"
+            aria-label="關閉"
+            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Upload Dropzone / File Picker */}
-        <div
-          onClick={() => !isUploading && fileInputRef.current?.click()}
-          className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
-            isUploading
-              ? 'bg-slate-50 border-slate-200 cursor-not-allowed'
-              : 'border-indigo-200 bg-indigo-50/20 hover:bg-indigo-50/40 hover:border-indigo-400'
-          }`}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".jpg,.jpeg,.png,.webp"
-            className="hidden"
-            onChange={(e) => {
-              handleFilesSelect(e.target.files);
-              e.target.value = '';
-            }}
-          />
-          <div className="flex flex-col items-center space-y-2">
-            <div className="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shadow-2xs">
-              <Upload className="w-6 h-6" />
-            </div>
-            <div className="text-sm font-bold text-slate-800">
-              點擊此處或拖曳多張照片至此
-            </div>
-            <p className="text-xs text-slate-500 max-w-md">
-              支援格式：<code>.jpg</code>, <code>.jpeg</code>, <code>.png</code>, <code>.webp</code>。
-              請將照片檔名命名為學生學號（例如：<code>C11421260.jpg</code>、<code>STU2026102.png</code>）。
-            </p>
-          </div>
-        </div>
-
-        {/* Statistics Dashboard Banner */}
-        {photoItems.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
-              <span className="text-[11px] font-bold text-slate-500 block">選擇照片</span>
-              <span className="text-xl font-black text-slate-800 font-mono">{totalCount}</span>
-            </div>
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center">
-              <span className="text-[11px] font-bold text-emerald-700 block">成功匹配</span>
-              <span className="text-xl font-black text-emerald-700 font-mono">{matchedCount}</span>
-            </div>
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
-              <span className="text-[11px] font-bold text-amber-700 block">無法匹配</span>
-              <span className="text-xl font-black text-amber-700 font-mono">{unmatchedCount}</span>
-            </div>
-            <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-center">
-              <span className="text-[11px] font-bold text-rose-700 block">衝突/重複</span>
-              <span className="text-xl font-black text-rose-700 font-mono">{conflictCount}</span>
-            </div>
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center col-span-2 sm:col-span-1">
-              <span className="text-[11px] font-bold text-slate-500 block">格式錯誤</span>
-              <span className="text-xl font-black text-slate-600 font-mono">{formatErrorCount}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Upload Progress Bar */}
-        {isUploading && uploadProgress && (
-          <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 text-xs space-y-2">
-            <div className="flex items-center justify-between font-bold text-indigo-900">
-              <span className="flex items-center space-x-1.5">
-                <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
-                <span>正在上傳照片至學生檔案與雲端儲存庫...</span>
-              </span>
-              <span className="font-mono">
-                {uploadProgress.current} / {uploadProgress.total} ({Math.round((uploadProgress.current / uploadProgress.total) * 100)}%)
-              </span>
-            </div>
-            <div className="w-full bg-indigo-200 rounded-full h-2 overflow-hidden">
-              <div
-                className="bg-indigo-600 h-2 transition-all duration-300 rounded-full"
-                style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Upload Result Alert */}
-        {uploadSummary && (
+        {/* Modal Body (Scrollable) */}
+        <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1">
+          {/* STEP 1: Instructions & Selection Area */}
           <div
-            className={`p-4 rounded-xl text-xs font-semibold flex items-center justify-between ${
-              uploadSummary.failed === 0
-                ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-                : 'bg-amber-50 border border-amber-200 text-amber-800'
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all ${
+              isDragOver
+                ? 'border-indigo-500 bg-indigo-50/60 scale-[1.005]'
+                : isUploading
+                ? 'bg-slate-50 border-slate-200 cursor-not-allowed'
+                : 'border-indigo-200 bg-indigo-50/20 hover:bg-indigo-50/35 hover:border-indigo-300'
             }`}
           >
-            <div className="flex items-center space-x-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>
-                匯入作業已完成：成功匯入 {uploadSummary.success} 張照片
-                {uploadSummary.failed > 0 && `，失敗 ${uploadSummary.failed} 張`}。
-              </span>
-            </div>
-          </div>
-        )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                handleFilesSelect(e.target.files);
+                e.target.value = '';
+              }}
+            />
 
-        {/* Filter Tabs & Preview List */}
-        {photoItems.length > 0 && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => setFilterTab('ALL')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                    filterTab === 'ALL'
-                      ? 'bg-slate-900 text-white shadow-2xs'
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                  }`}
-                >
-                  全部照片 ({totalCount})
-                </button>
-                <button
-                  onClick={() => setFilterTab('MATCHED')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                    filterTab === 'MATCHED'
-                      ? 'bg-emerald-600 text-white shadow-2xs'
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                  }`}
-                >
-                  成功匹配 ({matchedCount})
-                </button>
-                <button
-                  onClick={() => setFilterTab('ISSUES')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                    filterTab === 'ISSUES'
-                      ? 'bg-amber-600 text-white shadow-2xs'
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                  }`}
-                >
-                  異常 / 無法匹配 ({totalCount - matchedCount})
-                </button>
+            <div className="flex flex-col items-center space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-100/80 text-indigo-700 flex items-center justify-center shadow-2xs">
+                <Upload className="w-6 h-6" />
               </div>
 
-              {!isUploading && (
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">
+                  {isDragOver ? '釋放滑鼠以上傳照片' : '選擇照片或將多張照片拖曳至此'}
+                </h3>
+                <p className="text-xs text-slate-600 mt-1 max-w-lg leading-relaxed">
+                  請將學生照片檔名設定為「<strong>學生學號</strong>」（例如：
+                  <code className="text-indigo-700 font-mono bg-white px-1.5 py-0.5 rounded border border-indigo-100 mx-1">
+                    C11421260.jpg
+                  </code>
+                  、
+                  <code className="text-indigo-700 font-mono bg-white px-1.5 py-0.5 rounded border border-indigo-100 mx-1">
+                    STU2026102.png
+                  </code>
+                  ），系統會依學號自動配對學生。
+                </p>
+              </div>
+
+              <div className="pt-1 flex flex-wrap items-center justify-center gap-2">
                 <button
-                  onClick={handleClearAll}
-                  className="text-xs text-slate-400 hover:text-rose-600 flex items-center space-x-1"
+                  type="button"
+                  disabled={isUploading}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex items-center space-x-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-xs font-bold shadow-xs hover:shadow transition-all disabled:opacity-50"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>清空重選</span>
+                  <Camera className="w-4 h-4" />
+                  <span>選擇照片 (可多選)</span>
                 </button>
-              )}
-            </div>
 
-            {/* List Table / Cards */}
-            <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
-              {filteredItems.map((item) => (
-                <div
-                  key={item.id}
-                  className={`p-3 rounded-xl border flex items-center justify-between text-xs transition-colors ${
-                    item.status === 'matched'
-                      ? 'bg-emerald-50/30 border-emerald-200 hover:bg-emerald-50/50'
-                      : item.status === 'conflict'
-                      ? 'bg-rose-50/30 border-rose-200 hover:bg-rose-50/50'
-                      : 'bg-amber-50/30 border-amber-200 hover:bg-amber-50/50'
-                  }`}
-                >
-                  <div className="flex items-center space-x-3 min-w-0">
-                    {/* Thumbnail preview */}
-                    <img
-                      src={item.previewUrl}
-                      alt={item.fileName}
-                      className="w-10 h-10 rounded-lg object-cover border border-slate-200 shrink-0 bg-white"
-                    />
+                {photoItems.length > 0 && !isUploading && (
+                  <button
+                    type="button"
+                    onClick={handleClearAll}
+                    className="inline-flex items-center space-x-1.5 px-3 py-2 text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 rounded-xl text-xs font-semibold transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>清空重選</span>
+                  </button>
+                )}
+              </div>
 
-                    <div className="min-w-0">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-bold text-slate-800 font-mono truncate max-w-[160px]">
-                          {item.fileName}
-                        </span>
-                        <span className="text-[10px] text-slate-400 font-mono">
-                          ({(item.fileSize / 1024).toFixed(1)} KB)
-                        </span>
-                      </div>
-
-                      <div className="mt-0.5 flex items-center space-x-1.5 text-[11px]">
-                        {item.status === 'matched' && item.matchedStudent && (
-                          <div className="flex items-center space-x-1 text-emerald-700 font-bold">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                            <span>
-                              比對成功 → {item.matchedStudent.name} (學號: {item.matchedStudent.studentNumber})
-                            </span>
-                          </div>
-                        )}
-                        {item.status === 'unmatched' && (
-                          <div className="flex items-center space-x-1 text-amber-700 font-bold">
-                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                            <span>{item.errorMessage}</span>
-                          </div>
-                        )}
-                        {item.status === 'conflict' && (
-                          <div className="flex items-center space-x-1 text-rose-700 font-bold">
-                            <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                            <span>{item.errorMessage}</span>
-                          </div>
-                        )}
-                        {(item.status === 'unsupported_format' || item.status === 'invalid_name') && (
-                          <div className="flex items-center space-x-1 text-slate-600 font-semibold">
-                            <FileQuestion className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            <span>{item.errorMessage}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center space-x-2 shrink-0">
-                    {item.uploadStatus === 'uploading' && (
-                      <span className="text-[11px] font-bold text-indigo-600 flex items-center space-x-1">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>上傳中</span>
-                      </span>
-                    )}
-                    {item.uploadStatus === 'success' && (
-                      <span className="text-[11px] font-bold text-emerald-600 flex items-center space-x-1">
-                        <Check className="w-3.5 h-3.5" />
-                        <span>完成</span>
-                      </span>
-                    )}
-                    {item.uploadStatus === 'failed' && (
-                      <span
-                        className="text-[11px] font-bold text-rose-600 flex items-center space-x-1"
-                        title={item.uploadError}
-                      >
-                        <X className="w-3.5 h-3.5" />
-                        <span>失敗</span>
-                      </span>
-                    )}
-                    {!isUploading && !item.uploadStatus && (
-                      <button
-                        onClick={() => handleRemoveItem(item.id)}
-                        className="p-1 text-slate-400 hover:text-rose-600 rounded-md transition-colors"
-                        title="自本次匯入清單中移除"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
+              <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[11px] text-slate-500 pt-1">
+                <span>
+                  支援格式：<strong className="text-slate-700 font-mono">.jpg, .jpeg, .png, .webp</strong>
+                </span>
+                <span>•</span>
+                <span>單檔上限：5MB</span>
+                <span>•</span>
+                <span>英文字母大小寫不敏感</span>
+              </div>
             </div>
           </div>
-        )}
+
+          {/* STEP 3: Statistics Dashboard Banner */}
+          {photoItems.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
+                <span className="text-[11px] font-bold text-slate-500 block">總選取照片</span>
+                <span className="text-xl font-black text-slate-800 font-mono">{totalCount}</span>
+                <span className="text-[10px] text-slate-400 block">張檔案</span>
+              </div>
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center">
+                <span className="text-[11px] font-bold text-emerald-800 block">成功配對</span>
+                <span className="text-xl font-black text-emerald-700 font-mono">{matchedCount}</span>
+                <span className="text-[10px] text-emerald-600 block">位學生可匯入</span>
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+                <span className="text-[11px] font-bold text-amber-800 block">查無學號</span>
+                <span className="text-xl font-black text-amber-700 font-mono">{unmatchedCount}</span>
+                <span className="text-[10px] text-amber-600 block">張未匹配</span>
+              </div>
+              <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-center">
+                <span className="text-[11px] font-bold text-rose-800 block">重複或異常</span>
+                <span className="text-xl font-black text-rose-700 font-mono">
+                  {conflictCount + errorCount}
+                </span>
+                <span className="text-[10px] text-rose-600 block">需排除之檔案</span>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 5: Upload Progress Bar */}
+          {isUploading && uploadProgress && (
+            <div className="bg-indigo-50/90 border border-indigo-200 rounded-2xl p-4 text-xs space-y-2.5 shadow-2xs">
+              <div className="flex items-center justify-between font-bold text-indigo-950">
+                <span className="flex items-center space-x-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+                  <span>正在處理上傳照片至學生學籍檔案...</span>
+                  {uploadProgress.currentName && (
+                    <span className="text-[11px] text-indigo-700 font-medium">
+                      ({uploadProgress.currentName})
+                    </span>
+                  )}
+                </span>
+                <span className="font-mono text-indigo-700">
+                  {uploadProgress.current} / {uploadProgress.total} (
+                  {Math.round((uploadProgress.current / uploadProgress.total) * 100)}%)
+                </span>
+              </div>
+              <div className="w-full bg-indigo-200/80 rounded-full h-2.5 overflow-hidden">
+                <div
+                  className="bg-indigo-600 h-2.5 transition-all duration-300 rounded-full"
+                  style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Upload Complete Alert */}
+          {uploadSummary && (
+            <div
+              className={`p-4 rounded-xl text-xs font-semibold flex items-center justify-between border ${
+                uploadSummary.failed === 0
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : 'bg-amber-50 border-amber-200 text-amber-900'
+              }`}
+            >
+              <div className="flex items-center space-x-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                <div>
+                  <span className="font-bold text-sm block">匯入作業已順利完成！</span>
+                  <span>
+                    成功上傳更新 <strong>{uploadSummary.success}</strong> 位學生的個人大頭照
+                    {uploadSummary.failed > 0 && `，失敗 ${uploadSummary.failed} 張`}。
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors shrink-0 ml-3"
+              >
+                關閉視窗
+              </button>
+            </div>
+          )}
+
+          {/* STEP 2: Preview Table */}
+          {photoItems.length > 0 && (
+            <div className="space-y-2.5">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-2">
+                <div className="flex items-center space-x-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setFilterTab('ALL')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                      filterTab === 'ALL'
+                        ? 'bg-slate-900 text-white shadow-2xs'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    全部照片 ({totalCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilterTab('MATCHED')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                      filterTab === 'MATCHED'
+                        ? 'bg-emerald-600 text-white shadow-2xs'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    成功配對 ({matchedCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilterTab('ISSUES')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                      filterTab === 'ISSUES'
+                        ? 'bg-amber-600 text-white shadow-2xs'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    異常 / 未配對 ({totalCount - matchedCount})
+                  </button>
+                </div>
+
+                <div className="text-[11px] text-slate-400">
+                  點擊確認匯入時僅會上傳「成功配對」的照片
+                </div>
+              </div>
+
+              {/* Table Container */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+                <div className="max-h-72 overflow-y-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold z-10 shadow-2xs">
+                      <tr>
+                        <th className="py-2.5 px-3 w-16 text-center">縮圖</th>
+                        <th className="py-2.5 px-3">照片檔名</th>
+                        <th className="py-2.5 px-3">解析學號</th>
+                        <th className="py-2.5 px-3">學生姓名</th>
+                        <th className="py-2.5 px-3">配對狀態 / 說明</th>
+                        <th className="py-2.5 px-3 w-16 text-center">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredItems.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-8 text-center text-slate-400 text-xs">
+                            此篩選條件下無符合的照片
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredItems.map((item) => {
+                          const isMatched = item.status === 'matched';
+                          const isConflict = item.status === 'conflict';
+                          const isUnmatched = item.status === 'unmatched';
+                          const isError =
+                            item.status === 'unsupported_format' ||
+                            item.status === 'file_too_large' ||
+                            item.status === 'invalid_name';
+
+                          return (
+                            <tr
+                              key={item.id}
+                              className={`transition-colors hover:bg-slate-50/80 ${
+                                isMatched
+                                  ? 'bg-emerald-50/15'
+                                  : isConflict
+                                  ? 'bg-rose-50/20'
+                                  : isUnmatched
+                                  ? 'bg-amber-50/15'
+                                  : 'bg-slate-50/40'
+                              }`}
+                            >
+                              {/* Thumbnail */}
+                              <td className="py-2 px-3 text-center align-middle">
+                                <img
+                                  src={item.previewUrl}
+                                  alt={item.fileName}
+                                  className="w-10 h-10 rounded-lg object-cover border border-slate-200 mx-auto bg-white shadow-2xs"
+                                />
+                              </td>
+
+                              {/* File name & size */}
+                              <td className="py-2 px-3 align-middle">
+                                <div className="font-mono font-bold text-slate-800 truncate max-w-[170px]" title={item.fileName}>
+                                  {item.fileName}
+                                </div>
+                                <div className="text-[10px] text-slate-400 font-mono">
+                                  {(item.fileSize / 1024).toFixed(1)} KB
+                                </div>
+                              </td>
+
+                              {/* Parsed Student Number */}
+                              <td className="py-2 px-3 align-middle font-mono">
+                                <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-800 font-bold border border-slate-200">
+                                  {item.baseName || '—'}
+                                </span>
+                              </td>
+
+                              {/* Matched Student Name */}
+                              <td className="py-2 px-3 align-middle">
+                                {item.matchedStudent ? (
+                                  <div>
+                                    <div className="font-bold text-slate-900">
+                                      {item.matchedStudent.name}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 font-mono">
+                                      {item.matchedStudent.englishName ||
+                                        item.matchedStudent.ename ||
+                                        item.matchedStudent.studentNumber}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-400 italic font-medium">
+                                    (查無此人)
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Status Badge */}
+                              <td className="py-2 px-3 align-middle">
+                                {isMatched && (
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-[11px]">
+                                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                      <span>✓ 配對成功</span>
+                                    </span>
+                                    {item.hasExistingPhoto ? (
+                                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                        將更新現有照片
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200">
+                                        首次設定照片
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {isUnmatched && (
+                                  <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-bold text-[11px]">
+                                    <AlertTriangle className="w-3 h-3 text-amber-600" />
+                                    <span>✗ 無法配對（未找到對應學號）</span>
+                                  </span>
+                                )}
+
+                                {isConflict && (
+                                  <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-md bg-rose-50 text-rose-800 border border-rose-200 font-bold text-[11px]" title={item.errorMessage}>
+                                    <AlertCircle className="w-3 h-3 text-rose-600" />
+                                    <span>⚠ 重複衝突（同學號多張照片）</span>
+                                  </span>
+                                )}
+
+                                {isError && (
+                                  <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-300 font-semibold text-[11px]" title={item.errorMessage}>
+                                    <FileQuestion className="w-3 h-3 text-slate-500" />
+                                    <span>{item.errorMessage || '檔案異常'}</span>
+                                  </span>
+                                )}
+
+                                {/* Individual upload indicator */}
+                                {item.uploadStatus === 'uploading' && (
+                                  <div className="mt-1 text-[11px] text-indigo-600 font-bold flex items-center space-x-1">
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                    <span>正在上傳儲存庫...</span>
+                                  </div>
+                                )}
+                                {item.uploadStatus === 'success' && (
+                                  <div className="mt-1 text-[11px] text-emerald-700 font-bold flex items-center space-x-1">
+                                    <Check className="w-3 h-3" />
+                                    <span>上傳完成</span>
+                                  </div>
+                                )}
+                                {item.uploadStatus === 'failed' && (
+                                  <div className="mt-1 text-[11px] text-rose-600 font-semibold flex items-center space-x-1" title={item.uploadError}>
+                                    <X className="w-3 h-3" />
+                                    <span>失敗: {item.uploadError || '寫入失敗'}</span>
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* Actions */}
+                              <td className="py-2 px-3 text-center align-middle">
+                                {!isUploading && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveItem(item.id)}
+                                    title="從本次名單中移除"
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Modal Footer Actions */}
-        <div className="flex items-center justify-between pt-3 border-t border-slate-100 text-xs">
-          <div className="text-slate-500">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-slate-100 shrink-0 text-xs">
+          <div className="text-slate-600">
             {matchedCount > 0 ? (
-              <span>
-                準備匯入 <strong>{matchedCount} 位學生</strong> 的照片
+              <span className="flex items-center space-x-1.5">
+                <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  已精準比對 <strong>{matchedCount} 位學員</strong> 照片，確認後將寫入資料庫與儲存庫。
+                  {unmatchedCount + conflictCount + errorCount > 0 && (
+                    <span className="text-slate-400 ml-1">
+                      (其餘 {unmatchedCount + conflictCount + errorCount} 張異常檔案將被略過)
+                    </span>
+                  )}
+                </span>
               </span>
             ) : (
-              <span>請選取符合學號命名規則的照片檔</span>
+              <span className="text-slate-400">
+                尚未選取照片，或選取的照片尚未成功配對任何在校學生。
+              </span>
             )}
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2.5 justify-end">
             <button
               type="button"
               disabled={isUploading}
               onClick={onClose}
-              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-colors"
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-colors disabled:opacity-50"
             >
               {uploadSummary ? '完成關閉' : '取消'}
             </button>
@@ -596,7 +874,7 @@ export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosMod
               type="button"
               disabled={isUploading || matchedCount === 0}
               onClick={handleStartUpload}
-              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-xs disabled:opacity-50 flex items-center space-x-1.5 transition-colors"
+              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl font-bold shadow-xs hover:shadow disabled:opacity-40 disabled:cursor-not-allowed flex items-center space-x-2 transition-all"
             >
               {isUploading ? (
                 <>
@@ -606,13 +884,14 @@ export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosMod
               ) : (
                 <>
                   <Upload className="w-4 h-4" />
-                  <span>確認匯入匹配照片 ({matchedCount} 張)</span>
+                  <span>確認匯入 ({matchedCount} 張)</span>
                 </>
               )}
             </button>
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

@@ -167,56 +167,61 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
           .eq('profile_id', profile.id)
           .maybeSingle();
 
+        // 4. 教師專屬資料載入與狀態驗證
+        let resolvedDbTeacher = teacherRow;
         if (teacherErr || !teacherRow) {
           // Fallback search by email or emp_email
           const userEmail = profile.email || authData.user.email || '';
-          let teacherByEmail = null;
           const { data: searchByEmpEmail } = await supabase
             .from('teachers')
             .select('*')
             .eq('emp_email', userEmail)
             .maybeSingle();
 
-          teacherByEmail = searchByEmpEmail;
-
-          if (!teacherByEmail) {
+          if (!searchByEmpEmail) {
             await supabase.auth.signOut();
             setErrorMessage('已確認具備教師身分，但找不到對應的教師個人檔案，請聯絡教務管理員協助建置。');
             setLoading(false);
             return;
           }
+          resolvedDbTeacher = searchByEmpEmail;
 
-          const teacher = (await fetchTeacherWithClassesByProfileId(profile.id)) || mapDbToTeacher(teacherByEmail);
-          const userProfile: UserProfile = {
-            id: profile.id,
-            role: 'TEACHER',
-            fullName: teacher.name || profile.full_name || '教師',
-            email: profile.email || authData.user.email || '',
-            avatarUrl: profile.avatar_url,
-            isActive: profile.is_active,
-          };
-
-          if (onTeacherLoginSuccess) {
-            onTeacherLoginSuccess(teacher, userProfile);
-          } else {
-            onLoginSuccess(userProfile);
+          // 自動關聯缺失之 profile_id
+          if (!searchByEmpEmail.profile_id) {
+            await supabase
+              .from('teachers')
+              .update({ profile_id: profile.id })
+              .eq('id', searchByEmpEmail.id);
           }
+        }
+
+        // 雙重驗證：教師在職狀態 (teachers.employment_status)
+        const isTeacherInactive =
+          resolvedDbTeacher.employment_status === 'INACTIVE' ||
+          resolvedDbTeacher.employment_status === 'RESIGNED' ||
+          resolvedDbTeacher.is_active === false;
+
+        if (isTeacherInactive) {
+          await supabase.auth.signOut();
+          setErrorMessage('此帳號目前已停用，請聯繫教務管理員開通。');
+          setLoading(false);
+          return;
+        }
+
+        const teacher = (await fetchTeacherWithClassesByProfileId(profile.id)) || mapDbToTeacher(resolvedDbTeacher);
+        const userProfile: UserProfile = {
+          id: profile.id,
+          role: 'TEACHER',
+          fullName: teacher.name || profile.full_name || '教師',
+          email: profile.email || authData.user.email || '',
+          avatarUrl: profile.avatar_url,
+          isActive: profile.is_active,
+        };
+
+        if (onTeacherLoginSuccess) {
+          onTeacherLoginSuccess(teacher, userProfile);
         } else {
-          const teacher = (await fetchTeacherWithClassesByProfileId(profile.id)) || mapDbToTeacher(teacherRow);
-          const userProfile: UserProfile = {
-            id: profile.id,
-            role: 'TEACHER',
-            fullName: teacher.name || profile.full_name || '教師',
-            email: profile.email || authData.user.email || '',
-            avatarUrl: profile.avatar_url,
-            isActive: profile.is_active,
-          };
-
-          if (onTeacherLoginSuccess) {
-            onTeacherLoginSuccess(teacher, userProfile);
-          } else {
-            onLoginSuccess(userProfile);
-          }
+          onLoginSuccess(userProfile);
         }
       }
     } catch (err: any) {
