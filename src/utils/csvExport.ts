@@ -238,3 +238,64 @@ export function exportGradesToCsv(students: Student[], filename = '期末成績�
   const timestamp = new Date().toISOString().slice(0, 10);
   exportToCsv(`${filename}_${timestamp}`, headers, rows);
 }
+
+/**
+ * Export a single student's cross-class detailed attendance records to CSV
+ */
+export function exportIndividualStudentAttendanceToCsv(
+  student: Student,
+  dailyRecords: Array<{
+    date: string;
+    courseName: string;
+    className: string;
+    periodsCount: number;
+    period1: string;
+    period2: string;
+    period3?: string;
+    presentHours: number;
+    leaveHours: number;
+    absentHours: number;
+    statusSummary: string;
+    remarks?: string;
+  }>
+) {
+  const headers = [
+    '學號',
+    '學生姓名',
+    '目前班級',
+    '上課日期',
+    '當時上課班級',
+    '課程名稱',
+    '第1節',
+    '第2節',
+    '第3節',
+    '實到時數',
+    '請假時數',
+    '曠課時數',
+    '出席狀態摘要',
+    '請假/備註說明',
+  ];
+
+  const mapStatusText = (s?: string) =>
+    s === 'present' ? '出席' : s === 'leave' ? '請假' : s === 'absent' ? '缺席' : '-';
+
+  const rows = dailyRecords.map((r) => [
+    student.studentNumber,
+    student.name,
+    student.className || '未分班',
+    r.date,
+    r.className,
+    r.courseName,
+    mapStatusText(r.period1),
+    mapStatusText(r.period2),
+    mapStatusText(r.period3),
+    r.presentHours,
+    r.leaveHours,
+    r.absentHours,
+    r.statusSummary,
+    r.remarks || '',
+  ]);
+
+  const timestamp = new Date().toISOString().slice(0, 10);
+  exportToCsv(`${student.studentNumber}_${student.name}_個人跨班出缺席明細總表_${timestamp}`, headers, rows);
+}

@@ -220,9 +220,13 @@ export function calculateStudentAttendanceHistory(
   }
 
   const safeCourses = Array.isArray(allCourses) ? allCourses : [];
-  const classCourses = safeCourses.filter(
-    (c) => c && c.className === student.className && c.status !== 'holiday' && c.status !== 'rescheduled_out'
-  );
+  // Find all course sessions where this student has an attendance record or was enrolled
+  const studentCourses = safeCourses.filter((c) => {
+    if (!c || c.status === 'holiday' || c.status === 'rescheduled_out') return false;
+    const hasRecord = Boolean(c.attendanceData && student.id && c.attendanceData[student.id]);
+    const isEnrolled = Boolean(c.studentIds && c.studentIds.includes(student.id));
+    return hasRecord || isEnrolled;
+  });
 
   const requiredHours = 165;
   let completedHours = 0;
@@ -231,9 +235,15 @@ export function calculateStudentAttendanceHistory(
   let absentHours = 0;
 
   const dailyRecords: any[] = [];
+  const processedSessionKeys = new Set<string>();
 
-  classCourses.forEach((c) => {
+  studentCourses.forEach((c) => {
     if (c?.attendanceData && student?.id && c.attendanceData[student.id]) {
+      // Prevent double counting if the same session/date was referenced multiple times
+      const sessionKey = `${c.id || c.date}_${c.className}`;
+      if (processedSessionKeys.has(sessionKey)) return;
+      processedSessionKeys.add(sessionKey);
+
       const rec = c.attendanceData[student.id];
 
       const hours = getStudentIndividualHours(rec, c.periodsCount);
@@ -252,7 +262,7 @@ export function calculateStudentAttendanceHistory(
       dailyRecords.push({
         date: c.date,
         courseName: c.courseName,
-        className: c.className,
+        className: c.className, // Clearly identifies whether this record was in 101_A or 101_B!
         periodsCount: c.periodsCount,
         period1: rec.period1,
         period2: rec.period2,

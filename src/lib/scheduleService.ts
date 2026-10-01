@@ -806,10 +806,21 @@ export async function fetchCourseSessionsFromSupabase(): Promise<{ data: any[]; 
 
       let calculatedStatus = s.status === 'SUSPENDED' ? 'holiday' : 'unmarked';
       let attendanceData = undefined;
+      let sessionStudentIds = [...stus];
 
       if (savedAtt) {
         attendanceData = savedAtt.attendanceData;
         calculatedStatus = savedAtt.isSubmitted ? 'completed' : 'in_progress';
+        const recordedIds = Object.keys(attendanceData || {});
+
+        if (savedAtt.isSubmitted && recordedIds.length > 0) {
+          // Completed historical session: strictly preserve the students recorded in this session.
+          // This ensures transferred students remain in their former class history, and don't retroactively appear in new class past history.
+          sessionStudentIds = recordedIds;
+        } else if (recordedIds.length > 0) {
+          // In progress: union of current class students and any already-recorded students
+          sessionStudentIds = Array.from(new Set([...stus, ...recordedIds]));
+        }
       } else if (isPast7Days && s.status !== 'SUSPENDED') {
         calculatedStatus = 'locked';
       }
@@ -831,8 +842,8 @@ export async function fetchCourseSessionsFromSupabase(): Promise<{ data: any[]; 
         timeSlot: `${st} - ${et}`,
         periodsCount: pCount,
         periodTimes: pTimes,
-        studentIds: stus,
-        studentCount: stus.length,
+        studentIds: sessionStudentIds,
+        studentCount: sessionStudentIds.length,
         status: calculatedStatus,
         attendanceData: attendanceData,
         isLocked: isLocked,
