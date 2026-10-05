@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   ClipboardList, 
   Search, 
@@ -34,31 +34,68 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
   const [teacherFilter, setTeacherFilter] = useState<string>('current');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // Extract unique class names
-  const availableClasses = Array.from(new Set(courses.map((c) => c.className)));
+  // Strictly scope courses to currentTeacher (Fail-Closed) if logged in as teacher
+  const scopedCourses = useMemo(() => {
+    if (currentTeacher) {
+      const assignedSet = new Set(currentTeacher.assignedClasses || []);
+      return courses.filter((c) => {
+        const matchesTeacherId = Boolean(c.teacherId && c.teacherId === currentTeacher.id);
+        const matchesTeacherName = Boolean(c.teacherName && c.teacherName === currentTeacher.name);
+        const matchesClassName = Boolean(
+          (c.className && assignedSet.has(c.className)) ||
+          (c.courseName && assignedSet.has(c.courseName))
+        );
+        return matchesTeacherId || matchesTeacherName || matchesClassName;
+      });
+    }
+    return courses;
+  }, [courses, currentTeacher]);
 
-  const completedOrPastCourses = courses.filter((c) => {
-    // Teacher filtering
-    if (teacherFilter === 'current' && currentTeacher && c.teacherId) {
-      if (c.teacherId !== currentTeacher.id) return false;
-    }
-    if (selectedClassFilter !== 'all' && c.className !== selectedClassFilter) return false;
-    if (selectedStatusFilter !== 'all') {
-      if (selectedStatusFilter === 'completed' && c.status !== 'completed') return false;
-      if (selectedStatusFilter === 'unmarked' && c.status !== 'unmarked') return false;
-      if (selectedStatusFilter === 'rescheduled' && !c.rescheduleInfo) return false;
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      return (
-        c.courseName.toLowerCase().includes(q) ||
-        c.className.toLowerCase().includes(q) ||
-        c.date.includes(q) ||
-        c.textbook.toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
+  // Extract unique, valid, non-empty class names
+  const availableClasses = useMemo(() => {
+    return Array.from(
+      new Set(
+        scopedCourses
+          .map((c) => c.className)
+          .filter((name): name is string => Boolean(name && name.trim().length > 0))
+      )
+    ).sort();
+  }, [scopedCourses]);
+
+  const completedOrPastCourses = useMemo(() => {
+    return scopedCourses.filter((c) => {
+      // Fail closed teacher filter
+      if (teacherFilter === 'current' && currentTeacher) {
+        const assignedSet = new Set(currentTeacher.assignedClasses || []);
+        const matchesTeacherId = Boolean(c.teacherId && c.teacherId === currentTeacher.id);
+        const matchesTeacherName = Boolean(c.teacherName && c.teacherName === currentTeacher.name);
+        const matchesClassName = Boolean(
+          (c.className && assignedSet.has(c.className)) ||
+          (c.courseName && assignedSet.has(c.courseName))
+        );
+        if (!matchesTeacherId && !matchesTeacherName && !matchesClassName) {
+          return false;
+        }
+      }
+      if (selectedClassFilter !== 'all' && c.className !== selectedClassFilter) return false;
+      if (selectedStatusFilter !== 'all') {
+        if (selectedStatusFilter === 'completed' && c.status !== 'completed') return false;
+        if (selectedStatusFilter === 'unmarked' && c.status !== 'unmarked') return false;
+        if (selectedStatusFilter === 'rescheduled' && !c.rescheduleInfo) return false;
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        return (
+          c.courseName.toLowerCase().includes(q) ||
+          c.className.toLowerCase().includes(q) ||
+          c.date.includes(q) ||
+          c.textbook.toLowerCase().includes(q) ||
+          c.classroom.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [scopedCourses, teacherFilter, currentTeacher, selectedClassFilter, selectedStatusFilter, searchQuery]);
 
   const handleExportCSV = () => {
     if (completedOrPastCourses.length === 0) {

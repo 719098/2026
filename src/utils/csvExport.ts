@@ -201,11 +201,15 @@ export function exportGradesToCsv(students: Student[], filename = '期末成績�
   const rows = students.map((s) => {
     const scores = getStudentScores(s);
     const attendanceRate = s.overallAttendanceRate ?? 100;
+    const totalHours = (s.totalPresentHours || 0) + (s.totalLeaveHours || 0) + (s.totalAbsenceHours || 0);
+    const attendanceGradeScore = totalHours > 0
+      ? Math.round(((s.totalPresentHours || 0) + (s.totalLeaveHours || 0) * 0.5) / totalHours * 1000) / 10
+      : (s.overallAttendanceRate ?? 100);
     const finalScore = calculateFinalGrade(
       scores.listeningSpeaking,
       scores.readingWriting,
       scores.dailyPerformance,
-      attendanceRate
+      attendanceGradeScore
     );
 
     let gradeLetter = 'F';
@@ -252,11 +256,13 @@ export function exportIndividualStudentAttendanceToCsv(
     period1: string;
     period2: string;
     period3?: string;
+    period4?: string;
     presentHours: number;
     leaveHours: number;
     absentHours: number;
     statusSummary: string;
     remarks?: string;
+    isDefaultPresent?: boolean;
   }>
 ) {
   const headers = [
@@ -269,6 +275,7 @@ export function exportIndividualStudentAttendanceToCsv(
     '第1節',
     '第2節',
     '第3節',
+    '第4節',
     '實到時數',
     '請假時數',
     '曠課時數',
@@ -288,13 +295,42 @@ export function exportIndividualStudentAttendanceToCsv(
     r.courseName,
     mapStatusText(r.period1),
     mapStatusText(r.period2),
-    mapStatusText(r.period3),
+    r.periodsCount >= 3 ? mapStatusText(r.period3) : '-',
+    r.periodsCount >= 4 ? mapStatusText(r.period4) : '-',
     r.presentHours,
     r.leaveHours,
     r.absentHours,
     r.statusSummary,
-    r.remarks || '',
+    r.isDefaultPresent && !r.remarks ? '系統預設到課（未點名）' : (r.remarks || ''),
   ]);
+
+  // Append summary row
+  if (dailyRecords.length > 0) {
+    const totalPresent = dailyRecords.reduce((acc, r) => acc + r.presentHours, 0);
+    const totalLeave = dailyRecords.reduce((acc, r) => acc + r.leaveHours, 0);
+    const totalAbsent = dailyRecords.reduce((acc, r) => acc + r.absentHours, 0);
+    const totalCompleted = totalPresent + totalLeave + totalAbsent;
+    const actualRate = totalCompleted > 0 ? (Math.round((totalPresent / totalCompleted) * 1000) / 10).toFixed(1) + '%' : '100%';
+    const attendanceScore = totalCompleted > 0 ? (Math.round(((totalPresent + totalLeave * 0.5) / totalCompleted) * 1000) / 10).toFixed(1) + '分' : '100分';
+
+    rows.push([
+      '【全季總計】',
+      student.name,
+      student.className || '',
+      `共 ${dailyRecords.length} 堂課`,
+      '-',
+      '-',
+      '-',
+      '-',
+      '-',
+      '-',
+      totalPresent,
+      totalLeave,
+      totalAbsent,
+      `實際出席率: ${actualRate}`,
+      `出席成績(請假折半): ${attendanceScore}`,
+    ]);
+  }
 
   const timestamp = new Date().toISOString().slice(0, 10);
   exportToCsv(`${student.studentNumber}_${student.name}_個人跨班出缺席明細總表_${timestamp}`, headers, rows);

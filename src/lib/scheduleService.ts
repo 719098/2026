@@ -4,9 +4,16 @@ import {
   ClassScheduleRule, 
   ClassSessionEntity, 
   ClassSessionStatus, 
-  ScheduleProgress 
+  ScheduleProgress,
+  ClassEntity,
+  Student,
+  TransferClassRecord,
+  CourseSession
 } from '../types';
 import { getTodayDateStr, getDaysDifference } from '../utils/quarterScheduler';
+import { isStudentInClassOnDate, isSessionEnded } from '../utils/studentTimelineUtils';
+import { fetchClassesFromSupabase } from './classService';
+import { fetchTeachersFromSupabase } from './teacherService';
 
 /**
  * ============================================================================
@@ -737,50 +744,87 @@ import { fetchAttendanceRecordsFromSupabase } from './attendanceService';
 
 /**
  * Hydrates CourseSession[] directly from Supabase public.class_sessions, public.classes, public.teachers, and public.class_students.
+ * Strictly uses date-based roster (isStudentInClassOnDate) and genuine classes without placeholder names.
  */
-export async function fetchCourseSessionsFromSupabase(): Promise<{ data: any[]; error: any }> {
+export async function fetchCourseSessionsFromSupabase(
+  availableClasses?: ClassEntity[],
+  students?: Student[],
+  transferRecords?: TransferClassRecord[]
+): Promise<{ data: CourseSession[]; error: any }> {
   if (!supabase) return { data: [], error: new Error('Supabase client not configured') };
 
   try {
-    const { data: rawSessions, error: sessErr } = await supabase
+    let rawSessions: any[] = [];
+    const { data: directSessions, error: sessErr } = await supabase
       .from('class_sessions')
       .select('*')
       .order('session_date', { ascending: true })
       .order('start_time', { ascending: true });
 
-    if (sessErr) {
+    if (!sessErr && directSessions && directSessions.length > 0) {
+      rawSessions = directSessions;
+    } else {
+      try {
+        const endpoint = typeof window !== 'undefined' ? '/api/class-sessions' : 'http://localhost:3000/api/class-sessions';
+        const res = await fetch(endpoint);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+            rawSessions = json.data;
+          }
+        }
+      } catch (e) {
+        console.warn('[ScheduleService] Fallback to /api/class-sessions failed:', e);
+      }
+    }
+
+    if (rawSessions.length === 0 && sessErr) {
       console.error('[ScheduleService] Error fetching class_sessions:', sessErr);
       return { data: [], error: sessErr };
     }
 
-    const { data: rawClasses } = await supabase.from('classes').select('*');
-    const { data: rawTeachers } = await supabase.from('teachers').select('*');
-    const { data: rawClassStudents } = await supabase.from('class_students').select('*');
+    // Resolve classes: ensure all class_id values in rawSessions are mapped to genuine classes
+    let classesToUse: any[] = [];
+    if (availableClasses && availableClasses.length > 0) {
+      classesToUse = [...availableClasses];
+    }
+
+    const sessionClassIds = new Set(rawSessions.map((s: any) => String(s.class_id)).filter(Boolean));
+    const knownClassIds = new Set(classesToUse.map((c: any) => String(c.id)));
+    const hasMissingClasses = Array.from(sessionClassIds).some((cid) => !knownClassIds.has(cid));
+
+    if (classesToUse.length === 0 || hasMissingClasses) {
+      const { data: dbClasses } = await fetchClassesFromSupabase();
+      if (dbClasses && dbClasses.length > 0) {
+        const mergedMap = new Map<string, any>();
+        classesToUse.forEach((c) => mergedMap.set(String(c.id), c));
+        dbClasses.forEach((c) => mergedMap.set(String(c.id), c));
+        classesToUse = Array.from(mergedMap.values());
+      }
+    }
+
+    // Fetch teachers with fallback
+    const { data: dbTeachers } = await fetchTeachersFromSupabase();
+    const teacherMap = new Map<string, any>();
+    (dbTeachers || []).forEach((t: any) => {
+      if (t && t.id) teacherMap.set(String(t.id), t);
+    });
 
     // Fetch saved attendance records
     const attendanceMap = await fetchAttendanceRecordsFromSupabase();
 
     const classMap = new Map<string, any>();
-    (rawClasses || []).forEach((c: any) => classMap.set(String(c.id), c));
-
-    const teacherMap = new Map<string, any>();
-    (rawTeachers || []).forEach((t: any) => teacherMap.set(String(t.id), t));
-
-    const classStudentsMap = new Map<string, string[]>();
-    (rawClassStudents || []).forEach((cs: any) => {
-      const cId = String(cs.class_id || '');
-      const sId = String(cs.student_id || '');
-      if (cId && sId) {
-        const existing = classStudentsMap.get(cId) || [];
-        if (!existing.includes(sId)) existing.push(sId);
-        classStudentsMap.set(cId, existing);
+    classesToUse.forEach((c: any) => {
+      if (c && c.id) {
+        classMap.set(String(c.id), c);
       }
     });
 
-    const hydratedSessions = (rawSessions || []).map((s: any) => {
-      const cls = classMap.get(String(s.class_id)) || {};
-      const tch = teacherMap.get(String(cls.teacher_id)) || {};
-      const stus = classStudentsMap.get(String(s.class_id)) || [];
+    const hydratedSessions: CourseSession[] = rawSessions.map((s: any) => {
+      const cls = classMap.get(String(s.class_id));
+      const teacherId = cls ? String(cls.teacher_id || cls.teacherId || '') : '';
+      const tch = teacherId ? teacherMap.get(teacherId) : undefined;
+      const teacherName = tch?.name || tch?.emp_name || tch?.tea_name || cls?.teacher_name || cls?.teacherName || (teacherId ? '專任教師' : '未指定教師');
 
       const st = s.start_time ? String(s.start_time).slice(0, 5) : '09:00';
       const et = s.end_time ? String(s.end_time).slice(0, 5) : '12:00';
@@ -802,40 +846,49 @@ export async function fetchCourseSessionsFromSupabase(): Promise<{ data: any[]; 
       const todayDateStr = getTodayDateStr();
       const daysSince = getDaysDifference(todayDateStr, s.session_date);
       const isPast7Days = s.session_date < todayDateStr && daysSince > 7;
-      const isLocked = isPast7Days || s.status === 'SUSPENDED';
+      const sessionEnded = isSessionEnded(s.session_date, et);
+      const isLocked = (isPast7Days && sessionEnded) || s.status === 'SUSPENDED';
 
-      let calculatedStatus = s.status === 'SUSPENDED' ? 'holiday' : 'unmarked';
+      let calculatedStatus: any = s.status === 'SUSPENDED' ? 'holiday' : 'unmarked';
       let attendanceData = undefined;
-      let sessionStudentIds = [...stus];
 
-      if (savedAtt) {
+      // 1. Determine roster strictly based on historical facts and verified enrollment timeline on session_date
+      let sessionStudentIds: string[] = [];
+
+      if (savedAtt && savedAtt.attendanceData) {
         attendanceData = savedAtt.attendanceData;
         calculatedStatus = savedAtt.isSubmitted ? 'completed' : 'in_progress';
         const recordedIds = Object.keys(attendanceData || {});
-
-        if (savedAtt.isSubmitted && recordedIds.length > 0) {
-          // Completed historical session: strictly preserve the students recorded in this session.
-          // This ensures transferred students remain in their former class history, and don't retroactively appear in new class past history.
-          sessionStudentIds = recordedIds;
-        } else if (recordedIds.length > 0) {
-          // In progress: union of current class students and any already-recorded students
-          sessionStudentIds = Array.from(new Set([...stus, ...recordedIds]));
-        }
-      } else if (isPast7Days && s.status !== 'SUSPENDED') {
+        // Formal attendance records taken are historical facts
+        sessionStudentIds = recordedIds;
+      } else if (isPast7Days && sessionEnded && s.status !== 'SUSPENDED') {
         calculatedStatus = 'locked';
       }
+
+      // If no submitted attendance records:
+      // STRICT RULE: Only students who belonged to s.class_id on s.session_date per verified timeline
+      // Do NOT backfill current class roster into past unrecorded sessions!
+      if (sessionStudentIds.length === 0 && students && students.length > 0) {
+        sessionStudentIds = students
+          .filter((st) => isStudentInClassOnDate(st, String(s.class_id), s.session_date, transferRecords, cls?.name))
+          .map((st) => String(st.id));
+      }
+
+      // Real course and class names from database
+      const realCourseName = cls ? (cls.name || cls.classCode || '') : '';
+      const realClassName = cls ? (cls.name || cls.classCode || '') : '';
 
       return {
         id: String(s.id),
         classId: String(s.class_id),
-        courseCode: cls.class_code || 'LV1',
-        courseName: cls.name || '華語課程',
-        className: cls.name || '華語班級',
+        courseCode: cls ? (cls.class_code || cls.classCode || 'LV1') : 'LV1',
+        courseName: realCourseName,
+        className: realClassName,
         level: '初級',
         textbook: '《當代中文課程》',
-        classroom: s.classroom || cls.classroom || '華語中心 308 教室',
-        teacherId: cls.teacher_id ? String(cls.teacher_id) : '',
-        teacherName: tch.emp_name || tch.tea_name || cls.teacher_name || '專任教師',
+        classroom: s.classroom || cls?.classroom || '華語中心 308 教室',
+        teacherId: teacherId,
+        teacherName: teacherName,
         date: s.session_date,
         startTime: st,
         endTime: et,
@@ -907,13 +960,11 @@ export async function generateQuarterSessions(
       .eq('id', classId)
       .maybeSingle();
 
-    const classData = rawClassData || {
-      id: classId,
-      name: '華語班級',
-      target_hours: 108,
-      classroom: '華語中心 308 教室',
-    };
+    if (!rawClassData) {
+      return { data: null, error: new Error(`指定之班級不存在 (ID: ${classId})，無法自動產生課表`) };
+    }
 
+    const classData = rawClassData;
     const targetHours = Number(classData.target_hours ?? 0);
     const defaultClassroom = classData.classroom || '華語中心 301 教室';
 

@@ -16,6 +16,8 @@ import { GradeManagementView } from './components/GradeManagementView';
 import { StudentDetailModal } from './components/StudentDetailModal';
 import { ToastNotification, ToastItem } from './components/ToastNotification';
 import { AdminLoginView } from './components/AdminLoginView';
+import { calculateStudentAttendanceHistory } from './utils/attendanceUtils';
+import { getSessionRoster } from './utils/studentTimelineUtils';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { 
   fetchStudentsFromSupabase, 
@@ -448,25 +450,45 @@ export default function App() {
         setStudentsError(null);
       }
 
-      // 5. Fetch class_sessions hydrated into CourseSession[] for Attendance and Schedule
-      const { data: dbSessions, error: sessErr } = await fetchCourseSessionsFromSupabase();
+      // 5. Fetch transfer history from Supabase public.student_enrollment_history
+      const fetchedTransfers = await fetchTransferRecordsFromSupabase(data || [], currentClasses);
+      setAdminTransferRecords(fetchedTransfers);
+
+      // 6. Fetch class_sessions hydrated into CourseSession[] with genuine classes and verified date rosters
+      const { data: dbSessions, error: sessErr } = await fetchCourseSessionsFromSupabase(
+        currentClasses,
+        data || [],
+        fetchedTransfers
+      );
       if (sessErr) {
         console.error('Failed to load class_sessions from Supabase:', sessErr);
       } else if (dbSessions && dbSessions.length > 0) {
         setCourses(dbSessions);
       }
 
-      // 6. Fetch student grades from Supabase public.student_grades
+      // 7. Fetch student grades from Supabase public.student_grades
       const fetchedGrades = await fetchStudentGradesFromSupabase(data || [], currentClasses);
       setAllGrades(fetchedGrades);
 
-      // 7. Fetch leave requests from Supabase public.leave_requests
+      // 8. Fetch leave requests from Supabase public.leave_requests
       const fetchedLeaves = await fetchLeavesFromSupabase(data || [], currentClasses);
       setAdminLeaves(fetchedLeaves);
 
-      // 8. Fetch transfer history from Supabase public.student_enrollment_history
-      const fetchedTransfers = await fetchTransferRecordsFromSupabase(data || [], currentClasses);
-      setAdminTransferRecords(fetchedTransfers);
+      // 9. Sync actual attendance rates across all students using comprehensive history calculation
+      if (data && data.length > 0) {
+        const activeSessions = (dbSessions && dbSessions.length > 0) ? dbSessions : courses;
+        const syncedStudents = data.map((s) => {
+          const history = calculateStudentAttendanceHistory(s, activeSessions || [], fetchedTransfers || []);
+          return {
+            ...s,
+            overallAttendanceRate: history.attendanceRate,
+            totalPresentHours: history.presentHours,
+            totalLeaveHours: history.leaveHours,
+            totalAbsenceHours: history.absentHours,
+          };
+        });
+        setDbStudents(syncedStudents);
+      }
     } catch (err: any) {
       console.error('Error in loadSupabaseStudents:', err);
       setStudentsError(`載入資料時發生未預期錯誤: ${err.message || String(err)}`);
@@ -1021,10 +1043,8 @@ export default function App() {
 
   const activeCourseStudents = useMemo(() => {
     if (!activeAttendanceCourse) return [];
-    return activeAttendanceCourse.studentIds
-      .map((id) => dbStudents.find((s) => s.id === id || s.studentNumber === id))
-      .filter(Boolean) as Student[];
-  }, [activeAttendanceCourse, dbStudents]);
+    return getSessionRoster(activeAttendanceCourse, dbStudents, adminTransferRecords);
+  }, [activeAttendanceCourse, dbStudents, adminTransferRecords]);
 
   const currentTeacherStudents = useMemo(() => {
     if (!currentTeacher) return [];
@@ -1038,14 +1058,36 @@ export default function App() {
     });
   }, [currentTeacher, dbStudents]);
 
+  // Fail-Closed ownership validator: strictly checks if a session belongs to current teacher
+  const isCourseOwnedByCurrentTeacher = (course: CourseSession | null): boolean => {
+    if (!course) return false;
+    if (currentRole !== 'TEACHER' || !currentTeacher) return true; // Admins are unrestricted
+    const assignedSet = new Set(currentTeacher.assignedClasses || []);
+    const matchesTeacherId = Boolean(course.teacherId && course.teacherId === currentTeacher.id);
+    const matchesTeacherName = Boolean(course.teacherName && course.teacherName === currentTeacher.name);
+    const matchesClassName = Boolean(
+      (course.className && assignedSet.has(course.className)) ||
+      (course.courseName && assignedSet.has(course.courseName))
+    );
+    return matchesTeacherId || matchesTeacherName || matchesClassName;
+  };
+
   // Handler: Start Attendance
   const handleStartAttendance = (course: CourseSession) => {
+    if (!isCourseOwnedByCurrentTeacher(course)) {
+      showToast('⚠️ 無權限存取非本人授課之課堂點名！', 'warning');
+      return;
+    }
     setIsReadOnlyAttendance(false);
     setActiveAttendanceCourse(course);
   };
 
   // Handler: View Attendance
   const handleViewRecord = (course: CourseSession) => {
+    if (!isCourseOwnedByCurrentTeacher(course)) {
+      showToast('⚠️ 無權限存取非本人授課之課堂點名！', 'warning');
+      return;
+    }
     setIsReadOnlyAttendance(false);
     setActiveAttendanceCourse(course);
   };
@@ -1059,6 +1101,11 @@ export default function App() {
     const targetCourse = courses.find((c) => c.id === courseId) || activeAttendanceCourse;
     if (!targetCourse) {
       showToast('❌ 找不到對應的課程資料', 'error');
+      return;
+    }
+
+    if (!isCourseOwnedByCurrentTeacher(targetCourse)) {
+      showToast('⚠️ 無權限修改非本人授課之課堂點名！', 'warning');
       return;
     }
 
@@ -1183,6 +1230,7 @@ export default function App() {
           allCourses={courses}
           grade={allGrades[selectedStudentForDetail.id]}
           teacherName={currentRole === 'ADMIN' ? '教務行政組' : `${currentTeacher?.name || ''}老師`}
+          transferRecords={adminTransferRecords}
           onClose={() => setSelectedStudentForDetail(null)}
         />
       )}
@@ -1385,7 +1433,7 @@ export default function App() {
           ) : (
             /* ================= TEACHER VIEWS ================= */
             <div>
-              {activeAttendanceCourse ? (
+              {activeAttendanceCourse && isCourseOwnedByCurrentTeacher(activeAttendanceCourse) ? (
                 /* Attendance Sheet Component (2-Hour vs 3-Hour Dynamic) */
                 <AttendanceSheet
                   course={activeAttendanceCourse}
@@ -1423,6 +1471,7 @@ export default function App() {
                   currentClassName={gradeSelectedClass}
                   onSelectClass={(cls) => setGradeSelectedClass(cls)}
                   availableClasses={currentTeacher?.assignedClasses || []}
+                  transferRecords={adminTransferRecords}
                 />
               ) : activeTab === 'classes' ? (
                 /* 3. Individual Student Attendance Stats & Roster */
@@ -1433,6 +1482,7 @@ export default function App() {
                   onSelectStudentForDetail={(student) => setSelectedStudentForDetail(student)}
                   classes={adminClasses}
                   allStudentsList={dbStudents}
+                  transferRecords={adminTransferRecords}
                 />
               ) : activeTab === 'schedule' ? (
                 /* 4. Full Quarter Schedule & Reschedule Tracker */
@@ -1446,15 +1496,19 @@ export default function App() {
                     setActiveTab('today');
                   }}
                   onStartAttendance={(c) => {
-                    setActiveAttendanceCourse(c);
+                    handleStartAttendance(c);
                   }}
                   onShowToast={showToast}
                 />
               ) : activeTab === 'history' ? (
                 /* 5. Attendance History */
                 <AttendanceHistoryView
-                  courses={courses}
+                  courses={currentRole === 'TEACHER' ? teacherCourses : courses}
                   onOpenAttendance={(c) => {
+                    if (!isCourseOwnedByCurrentTeacher(c)) {
+                      showToast('⚠️ 無權限存取非本人授課之課堂點名！', 'warning');
+                      return;
+                    }
                     setSelectedDate(c.date);
                     setActiveAttendanceCourse(c);
                   }}

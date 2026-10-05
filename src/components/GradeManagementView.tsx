@@ -14,7 +14,7 @@ import {
   BarChart3,
   UserX
 } from 'lucide-react';
-import { Student, StudentGrade, CourseSession } from '../types';
+import { Student, StudentGrade, CourseSession, TransferClassRecord } from '../types';
 import { GRADE_WEIGHTS, calculateTotalGrade, getLetterGrade, calculateStudentAttendanceScore } from '../utils/gradeUtils';
 import { StudentAvatar } from './StudentAvatar';
 
@@ -28,6 +28,7 @@ interface GradeManagementViewProps {
   currentClassName: string;
   onSelectClass: (className: string) => void;
   availableClasses: string[];
+  transferRecords?: TransferClassRecord[];
 }
 
 export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
@@ -40,6 +41,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
   currentClassName,
   onSelectClass,
   availableClasses,
+  transferRecords,
 }) => {
   const [localGrades, setLocalGrades] = useState<Record<string, StudentGrade>>(allGrades);
   const [searchQuery, setSearchQuery] = useState('');
@@ -80,14 +82,20 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
   const getStudentAttendanceData = useCallback(
     (studentId: string, studentClassName?: string) => {
       const student = students.find((s) => s.id === studentId);
-      const attResult = calculateStudentAttendanceScore(studentId, allCourses, studentClassName || currentClassName);
+      const attResult = calculateStudentAttendanceScore(
+        studentId,
+        allCourses,
+        studentClassName || currentClassName,
+        student,
+        transferRecords
+      );
       const score = attResult.hasRecords ? attResult.attendanceScore : (student?.overallAttendanceRate ?? 0);
       return {
         attResult,
         attendanceScore: score,
       };
     },
-    [students, allCourses, currentClassName]
+    [students, allCourses, currentClassName, transferRecords]
   );
 
   // Handler for numerical input changes

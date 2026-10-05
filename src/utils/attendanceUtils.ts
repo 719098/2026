@@ -1,4 +1,5 @@
-import { Student, StudentPeriodAttendance, LeaveRecord, CourseSession, AttendanceStatus } from '../types';
+import { Student, StudentPeriodAttendance, LeaveRecord, CourseSession, AttendanceStatus, TransferClassRecord } from '../types';
+import { getTodayDateStr } from './quarterScheduler';
 
 export interface AttendanceCalculationResult {
   totalStudents: number;
@@ -69,10 +70,10 @@ export function calculateAttendanceStats(
   });
 
   const totalHours = totalStudents * periodsCount;
-  // Rule: Present = 100% (1.0), Leave = 50% (0.5), Absent = 0% (0.0)
-  const earnedHours = totalPresentHours + totalLeaveHours * 0.5;
+  // Actual attendance rate = (totalPresentHours / totalHours) * 100%
+  // Present = 100%, Leave = 0% (student was not in class), Absent = 0%
   const attendanceRate = totalHours > 0 && hasAttendanceData
-    ? Math.round((earnedHours / totalHours) * 1000) / 10
+    ? Math.round((totalPresentHours / totalHours) * 1000) / 10
     : 100;
 
   return {
@@ -125,7 +126,7 @@ export function applyApprovedLeaves(
 
   applicableLeaves.forEach((leave) => {
     const student = (students || []).find(
-      (s) => s && (s.id === leave.studentId || s.name === leave.studentName)
+      (s) => s && String(s.id) === String(leave.studentId)
     );
     if (student && student.id) {
       const existing = updated[student.id] || {
@@ -180,10 +181,26 @@ export function getStudentIndividualHours(
   return { present, leave, absent };
 }
 
+export type { StudentClassPeriod } from './studentTimelineUtils';
+export {
+  getStudentClassTimeline,
+  isStudentInSessionClass,
+  isSessionEnded,
+  isStudentInClassOnDate,
+  getSessionRoster,
+} from './studentTimelineUtils';
+import type { StudentClassPeriod } from './studentTimelineUtils';
+import {
+  getStudentClassTimeline,
+  isStudentInSessionClass,
+  isSessionEnded,
+} from './studentTimelineUtils';
+
 // Calculate individual student history across all completed courses in the quarter
 export function calculateStudentAttendanceHistory(
   student?: Student | null,
-  allCourses: CourseSession[] = []
+  allCourses: CourseSession[] = [],
+  transferRecords?: TransferClassRecord[]
 ): {
   requiredHours: number;
   completedHours: number;
@@ -191,6 +208,7 @@ export function calculateStudentAttendanceHistory(
   leaveHours: number;
   absentHours: number;
   attendanceRate: number;
+  attendanceScore: number;
   dailyRecords: Array<{
     date: string;
     courseName: string;
@@ -199,12 +217,14 @@ export function calculateStudentAttendanceHistory(
     period1: AttendanceStatus;
     period2: AttendanceStatus;
     period3?: AttendanceStatus;
+    period4?: AttendanceStatus;
     totalHours: number;
     presentHours: number;
     leaveHours: number;
     absentHours: number;
     statusSummary: string;
     remarks?: string;
+    isDefaultPresent?: boolean;
   }>;
 } {
   if (!student || !student.id) {
@@ -215,45 +235,93 @@ export function calculateStudentAttendanceHistory(
       leaveHours: 0,
       absentHours: 0,
       attendanceRate: 100,
+      attendanceScore: 100,
       dailyRecords: [],
     };
   }
 
   const safeCourses = Array.isArray(allCourses) ? allCourses : [];
-  // Find all course sessions where this student has an attendance record or was enrolled
-  const studentCourses = safeCourses.filter((c) => {
-    if (!c || c.status === 'holiday' || c.status === 'rescheduled_out') return false;
-    const hasRecord = Boolean(c.attendanceData && student.id && c.attendanceData[student.id]);
-    const isEnrolled = Boolean(c.studentIds && c.studentIds.includes(student.id));
-    return hasRecord || isEnrolled;
-  });
+  const todayDateStr = getTodayDateStr();
+  const timeline = getStudentClassTimeline(student, transferRecords);
 
-  const requiredHours = 165;
+  const requiredHours = student.totalRequiredHours || 165;
   let completedHours = 0;
   let presentHours = 0;
   let leaveHours = 0;
   let absentHours = 0;
 
-  const dailyRecords: any[] = [];
+  const dailyRecords: Array<{
+    date: string;
+    courseName: string;
+    className: string;
+    periodsCount: number;
+    period1: AttendanceStatus;
+    period2: AttendanceStatus;
+    period3?: AttendanceStatus;
+    period4?: AttendanceStatus;
+    totalHours: number;
+    presentHours: number;
+    leaveHours: number;
+    absentHours: number;
+    statusSummary: string;
+    remarks?: string;
+    isDefaultPresent?: boolean;
+  }> = [];
+
   const processedSessionKeys = new Set<string>();
 
-  studentCourses.forEach((c) => {
-    if (c?.attendanceData && student?.id && c.attendanceData[student.id]) {
-      // Prevent double counting if the same session/date was referenced multiple times
-      const sessionKey = `${c.id || c.date}_${c.className}`;
-      if (processedSessionKeys.has(sessionKey)) return;
-      processedSessionKeys.add(sessionKey);
+  // Filter and process all sessions that belonged to this student
+  safeCourses.forEach((c) => {
+    if (!c || c.status === 'holiday' || c.status === 'rescheduled_out') return;
 
-      const rec = c.attendanceData[student.id];
+    // Rule: Strictly verify genuine class. Never process sessions with empty or fake placeholder class names
+    const invalidClassNames = ['華語班級', '班級', '未命名班級', '原班級', '新班級', '華語課程', '未設定班級', '華語密集班', '預設班級'];
+    const cleanClassName = (c.className || '').trim();
+    if (!cleanClassName || invalidClassNames.includes(cleanClassName)) {
+      return;
+    }
 
-      const hours = getStudentIndividualHours(rec, c.periodsCount);
-      completedHours += c.periodsCount;
+    // Check if student has explicit attendance record
+    const hasExplicitRecord = Boolean(c.attendanceData && student.id && c.attendanceData[student.id]);
+
+    // Check if session belonged to the student on c.date
+    const isSessionInStudentClass = isStudentInSessionClass(
+      c.date,
+      c.classId,
+      cleanClassName,
+      timeline
+    );
+
+    // Rule: Strictly check if session has already ended in real time
+    const sessionHasEnded = isSessionEnded(c.date, c.endTime);
+
+    // If no explicit record, only include if:
+    // 1) Session has actually ended in real time
+    // 2) Student was legitimately in this session's class on c.date per timeline
+    if (!hasExplicitRecord && (!sessionHasEnded || !isSessionInStudentClass)) {
+      return;
+    }
+
+    // Deduplicate by session key
+    const sessionKey = `${c.id || c.date}_${cleanClassName}_${c.timeSlot || ''}`;
+    if (processedSessionKeys.has(sessionKey)) return;
+    processedSessionKeys.add(sessionKey);
+
+    const periodsCount = c.periodsCount || 3;
+    const rec = c.attendanceData ? c.attendanceData[student.id] : undefined;
+
+    if (rec && (rec.period1 || rec.period2 || rec.period3 || rec.period4)) {
+      // 1. Teacher submitted / marked attendance for this student
+      const hours = getStudentIndividualHours(rec, periodsCount);
+      completedHours += periodsCount;
       presentHours += hours.present;
       leaveHours += hours.leave;
       absentHours += hours.absent;
 
-      let statusSummary = `${c.periodsCount}H 全勤出席`;
-      if (hours.absent > 0) {
+      let statusSummary = `${periodsCount}H 全勤出席`;
+      if (hours.absent > 0 && hours.leave > 0) {
+        statusSummary = `${hours.absent}H 缺席 / ${hours.leave}H 請假`;
+      } else if (hours.absent > 0) {
         statusSummary = `${hours.absent}H 曠課缺席`;
       } else if (hours.leave > 0) {
         statusSummary = `${hours.leave}H 請假`;
@@ -261,18 +329,45 @@ export function calculateStudentAttendanceHistory(
 
       dailyRecords.push({
         date: c.date,
-        courseName: c.courseName,
-        className: c.className, // Clearly identifies whether this record was in 101_A or 101_B!
-        periodsCount: c.periodsCount,
-        period1: rec.period1,
-        period2: rec.period2,
+        courseName: c.courseName || cleanClassName,
+        className: cleanClassName,
+        periodsCount,
+        period1: rec.period1 || 'present',
+        period2: rec.period2 || 'present',
         period3: rec.period3,
-        totalHours: c.periodsCount,
+        period4: rec.period4,
+        totalHours: periodsCount,
         presentHours: hours.present,
         leaveHours: hours.leave,
         absentHours: hours.absent,
         statusSummary,
         remarks: rec.remarks,
+        isDefaultPresent: false,
+      });
+    } else if (sessionHasEnded) {
+      // 2. Past session where teacher did not mark attendance:
+      // Official CLC System Rule: Default Present (預設學生有到)
+      completedHours += periodsCount;
+      presentHours += periodsCount; // 100% present
+      leaveHours += 0;
+      absentHours += 0;
+
+      dailyRecords.push({
+        date: c.date,
+        courseName: c.courseName || cleanClassName,
+        className: cleanClassName,
+        periodsCount,
+        period1: 'present',
+        period2: 'present',
+        period3: periodsCount >= 3 ? 'present' : undefined,
+        period4: periodsCount >= 4 ? 'present' : undefined,
+        totalHours: periodsCount,
+        presentHours: periodsCount,
+        leaveHours: 0,
+        absentHours: 0,
+        statusSummary: `${periodsCount}H 全勤出席`,
+        remarks: '系統預設到課（未點名）',
+        isDefaultPresent: true,
       });
     }
   });
@@ -280,12 +375,21 @@ export function calculateStudentAttendanceHistory(
   // Sort dailyRecords descending by date
   dailyRecords.sort((a, b) => b.date.localeCompare(a.date));
 
-  // Present = 100%, Leave = 50%, Absent = 0%
-  const earnedHours = presentHours + leaveHours * 0.5;
+  // Actual Attendance Rate Formula:
+  // 實際出席率 = 實際出席時數 (presentHours) ÷ 應到時數 (completedHours) × 100%
+  // present = 100%, default_present = 100%, leave = 0%, absent = 0%
   const attendanceRate =
     completedHours > 0
-      ? Math.round((earnedHours / completedHours) * 1000) / 10
-      : (student.overallAttendanceRate || 0);
+      ? Math.round((presentHours / completedHours) * 1000) / 10
+      : (student.overallAttendanceRate ?? 100);
+
+  // Attendance Score (出席成績評分, 滿分 100):
+  // 出席 = 1.0, 請假 = 0.5, 缺席 = 0.0
+  // (present + default_present + leave * 0.5) ÷ 應到時數 × 100
+  const attendanceScore =
+    completedHours > 0
+      ? Math.round(((presentHours + leaveHours * 0.5) / completedHours) * 1000) / 10
+      : 100;
 
   return {
     requiredHours,
@@ -294,6 +398,7 @@ export function calculateStudentAttendanceHistory(
     leaveHours,
     absentHours,
     attendanceRate,
+    attendanceScore,
     dailyRecords,
   };
 }

@@ -501,7 +501,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                 };
                 const studentHours = getStudentIndividualHours(record, periodsCount);
                 const approvedLeave = applicableLeaves.find(
-                  (l) => l.studentId === student.id || l.studentName === student.name
+                  (l) => String(l.studentId) === String(student.id)
                 );
 
                 const hasIssue = record.period1 !== 'present' || record.period2 !== 'present' || (is3H && record.period3 !== 'present');

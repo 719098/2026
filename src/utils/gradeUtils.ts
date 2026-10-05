@@ -1,4 +1,5 @@
-import { Student, StudentGrade, CourseSession } from '../types';
+import { Student, StudentGrade, CourseSession, TransferClassRecord } from '../types';
+import { calculateStudentAttendanceHistory } from './attendanceUtils';
 
 export const GRADE_WEIGHTS = {
   attendance: 0.20, // 20% 出席
@@ -29,15 +30,32 @@ export interface StudentAttendanceCalculationResult {
  * Formula:
  * (present * 1.0 + leave * 0.5 + absent * 0.0) / totalPeriods * 100
  * Weighted Attendance Grade = Attendance Rate * 20%
- *
- * Sessions without recorded attendance (尚未點名) do NOT count as 100% attendance.
- * If totalPeriods is 0, attendanceScore is 0 (hasRecords: false).
  */
 export function calculateStudentAttendanceScore(
   studentId: string,
   courses: CourseSession[],
-  studentClassName?: string
+  studentClassName?: string,
+  student?: Student,
+  transferRecords?: TransferClassRecord[]
 ): StudentAttendanceCalculationResult {
+  if (student) {
+    const history = calculateStudentAttendanceHistory(student, courses, transferRecords);
+    const totalPeriods = history.completedHours;
+    const earnedPoints = history.presentHours * 1.0 + history.leaveHours * 0.5;
+    const attendanceScore = totalPeriods > 0 ? Math.round((earnedPoints / totalPeriods) * 1000) / 10 : 100;
+    const weightedScore = Math.round(attendanceScore * GRADE_WEIGHTS.attendance * 10) / 10;
+    return {
+      attendanceScore,
+      weightedScore,
+      totalSessions: history.dailyRecords.length,
+      totalPeriods,
+      presentPeriods: history.presentHours,
+      leavePeriods: history.leaveHours,
+      absentPeriods: history.absentHours,
+      hasRecords: history.completedHours > 0,
+    };
+  }
+
   let totalPeriods = 0;
   let presentPeriods = 0;
   let leavePeriods = 0;
@@ -279,7 +297,7 @@ export function generateAllInitialGrades(students: Student[] = []): Record<strin
     grades[student.id] = {
       studentId: student.id,
       studentName: student.name,
-      className: student.className || '未設定班級',
+      className: student.className || '',
       attendanceScore,
       quizScore,
       midtermScore,

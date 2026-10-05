@@ -31,7 +31,7 @@ export function mapDbToStudent(row: any): Student {
   const admissionDate =
     row.enterdate ||
     row.admission_date ||
-    (row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : getTodayDateStr());
+    undefined;
 
   const rawStatus = String(row.rest_to_drop || row.status || '0').toLowerCase();
   const normalizedStatus: 'active' | 'withdrawn' | 'graduated' | 'suspended' =
@@ -79,6 +79,8 @@ export function mapDbToStudent(row: any): Student {
     visaStatus: (row.visa_status || 'safe') as 'safe' | 'warning' | 'danger',
     enrollmentStatus: normalizedStatus,
     admissionDate: admissionDate,
+    joinedAt: row.joined_at || undefined,
+    droppedAt: row.dropped_at || undefined,
     // School DB Spec Fields
     stno: studentNum,
     ename: row.ename || '',
@@ -391,11 +393,29 @@ export async function fetchStudentsFromSupabase(
   }
 
   // 1. Fetch raw students from public.students
-  const { data: rawStudents, error: studentsError } = await supabase
+  let rawStudents: any[] = [];
+  const { data: directStudents, error: studentsError } = await supabase
     .from('students')
     .select('*');
 
-  if (studentsError) {
+  if (!studentsError && directStudents && directStudents.length > 0) {
+    rawStudents = directStudents;
+  } else {
+    try {
+      const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
+      const apiRes = await fetch(`${origin}/api/students`);
+      if (apiRes.ok) {
+        const json = await apiRes.json();
+        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+          rawStudents = json.data;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('[StudentService] Fallback to /api/students failed:', apiErr);
+    }
+  }
+
+  if (rawStudents.length === 0 && studentsError) {
     return { data: [], error: studentsError };
   }
 
@@ -423,18 +443,33 @@ export async function fetchStudentsFromSupabase(
   }
 
   // 3. Fetch student <-> class relations from public.class_students
-  const studentToClassIdMap = new Map<string, string>();
+  const studentToCsMap = new Map<string, any>();
   try {
-    const { data: rawClassStudents } = await supabase.from('class_students').select('*');
-    if (rawClassStudents) {
-      rawClassStudents.forEach((cs: any) => {
-        const sId = cs.student_id ? String(cs.student_id) : '';
-        const cId = cs.class_id ? String(cs.class_id) : '';
-        if (sId && cId) {
-          studentToClassIdMap.set(sId, cId);
+    let rawClassStudents: any[] = [];
+    const { data: directCS, error: csErr } = await supabase.from('class_students').select('*');
+    if (!csErr && directCS && directCS.length > 0) {
+      rawClassStudents = directCS;
+    } else {
+      try {
+        const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
+        const apiRes = await fetch(`${origin}/api/class-students`);
+        if (apiRes.ok) {
+          const json = await apiRes.json();
+          if (json.success && Array.isArray(json.data)) {
+            rawClassStudents = json.data;
+          }
         }
-      });
+      } catch (apiErr) {
+        console.warn('[StudentService] Fallback to /api/class-students failed:', apiErr);
+      }
     }
+
+    rawClassStudents.forEach((cs: any) => {
+      const sId = cs.student_id ? String(cs.student_id) : '';
+      if (sId) {
+        studentToCsMap.set(sId, cs);
+      }
+    });
   } catch (e) {
     console.warn('[StudentService] Notice: could not fetch class_students table:', e);
   }
@@ -442,22 +477,85 @@ export async function fetchStudentsFromSupabase(
   // 4. Map each student row and populate class relation strictly from class_students
   const students: Student[] = (rawStudents || []).map((row: any) => {
     const student = mapDbToStudent(row);
-    const assignedClassId = studentToClassIdMap.get(student.id);
+    const cs = studentToCsMap.get(student.id);
 
-    if (assignedClassId) {
-      student.classId = assignedClassId;
-      const classInfo = classMap.get(assignedClassId);
-      student.className = classInfo ? classInfo.name : assignedClassId;
+    if (cs && cs.class_id) {
+      student.classId = String(cs.class_id);
+      const classInfo = classMap.get(student.classId);
+      student.className = classInfo ? classInfo.name : student.classId;
+      student.joinedAt = cs.joined_at || undefined;
+      student.droppedAt = cs.dropped_at || undefined;
     } else {
       // Not in class_students -> 尚未分班
       student.classId = undefined;
       student.className = '';
+      student.joinedAt = undefined;
+      student.droppedAt = undefined;
     }
 
     return student;
   });
 
-  // 4.5 Compute real attendance rates from attendance_records (Present=100%, Leave=50%, Absent=0%)
+  // 4.2 Fetch student_enrollment_history to populate real transfer history for each student
+  try {
+    let rawHistory: any[] = [];
+    const { data: directHistory, error: histErr } = await supabase
+      .from('student_enrollment_history')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!histErr && directHistory && directHistory.length > 0) {
+      rawHistory = directHistory;
+    } else {
+      try {
+        const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
+        const apiRes = await fetch(`${origin}/api/transfer-history`);
+        if (apiRes.ok) {
+          const json = await apiRes.json();
+          if (json.success && Array.isArray(json.data)) {
+            rawHistory = json.data;
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[StudentService] Fallback to /api/transfer-history failed:', apiErr);
+      }
+    }
+
+    if (rawHistory && rawHistory.length > 0) {
+      const histByStudent = new Map<string, any[]>();
+      rawHistory.forEach((r: any) => {
+        const sId = String(r.student_id);
+        if (!histByStudent.has(sId)) histByStudent.set(sId, []);
+        const fromClassObj = r.from_class_id ? classMap.get(String(r.from_class_id)) : null;
+        const toClassObj = r.to_class_id ? classMap.get(String(r.to_class_id)) : null;
+        histByStudent.get(sId)!.push({
+          id: String(r.id),
+          date: r.effective_date || (r.created_at ? r.created_at.substring(0, 10) : getTodayDateStr()),
+          actionDate: r.effective_date || (r.created_at ? r.created_at.substring(0, 10) : getTodayDateStr()),
+          action: r.change_type === 'TRANSFER' ? 'transferred' : 'admitted',
+          actionName: r.change_type === 'TRANSFER' ? '班級轉班調派' : '學籍異動',
+          fromClass: fromClassObj?.name || '',
+          fromClassId: r.from_class_id ? String(r.from_class_id) : undefined,
+          toClass: toClassObj?.name || '',
+          toClassId: r.to_class_id ? String(r.to_class_id) : undefined,
+          note: r.reason || '',
+          reason: r.reason || '',
+          operator: '行政教務處',
+        });
+      });
+
+      students.forEach((s) => {
+        const dbHist = histByStudent.get(s.id);
+        if (dbHist && dbHist.length > 0) {
+          s.enrollmentHistory = dbHist;
+        }
+      });
+    }
+  } catch (e) {
+    console.warn('[StudentService] Notice: could not load student_enrollment_history:', e);
+  }
+
+  // 4.5 Compute real actual attendance rates (Present=100%, Leave=0%, Absent=0%)
   try {
     const { data: attRecs } = await supabase
       .from('attendance_records')
@@ -483,8 +581,8 @@ export async function fetchStudentsFromSupabase(
         if (stat) {
           const totalPeriods = stat.present + stat.leave + stat.absent;
           if (totalPeriods > 0) {
-            const earned = stat.present * 1.0 + stat.leave * 0.5 + stat.absent * 0.0;
-            s.overallAttendanceRate = Math.round((earned / totalPeriods) * 1000) / 10;
+            // Actual Attendance Rate: (Present / totalPeriods) * 100%
+            s.overallAttendanceRate = Math.round((stat.present / totalPeriods) * 1000) / 10;
             s.totalPresentHours = stat.present;
             s.totalLeaveHours = stat.leave;
             s.totalAbsenceHours = stat.absent;
@@ -533,7 +631,12 @@ function isValidUuid(id: string | null | undefined): boolean {
 export async function assignOrUpdateStudentClassInSupabase(
   studentId: string,
   classIdOrName: string | null | undefined,
-  availableClasses: ClassEntity[] = []
+  availableClasses: ClassEntity[] = [],
+  options?: {
+    effectiveDate?: string;
+    reason?: string;
+    operatorProfileId?: string;
+  }
 ): Promise<{ success: boolean; error: any }> {
   if (!supabase) {
     return { success: false, error: new Error('Supabase client is not configured') };
@@ -672,6 +775,10 @@ export async function assignOrUpdateStudentClassInSupabase(
     }
   }
 
+  const effectiveDate = options?.effectiveDate || getTodayDateStr();
+  const prevClassId = existing?.[0]?.class_id ? String(existing[0].class_id) : null;
+  const isInitialEnrollment = !prevClassId;
+
   // Delete all existing class_students relations for this student to prevent duplicates and handle transfers cleanly
   if (existing && existing.length > 0) {
     try {
@@ -688,17 +795,39 @@ export async function assignOrUpdateStudentClassInSupabase(
     }
   }
 
-  // Insert the new relation into class_students
+  // Insert the new relation into class_students with joined_at
   const { error: insertErr } = await supabase
     .from('class_students')
     .insert({
       student_id: studentId,
       class_id: realClassUuid,
+      joined_at: effectiveDate,
+      enrollment_status: 'ENROLLED',
     });
 
   if (insertErr) {
     console.error('[StudentService] Error inserting into class_students:', insertErr);
     return { success: false, error: insertErr };
+  }
+
+  // Record in student_enrollment_history
+  try {
+    const reason = options?.reason || (isInitialEnrollment ? '期初學員分班指派入班' : '班級轉班調派');
+    const validOperator = options?.operatorProfileId && isValidUuid(options.operatorProfileId)
+      ? options.operatorProfileId
+      : null;
+
+    await supabase.from('student_enrollment_history').insert({
+      student_id: studentId,
+      from_class_id: prevClassId,
+      to_class_id: realClassUuid,
+      change_type: 'TRANSFER',
+      effective_date: effectiveDate,
+      reason,
+      operated_by: validOperator,
+    });
+  } catch (histErr) {
+    console.warn('[StudentService] Notice: could not record into student_enrollment_history:', histErr);
   }
 
   return { success: true, error: null };
@@ -709,7 +838,8 @@ export async function assignOrUpdateStudentClassInSupabase(
  */
 export async function createStudentInSupabase(
   newStudent: Omit<Student, 'id'> & { id?: string },
-  availableClasses: ClassEntity[] = []
+  availableClasses: ClassEntity[] = [],
+  options?: { effectiveDate?: string; reason?: string; operatorProfileId?: string }
 ): Promise<{ data: Student | null; error: any }> {
   if (!supabase) {
     return { data: null, error: new Error('Supabase client is not configured') };
@@ -741,13 +871,14 @@ export async function createStudentInSupabase(
 
   const createdStudent = mapDbToStudent(data);
 
-  // If a class was chosen for the new student, link them in class_students
+  // If a class was chosen for the new student, link them in class_students & record enrollment history
   const classAssignment = newStudent.classId || newStudent.className;
   if (classAssignment && classAssignment !== '尚未分班' && classAssignment.trim() !== '') {
     await assignOrUpdateStudentClassInSupabase(
       createdStudent.id,
       classAssignment,
-      availableClasses
+      availableClasses,
+      options
     );
     createdStudent.className = newStudent.className || '';
     createdStudent.classId = newStudent.classId;
@@ -764,7 +895,8 @@ export async function createStudentInSupabase(
  */
 export async function updateStudentInSupabase(
   student: Student,
-  availableClasses: ClassEntity[] = []
+  availableClasses: ClassEntity[] = [],
+  options?: { effectiveDate?: string; reason?: string; operatorProfileId?: string }
 ): Promise<{ data: Student | null; error: any }> {
   if (!supabase) {
     return { data: null, error: new Error('Supabase client is not configured') };
@@ -949,7 +1081,7 @@ export async function fetchStudentGradesFromSupabase(
         gradeMap[studentId] = {
           studentId: studentId,
           studentName: student?.name || '未知學生',
-          className: classObj?.name || student?.className || '未設定班級',
+          className: classObj?.name || student?.className || '',
           classId: r.class_id ? String(r.class_id) : student?.classId,
           attendanceScore: att,
           quizScore: quiz,
@@ -986,7 +1118,7 @@ export async function fetchStudentGradesFromSupabase(
         const initialGrade: StudentGrade = {
           studentId: s.id,
           studentName: s.name,
-          className: s.className || '未設定班級',
+          className: s.className || '',
           classId: s.classId,
           attendanceScore: att,
           quizScore: quiz,
@@ -1141,15 +1273,28 @@ export async function fetchTransferRecordsFromSupabase(
   if (!supabase) return [];
 
   try {
-    const { data: rows, error } = await supabase
+    let rows: any[] = [];
+    const { data: directRows, error } = await supabase
       .from('student_enrollment_history')
       .select('*')
       .eq('change_type', 'TRANSFER')
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('[StudentService] Error fetching transfer history:', error);
-      return [];
+    if (!error && directRows && directRows.length > 0) {
+      rows = directRows;
+    } else {
+      try {
+        const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
+        const apiRes = await fetch(`${origin}/api/transfer-history`);
+        if (apiRes.ok) {
+          const json = await apiRes.json();
+          if (json.success && Array.isArray(json.data)) {
+            rows = json.data;
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[StudentService] Fallback to /api/transfer-history failed:', apiErr);
+      }
     }
 
     const studentMap = new Map(students.map((s) => [String(s.id), s]));
@@ -1163,11 +1308,11 @@ export async function fetchTransferRecordsFromSupabase(
       return {
         id: String(r.id),
         studentId: String(r.student_id),
-        studentName: student?.name || '轉班學員',
+        studentName: student?.name || '',
         fromClassId: r.from_class_id ? String(r.from_class_id) : '',
-        fromClassName: fromClass?.name || '原班級',
+        fromClassName: fromClass?.name || '',
         toClassId: r.to_class_id ? String(r.to_class_id) : '',
-        toClassName: toClass?.name || '新班級',
+        toClassName: toClass?.name || '',
         transferDate: r.effective_date || (r.created_at ? r.created_at.substring(0, 10) : getTodayDateStr()),
         reason: r.reason || '學生轉班異動',
         operator: '行政教務處',

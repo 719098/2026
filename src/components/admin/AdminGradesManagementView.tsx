@@ -34,6 +34,16 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
   // Batch selection
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
 
+  // Helper to compute attendance grade score (50% leave weighting)
+  const getAttendanceScore = (s: Student) => {
+    const total = (s.totalPresentHours || 0) + (s.totalLeaveHours || 0) + (s.totalAbsenceHours || 0);
+    if (total > 0) {
+      const earned = (s.totalPresentHours || 0) * 1.0 + (s.totalLeaveHours || 0) * 0.5;
+      return Math.round((earned / total) * 1000) / 10;
+    }
+    return s.overallAttendanceRate ?? 100;
+  };
+
   // Filter students
   const filteredStudents = students.filter((s) => {
     const matchSearch =
@@ -44,7 +54,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
     
     // Final score calculation
     const scores = getStudentScores(s);
-    const attendanceScore = s.overallAttendanceRate;
+    const attendanceScore = getAttendanceScore(s);
     const finalScore = calculateFinalGrade(
       scores.listeningSpeaking,
       scores.readingWriting,
@@ -250,7 +260,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
                     studentScores.listeningSpeaking,
                     studentScores.readingWriting,
                     studentScores.dailyPerformance,
-                    student.overallAttendanceRate
+                    getAttendanceScore(student)
                   );
                   const isSelected = selectedStudentIds.has(student.id);
 

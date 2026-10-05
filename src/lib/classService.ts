@@ -25,9 +25,9 @@ export function mapDbToClass(row: any): ClassEntity {
   return {
     id: String(row.id),
     classCode: row.class_code || row.classCode || `CLS-${row.id}`,
-    name: row.name || row.class_name || '未命名班級',
+    name: row.name || row.class_name || '',
     courseId: '',
-    courseName: row.name || '班級',
+    courseName: row.name || '',
     teacherId: teacherId,
     teacherName: teacherName || (teacherId ? '' : '未指定教師'),
     classroom: row.classroom || '伯鐸402',
@@ -58,17 +58,36 @@ export async function fetchClassesFromSupabase(): Promise<{ data: ClassEntity[];
   }
 
   try {
-    const { data: rawClasses, error: classErr } = await supabase
+    let rawClasses: any[] = [];
+    const { data: directClasses, error: classErr } = await supabase
       .from('classes')
       .select('*, terms(id, name, term_code, is_locked, is_active, start_date, end_date), teachers(id, emp_name, tea_name)')
       .order('name', { ascending: true });
 
-    if (classErr) {
+    if (!classErr && directClasses && directClasses.length > 0) {
+      rawClasses = directClasses;
+    } else {
+      // Fallback to server endpoint if direct client query encounters RLS permission error (42501)
+      try {
+        const endpoint = typeof window !== 'undefined' ? '/api/classes' : 'http://localhost:3000/api/classes';
+        const apiRes = await fetch(endpoint);
+        if (apiRes.ok) {
+          const json = await apiRes.json();
+          if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+            rawClasses = json.data;
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[ClassService] Server fallback for classes failed:', apiErr);
+      }
+    }
+
+    if (rawClasses.length === 0 && classErr) {
       console.error('[ClassService] Error fetching classes from Supabase:', classErr);
       return { data: [], error: classErr };
     }
 
-    if (!rawClasses || rawClasses.length === 0) {
+    if (rawClasses.length === 0) {
       return { data: [], error: null };
     }
 

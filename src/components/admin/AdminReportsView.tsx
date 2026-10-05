@@ -39,25 +39,35 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
     students.reduce((acc, s) => acc + s.overallAttendanceRate, 0) / (totalStudents || 1)
   ).toFixed(1);
 
+  // Helper to compute attendance grade score (50% leave weighting)
+  const getAttendanceScore = (s: Student) => {
+    const total = (s.totalPresentHours || 0) + (s.totalLeaveHours || 0) + (s.totalAbsenceHours || 0);
+    if (total > 0) {
+      const earned = (s.totalPresentHours || 0) * 1.0 + (s.totalLeaveHours || 0) * 0.5;
+      return Math.round((earned / total) * 1000) / 10;
+    }
+    return s.overallAttendanceRate ?? 100;
+  };
+
   // Grade distributions
   const gradeBuckets = {
     A: students.filter((s) => {
       const scores = getStudentScores(s);
-      return calculateFinalGrade(scores.listeningSpeaking, scores.readingWriting, scores.dailyPerformance, s.overallAttendanceRate) >= 80;
+      return calculateFinalGrade(scores.listeningSpeaking, scores.readingWriting, scores.dailyPerformance, getAttendanceScore(s)) >= 80;
     }).length,
     B: students.filter((s) => {
       const scores = getStudentScores(s);
-      const g = calculateFinalGrade(scores.listeningSpeaking, scores.readingWriting, scores.dailyPerformance, s.overallAttendanceRate);
+      const g = calculateFinalGrade(scores.listeningSpeaking, scores.readingWriting, scores.dailyPerformance, getAttendanceScore(s));
       return g >= 70 && g < 80;
     }).length,
     C: students.filter((s) => {
       const scores = getStudentScores(s);
-      const g = calculateFinalGrade(scores.listeningSpeaking, scores.readingWriting, scores.dailyPerformance, s.overallAttendanceRate);
+      const g = calculateFinalGrade(scores.listeningSpeaking, scores.readingWriting, scores.dailyPerformance, getAttendanceScore(s));
       return g >= 60 && g < 70;
     }).length,
     F: students.filter((s) => {
       const scores = getStudentScores(s);
-      return calculateFinalGrade(scores.listeningSpeaking, scores.readingWriting, scores.dailyPerformance, s.overallAttendanceRate) < 60;
+      return calculateFinalGrade(scores.listeningSpeaking, scores.readingWriting, scores.dailyPerformance, getAttendanceScore(s)) < 60;
     }).length,
   };
 

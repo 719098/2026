@@ -20,7 +20,7 @@ import {
   Building2,
   Calendar
 } from 'lucide-react';
-import { Student, Teacher, CourseSession, StudentGrade, ClassEntity } from '../types';
+import { Student, Teacher, CourseSession, StudentGrade, ClassEntity, TransferClassRecord } from '../types';
 import { calculateStudentAttendanceHistory } from '../utils/attendanceUtils';
 import { StudentAvatar } from './StudentAvatar';
 import { exportStudentsToCsv, exportClassStudentAttendanceToCsv } from '../utils/csvExport';
@@ -32,6 +32,7 @@ interface ClassesViewProps {
   onSelectStudentForDetail: (student: Student) => void;
   classes?: ClassEntity[];
   allStudentsList?: Student[];
+  transferRecords?: TransferClassRecord[];
 }
 
 export const ClassesView: React.FC<ClassesViewProps> = ({
@@ -40,7 +41,8 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
   allGrades,
   onSelectStudentForDetail,
   classes = [],
-  allStudentsList = []
+  allStudentsList = [],
+  transferRecords = [],
 }) => {
   // Filter classes for current teacher or assigned classes
   const teacherClasses = useMemo(() => {
@@ -54,7 +56,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
     );
   }, [classes, currentTeacher]);
 
-  const activeClasses = teacherClasses.length > 0 ? teacherClasses : classes;
+  const activeClasses = currentTeacher ? teacherClasses : classes;
 
   const [selectedClassId, setSelectedClassId] = useState<string>('');
 
@@ -108,7 +110,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
   const handleExportAttendanceStats = () => {
     if (filteredStudents.length === 0) return;
     const records = filteredStudents.map((s) => {
-      const history = calculateStudentAttendanceHistory(s, allCourses);
+      const history = calculateStudentAttendanceHistory(s, allCourses, transferRecords);
       const isWarning = history.attendanceRate < 90 && history.attendanceRate >= 80;
       const isDanger = history.attendanceRate < 80;
       const warningStatus = isDanger ? '🚨 達停修危險 (低於80%)' : isWarning ? '⚠️ 出席警示 (低於90%)' : '✅ 正常';
@@ -117,7 +119,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
         name: s.name,
         englishName: s.englishName,
         nationality: s.nationality,
-        totalHours: history.requiredHours,
+        totalHours: history.completedHours,
         presentHours: history.presentHours,
         leaveHours: history.leaveHours,
         absentHours: history.absentHours,
@@ -274,7 +276,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
 
             <tbody className="divide-y divide-slate-100 text-xs">
               {filteredStudents.map((student, index) => {
-                const history = calculateStudentAttendanceHistory(student, allCourses);
+                const history = calculateStudentAttendanceHistory(student, allCourses, transferRecords);
                 const isWarning = history.attendanceRate < 90 && history.attendanceRate >= 80;
                 const isDanger = history.attendanceRate < 80;
 
@@ -326,7 +328,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
 
                     {/* 應到時數 */}
                     <td className="py-3 px-3 text-center font-mono font-bold text-slate-700">
-                      {history.requiredHours}H
+                      {history.completedHours}H
                     </td>
 
                     {/* 出席時數 */}

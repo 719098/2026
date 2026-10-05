@@ -124,11 +124,31 @@ export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosMod
         const cleanBase = item.baseName.toLowerCase().trim();
         const count = studentNumberCounts.get(cleanBase) || 0;
 
-        // Strictly match student_number / stno
-        const matched = students.find((s) => {
+        // 1. Strictly match by student_number / stno
+        let matched = students.find((s) => {
           const sNum = (s.studentNumber || s.stno || '').trim().toLowerCase();
           return sNum === cleanBase;
         });
+
+        // 2. If not matched by student_number, check if user provided a student name
+        if (!matched) {
+          const matchedByName = students.filter((s) => {
+            const cName = (s.name || '').trim().toLowerCase();
+            const eName = (s.englishName || s.ename || '').trim().toLowerCase();
+            return cName === cleanBase || eName === cleanBase;
+          });
+
+          if (matchedByName.length > 1) {
+            return {
+              ...item,
+              status: 'conflict',
+              matchedStudent: undefined,
+              errorMessage: `找到多位同名學生（共 ${matchedByName.length} 位），請改用學號作為照片檔名。`,
+            };
+          } else if (matchedByName.length === 1) {
+            matched = matchedByName[0];
+          }
+        }
 
         if (!matched) {
           return {

@@ -577,7 +577,7 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
                       {/* Course info */}
                       {(() => {
                         const matchedClass = adminClasses.find((c) => c.id === session.classId);
-                        const displayClassName = session.className || matchedClass?.name || matchedClass?.classCode || '華語密集班';
+                        const displayClassName = session.className || matchedClass?.name || matchedClass?.classCode || '—';
                         const displayCourseName = session.courseName || matchedClass?.courseName || matchedClass?.classroom || '';
                         const displayClassroom = session.classroom || matchedClass?.classroom || '';
 

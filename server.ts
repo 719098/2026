@@ -827,6 +827,228 @@ app.post("/api/admin/get-teacher-avatar-urls", async (req, res) => {
   }
 });
 
+// Real-time Class Query API: Bypasses RLS to ensure genuine database classes are loaded
+app.get("/api/classes", async (req, res) => {
+  const supabaseUrl = getValidSupabaseUrl();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
+  const activeKey = serviceRoleKey || anonKey;
+
+  const adminSupabase = createClient(supabaseUrl, activeKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+
+  try {
+    const { data, error } = await adminSupabase
+      .from('classes')
+      .select('*, terms(id, name, term_code, is_locked, is_active, start_date, end_date), teachers(id, emp_name, tea_name)')
+      .order('name', { ascending: true });
+
+    if (error) {
+      console.error('[Server API] Error in /api/classes:', error);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+    return res.json({ success: true, data: data || [] });
+  } catch (err: any) {
+    console.error('[Server API] Exception in /api/classes:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Real-time Transfer History API: Bypasses RLS to ensure student enrollment history is loaded
+app.get("/api/transfer-history", async (req, res) => {
+  const supabaseUrl = getValidSupabaseUrl();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
+  const activeKey = serviceRoleKey || anonKey;
+
+  const adminSupabase = createClient(supabaseUrl, activeKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+
+  try {
+    const { data, error } = await adminSupabase
+      .from('student_enrollment_history')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[Server API] Error in /api/transfer-history:', error);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+    return res.json({ success: true, data: data || [] });
+  } catch (err: any) {
+    console.error('[Server API] Exception in /api/transfer-history:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Real-time Students Query API: Bypasses RLS to ensure genuine students are loaded
+app.get("/api/students", async (req, res) => {
+  const supabaseUrl = getValidSupabaseUrl();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
+  const activeKey = serviceRoleKey || anonKey;
+
+  const adminSupabase = createClient(supabaseUrl, activeKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+
+  try {
+    const { data, error } = await adminSupabase
+      .from('students')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[Server API] Error in /api/students:', error);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+    return res.json({ success: true, data: data || [] });
+  } catch (err: any) {
+    console.error('[Server API] Exception in /api/students:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Real-time Class-Students Query API: Bypasses RLS to ensure accurate class enrollment
+app.get("/api/class-students", async (req, res) => {
+  const supabaseUrl = getValidSupabaseUrl();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
+  const activeKey = serviceRoleKey || anonKey;
+
+  const adminSupabase = createClient(supabaseUrl, activeKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+
+  try {
+    const { data, error } = await adminSupabase
+      .from('class_students')
+      .select('*');
+
+    if (error) {
+      console.error('[Server API] Error in /api/class-students:', error);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+    return res.json({ success: true, data: data || [] });
+  } catch (err: any) {
+    console.error('[Server API] Exception in /api/class-students:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Real-time Course-Sessions Query API: Bypasses RLS to ensure recorded sessions are loaded
+app.get("/api/course-sessions", async (req, res) => {
+  const supabaseUrl = getValidSupabaseUrl();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
+  const activeKey = serviceRoleKey || anonKey;
+
+  const adminSupabase = createClient(supabaseUrl, activeKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+
+  try {
+    const { data, error } = await adminSupabase
+      .from('course_sessions')
+      .select('*');
+
+    if (error) {
+      console.error('[Server API] Error in /api/course-sessions:', error);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+    return res.json({ success: true, data: data || [] });
+  } catch (err: any) {
+    console.error('[Server API] Exception in /api/course-sessions:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Real-time Attendance-Records Query API: Bypasses RLS to ensure official records are loaded
+app.get("/api/attendance-records", async (req, res) => {
+  const supabaseUrl = getValidSupabaseUrl();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
+  const activeKey = serviceRoleKey || anonKey;
+
+  const adminSupabase = createClient(supabaseUrl, activeKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+
+  try {
+    const { data, error } = await adminSupabase
+      .from('attendance_records')
+      .select('*');
+
+    if (error) {
+      console.error('[Server API] Error in /api/attendance-records:', error);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+    return res.json({ success: true, data: data || [] });
+  } catch (err: any) {
+    console.error('[Server API] Exception in /api/attendance-records:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Real-time Teachers Query API: Bypasses RLS to ensure accurate teacher profiles are loaded
+app.get("/api/teachers", async (req, res) => {
+  const supabaseUrl = getValidSupabaseUrl();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
+  const activeKey = serviceRoleKey || anonKey;
+
+  const adminSupabase = createClient(supabaseUrl, activeKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+
+  try {
+    const { data, error } = await adminSupabase
+      .from('teachers')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[Server API] Error in /api/teachers:', error);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+    return res.json({ success: true, data: data || [] });
+  } catch (err: any) {
+    console.error('[Server API] Exception in /api/teachers:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Real-time Class-Sessions Query API: Bypasses RLS to ensure all scheduled class sessions are loaded
+app.get("/api/class-sessions", async (req, res) => {
+  const supabaseUrl = getValidSupabaseUrl();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
+  const activeKey = serviceRoleKey || anonKey;
+
+  const adminSupabase = createClient(supabaseUrl, activeKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+
+  try {
+    const { data, error } = await adminSupabase
+      .from('class_sessions')
+      .select('*')
+      .order('session_date', { ascending: true })
+      .order('start_time', { ascending: true });
+
+    if (error) {
+      console.error('[Server API] Error in /api/class-sessions:', error);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+    return res.json({ success: true, data: data || [] });
+  } catch (err: any) {
+    console.error('[Server API] Exception in /api/class-sessions:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

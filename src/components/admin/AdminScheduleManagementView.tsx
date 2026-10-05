@@ -1167,7 +1167,7 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
                       const isCancelled = s.status === 'CANCELLED';
                       const isSelected = selectedSessionIds.has(s.id);
                       const matchedClass = classes.find((c) => c.id === s.classId);
-                      const displayClassName = s.className || matchedClass?.name || matchedClass?.classCode || '華語密集班';
+                      const displayClassName = s.className || matchedClass?.name || matchedClass?.classCode || '—';
                       const displayCourseName = s.courseName || matchedClass?.courseName || matchedClass?.classroom || '';
 
                       return (

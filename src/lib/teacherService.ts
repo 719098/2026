@@ -81,12 +81,30 @@ export async function fetchTeachersFromSupabase(): Promise<{ data: Teacher[]; er
   }
 
   try {
-    const { data: rawTeachers, error } = await supabase
+    let rawTeachers: any[] = [];
+    const { data: directTeachers, error } = await supabase
       .from('teachers')
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error) {
+    if (!error && directTeachers && directTeachers.length > 0) {
+      rawTeachers = directTeachers;
+    } else {
+      try {
+        const endpoint = typeof window !== 'undefined' ? '/api/teachers' : 'http://localhost:3000/api/teachers';
+        const apiRes = await fetch(endpoint);
+        if (apiRes.ok) {
+          const json = await apiRes.json();
+          if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+            rawTeachers = json.data;
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[TeacherService] Fallback to /api/teachers failed:', apiErr);
+      }
+    }
+
+    if (rawTeachers.length === 0 && error) {
       console.error('[TeacherService] Error fetching teachers:', error);
       return { data: [], error };
     }

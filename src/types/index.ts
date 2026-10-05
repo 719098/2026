@@ -245,6 +245,8 @@ export interface Student {
   enrollmentStatus?: EnrollmentStatus; // 'active' | 'graduated' | 'suspended' | 'withdrawn'
   restToDrop?: string; // 學校欄位：休轉退註記
   admissionDate?: string; // 入學日期
+  joinedAt?: string; // 入班日期 (class_students.joined_at)
+  droppedAt?: string; // 離班日期 (class_students.dropped_at)
   birthday?: string; // 學校欄位：生日
   enterdep?: string; // 學校欄位：入學系所
   enterdate?: string; // 學校欄位：入學日期

@@ -181,11 +181,29 @@ export async function fetchAttendanceRecordsFromSupabase(): Promise<
   if (!supabase) return map;
 
   try {
-    const { data: courseSessions, error: csErr } = await supabase
+    let courseSessions: any[] = [];
+    const { data: directCS, error: csErr } = await supabase
       .from('course_sessions')
       .select('*');
 
-    if (csErr || !courseSessions || courseSessions.length === 0) {
+    if (!csErr && directCS && directCS.length > 0) {
+      courseSessions = directCS;
+    } else {
+      try {
+        const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
+        const apiRes = await fetch(`${origin}/api/course-sessions`);
+        if (apiRes.ok) {
+          const json = await apiRes.json();
+          if (json.success && Array.isArray(json.data)) {
+            courseSessions = json.data;
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[AttendanceService] Fallback to /api/course-sessions failed:', apiErr);
+      }
+    }
+
+    if (courseSessions.length === 0) {
       return map;
     }
 
@@ -193,14 +211,27 @@ export async function fetchAttendanceRecordsFromSupabase(): Promise<
     const csMapById = new Map<string, any>();
     courseSessions.forEach((cs) => csMapById.set(cs.id, cs));
 
-    const { data: attendanceRows, error: attErr } = await supabase
+    let attendanceRows: any[] = [];
+    const { data: directAtt, error: attErr } = await supabase
       .from('attendance_records')
       .select('*')
       .in('session_id', sessionIds);
 
-    if (attErr) {
-      console.error('[AttendanceService] Error fetching attendance_records:', attErr);
-      return map;
+    if (!attErr && directAtt && directAtt.length > 0) {
+      attendanceRows = directAtt;
+    } else {
+      try {
+        const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
+        const apiRes = await fetch(`${origin}/api/attendance-records`);
+        if (apiRes.ok) {
+          const json = await apiRes.json();
+          if (json.success && Array.isArray(json.data)) {
+            attendanceRows = json.data.filter((r: any) => sessionIds.includes(r.session_id));
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[AttendanceService] Fallback to /api/attendance-records failed:', apiErr);
+      }
     }
 
     const mapDbToStatus = (dbVal?: string): 'present' | 'absent' | 'leave' => {
@@ -317,7 +348,7 @@ export async function fetchLeavesFromSupabase(
         studentName: student?.name || '請假學員',
         studentEnglishName: student?.englishName || '',
         classId: r.class_id ? String(r.class_id) : student?.classId,
-        className: classObj?.name || student?.className || '未設定班級',
+        className: classObj?.name || student?.className || '',
         date: r.start_date || (r.created_at ? r.created_at.substring(0, 10) : '2026-08-04'),
         timeSlot: '09:00 - 12:00',
         periods,
