@@ -311,17 +311,17 @@ export const BatchImportStudentModal: React.FC<BatchImportStudentModalProps> = (
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-4xl w-full p-6 shadow-2xl border border-slate-200 my-8">
+    <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl max-w-4xl w-full p-4 sm:p-6 shadow-2xl border border-slate-200 my-auto max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+        <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-100">
           <div className="flex items-center space-x-3">
-            <div className="p-2.5 bg-teal-50 text-teal-700 rounded-xl border border-teal-100">
-              <FileSpreadsheet className="w-6 h-6" />
+            <div className="p-2 sm:p-2.5 bg-teal-50 text-teal-700 rounded-xl border border-teal-100 shrink-0">
+              <FileSpreadsheet className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900">批量匯入學生名單 (Excel / CSV)</h2>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <h2 className="text-sm sm:text-base font-bold text-slate-900">批量匯入學生名單 (Excel / CSV)</h2>
+              <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
                 行政端一次性批次建立新學員檔案，支援即時驗證、學號重複檢查與欄位對應（不自動分班）。
               </p>
             </div>
@@ -329,7 +329,7 @@ export const BatchImportStudentModal: React.FC<BatchImportStudentModalProps> = (
           <button
             onClick={onClose}
             disabled={isImporting}
-            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-50"
+            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-50 shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
@@ -413,7 +413,7 @@ export const BatchImportStudentModal: React.FC<BatchImportStudentModalProps> = (
               <span className="text-slate-400 text-[11px]">共讀取 {parsedRows.length} 列資料</span>
             </div>
 
-            <div className="border border-slate-200 rounded-xl max-h-72 overflow-y-auto">
+            <div className="border border-slate-200 rounded-xl max-h-72 overflow-y-auto overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 border-b border-slate-200">
                   <tr>
@@ -489,16 +489,16 @@ export const BatchImportStudentModal: React.FC<BatchImportStudentModalProps> = (
         )}
 
         {/* Footer Actions */}
-        <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between">
-          <span className="text-xs text-slate-500">
+        <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <span className="text-xs text-slate-500 text-center sm:text-left">
             {validRows.length > 0 ? `已準備就緒，點擊確認即可寫入 ${validRows.length} 位學員` : '請先上傳包含學生名單之檔案'}
           </span>
-          <div className="flex items-center space-x-2.5">
+          <div className="flex items-center space-x-2.5 w-full sm:w-auto justify-end">
             <button
               type="button"
               onClick={onClose}
               disabled={isImporting}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors disabled:opacity-50"
+              className="flex-1 sm:flex-none px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors disabled:opacity-50 text-center"
             >
               取消
             </button>
@@ -506,16 +506,16 @@ export const BatchImportStudentModal: React.FC<BatchImportStudentModalProps> = (
               type="button"
               onClick={handleConfirmImport}
               disabled={isImporting || validRows.length === 0}
-              className="inline-flex items-center space-x-1.5 px-6 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors disabled:opacity-50"
+              className="flex-1 sm:flex-none inline-flex items-center justify-center space-x-1.5 px-6 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors disabled:opacity-50 text-center"
             >
               {isImporting ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
                   <span>批次寫入中...</span>
                 </>
               ) : (
                 <>
-                  <CheckCircle2 className="w-4 h-4" />
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
                   <span>確認匯入 ({validRows.length} 筆)</span>
                 </>
               )}

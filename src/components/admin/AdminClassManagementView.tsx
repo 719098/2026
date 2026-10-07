@@ -675,8 +675,8 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
 
       {/* Add Class Modal */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-200 my-8">
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-4 sm:p-6 shadow-xl border border-slate-200 my-auto max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h2 className="text-base font-bold text-slate-800 flex items-center space-x-2">
                 <Plus className="w-5 h-5 text-teal-600" />
@@ -890,8 +890,8 @@ export const AdminClassManagementView: React.FC<AdminClassManagementViewProps> =
 
       {/* Edit Class Modal */}
       {editingClass && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-200 my-8">
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-4 sm:p-6 shadow-xl border border-slate-200 my-auto max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h2 className="text-base font-bold text-slate-800 flex items-center space-x-2">
                 <Edit className="w-5 h-5 text-teal-600" />

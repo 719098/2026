@@ -521,7 +521,7 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2">
           {onRefresh && (
             <button
               onClick={onRefresh}

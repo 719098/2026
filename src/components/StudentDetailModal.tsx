@@ -111,32 +111,32 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   const attitudeWeighted = Math.round(effectiveGrade.attitudeScore * GRADE_WEIGHTS.attitude * 100) / 100;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2.5 sm:p-5 animate-in fade-in duration-200">
       <div 
         className="bg-white rounded-3xl border border-slate-200 shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[92vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white p-6 relative">
+        <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white p-4 sm:p-6 relative">
           <button
             id="btn-close-student-modal"
             onClick={onClose}
-            className="absolute top-5 right-5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 p-2 rounded-xl transition-colors"
+            className="absolute top-4 right-4 sm:top-5 sm:right-5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 p-2 rounded-xl transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
 
-          <div className="flex flex-col sm:flex-row sm:items-center space-y-4 sm:space-y-0 sm:space-x-5">
+          <div className="flex flex-col sm:flex-row sm:items-center space-y-3 sm:space-y-0 sm:space-x-5">
             <StudentAvatar
               avatarUrl={student.avatarUrl}
               name={student.name}
-              sizeClassName="w-20 h-20"
+              sizeClassName="w-16 h-16 sm:w-20 sm:h-20"
               className="rounded-2xl border-2 border-teal-400/80 shadow-md"
             />
-            <div className="flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-2xl font-black text-white tracking-tight">{student.name}</h2>
-                <span className="text-sm font-semibold text-slate-300">({student.englishName})</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">{student.name}</h2>
+                <span className="text-xs sm:text-sm font-semibold text-slate-300">({student.englishName})</span>
                 <span className="text-xs font-mono font-bold bg-teal-500/20 text-teal-300 border border-teal-400/30 px-2 py-0.5 rounded-md">
                   {student.studentNumber}
                 </span>
@@ -145,25 +145,25 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                 </span>
               </div>
 
-              <div className="flex flex-wrap items-center gap-4 text-xs text-slate-300 mt-2">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-300 mt-2">
                 <span className="flex items-center">
-                  <BookOpen className="w-3.5 h-3.5 mr-1.5 text-teal-400" />
-                  班級：<strong className="text-white ml-1 font-semibold">{student.className}</strong>
+                  <BookOpen className="w-3.5 h-3.5 mr-1.5 text-teal-400 shrink-0" />
+                  <span>班級：<strong className="text-white ml-1 font-semibold">{student.className}</strong></span>
                 </span>
-                <span>•</span>
+                <span className="hidden sm:inline">•</span>
                 <span className="flex items-center">
-                  <GraduationCap className="w-3.5 h-3.5 mr-1.5 text-teal-400" />
-                  授課教師：<strong className="text-white ml-1 font-semibold">{teacherName}</strong>
+                  <GraduationCap className="w-3.5 h-3.5 mr-1.5 text-teal-400 shrink-0" />
+                  <span>授課教師：<strong className="text-white ml-1 font-semibold">{teacherName}</strong></span>
                 </span>
-                <span>•</span>
-                <span className="text-slate-400">{student.email}</span>
+                <span className="hidden sm:inline">•</span>
+                <span className="text-slate-400 truncate">{student.email}</span>
               </div>
             </div>
           </div>
         </div>
 
         {/* Modal Body - Scrollable */}
-        <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-slate-50/50">
+        <div className="p-3.5 sm:p-6 overflow-y-auto space-y-4 sm:space-y-6 flex-1 bg-slate-50/50">
           {/* 1. 出席統計 Summary Cards */}
           <div>
             <div className="flex items-center justify-between mb-3">
@@ -383,7 +383,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
               )}
             </div>
 
-            <div className="max-h-80 overflow-y-auto">
+            <div className="max-h-80 overflow-y-auto overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead className="bg-slate-50 sticky top-0 border-b border-slate-200 font-bold text-slate-700">
                   <tr>
@@ -498,13 +498,13 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between">
-          <span className="text-xs text-slate-500">
+        <div className="p-3.5 sm:p-4 bg-white border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+          <span className="text-xs text-slate-500 text-center sm:text-left">
             華語教學中心教務管理處 • 學生個人學籍檔案
           </span>
           <button
             onClick={onClose}
-            className="px-5 py-2 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors"
+            className="w-full sm:w-auto px-5 py-2 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors text-center"
           >
             關閉視窗
           </button>

@@ -128,7 +128,7 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
     <div className="space-y-5 pb-10 max-w-4xl mx-auto">
       {/* Non-today date warning banner */}
       {!isViewingToday && (
-        <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 flex items-center justify-between shadow-2xs">
+        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 sm:px-4 sm:py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-2xs">
           <div className="flex items-center space-x-2 text-xs font-semibold text-indigo-900">
             <Calendar className="w-4 h-4 text-indigo-600 shrink-0" />
             <span>
@@ -138,7 +138,7 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
           <button
             type="button"
             onClick={() => onSelectDate(realTodayStr)}
-            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors shadow-2xs shrink-0"
+            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors shadow-2xs shrink-0 self-start sm:self-auto"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>返回今日點名</span>
@@ -147,9 +147,9 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
       )}
 
       {/* Main Header Bar: Focused on Today's Action */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
         <div>
-          <div className="flex items-center space-x-2.5">
+          <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
               {isViewingToday ? '今日點名' : '課程點名'}
             </h1>
@@ -167,7 +167,7 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
           <button
             type="button"
             onClick={() => setIsDatePickerModalOpen(true)}
-            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+            className="w-full sm:w-auto inline-flex items-center justify-center space-x-1.5 px-3.5 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-colors cursor-pointer"
             title="選擇其他日期"
           >
             <Calendar className="w-4 h-4 text-slate-500" />

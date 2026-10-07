@@ -684,7 +684,7 @@ export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosMod
 
               {/* Table Container */}
               <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
-                <div className="max-h-72 overflow-y-auto">
+                <div className="max-h-72 overflow-y-auto overflow-x-auto">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold z-10 shadow-2xs">
                       <tr>
@@ -881,12 +881,12 @@ export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosMod
             )}
           </div>
 
-          <div className="flex items-center space-x-2.5 justify-end">
+          <div className="flex items-center space-x-2.5 w-full sm:w-auto justify-end">
             <button
               type="button"
               disabled={isUploading}
               onClick={onClose}
-              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-colors disabled:opacity-50"
+              className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-colors disabled:opacity-50 text-center"
             >
               {uploadSummary ? '完成關閉' : '取消'}
             </button>
@@ -894,16 +894,16 @@ export const BatchImportStudentPhotosModal: React.FC<BatchImportStudentPhotosMod
               type="button"
               disabled={isUploading || matchedCount === 0}
               onClick={handleStartUpload}
-              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl font-bold shadow-xs hover:shadow disabled:opacity-40 disabled:cursor-not-allowed flex items-center space-x-2 transition-all"
+              className="flex-1 sm:flex-none px-5 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl font-bold shadow-xs hover:shadow disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-all text-center"
             >
               {isUploading ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
                   <span>上傳處理中...</span>
                 </>
               ) : (
                 <>
-                  <Upload className="w-4 h-4" />
+                  <Upload className="w-4 h-4 shrink-0" />
                   <span>確認匯入 ({matchedCount} 張)</span>
                 </>
               )}
