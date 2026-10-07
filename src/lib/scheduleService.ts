@@ -847,21 +847,31 @@ export async function fetchCourseSessionsFromSupabase(
       const daysSince = getDaysDifference(todayDateStr, s.session_date);
       const isPast7Days = s.session_date < todayDateStr && daysSince > 7;
       const sessionEnded = isSessionEnded(s.session_date, et);
-      const isLocked = (isPast7Days && sessionEnded) || s.status === 'SUSPENDED';
+      const isCancelledOrSuspended = s.status === 'CANCELLED' || s.status === 'SUSPENDED';
+      const isRescheduledOut = s.status === 'RESCHEDULED';
+      const isMakeup = s.status === 'MAKEUP';
 
-      let calculatedStatus: any = s.status === 'SUSPENDED' ? 'holiday' : 'unmarked';
+      const isLocked = (isPast7Days && sessionEnded) || isCancelledOrSuspended;
+
+      let calculatedStatus: any = isCancelledOrSuspended
+        ? 'holiday'
+        : isRescheduledOut
+        ? 'rescheduled_out'
+        : isMakeup
+        ? 'rescheduled_in'
+        : 'unmarked';
       let attendanceData = undefined;
 
       // 1. Determine roster strictly based on historical facts and verified enrollment timeline on session_date
       let sessionStudentIds: string[] = [];
 
-      if (savedAtt && savedAtt.attendanceData) {
+      if (!isCancelledOrSuspended && !isRescheduledOut && savedAtt && savedAtt.attendanceData) {
         attendanceData = savedAtt.attendanceData;
         calculatedStatus = savedAtt.isSubmitted ? 'completed' : 'in_progress';
         const recordedIds = Object.keys(attendanceData || {});
         // Formal attendance records taken are historical facts
         sessionStudentIds = recordedIds;
-      } else if (isPast7Days && sessionEnded && s.status !== 'SUSPENDED') {
+      } else if (isPast7Days && sessionEnded && !isCancelledOrSuspended && !isRescheduledOut) {
         calculatedStatus = 'locked';
       }
 
@@ -900,6 +910,35 @@ export async function fetchCourseSessionsFromSupabase(
         status: calculatedStatus,
         attendanceData: attendanceData,
         isLocked: isLocked,
+        isCancelled: isCancelledOrSuspended,
+        isSuspended: isCancelledOrSuspended,
+        cancelReason: isCancelledOrSuspended ? (s.notes || '已停課') : undefined,
+        lockReason: isCancelledOrSuspended ? (s.notes || '此堂課已由管理員設定為停課') : undefined,
+        rescheduleInfo: isRescheduledOut
+          ? {
+              isRescheduled: true,
+              type: 'out',
+              originalDate: s.session_date,
+              originalTime: `${st} - ${et}`,
+              targetDate: s.rescheduled_to_date || '',
+              targetTime: `${st} - ${et}`,
+              reason: s.notes || '調課移出',
+              requestedBy: '行政教務組',
+              requestedAt: s.updated_at || s.created_at || '',
+            }
+          : isMakeup && s.rescheduled_from_session_id
+          ? {
+              isRescheduled: true,
+              type: 'in',
+              originalDate: '',
+              originalTime: '',
+              targetDate: s.session_date,
+              targetTime: `${st} - ${et}`,
+              reason: s.notes || '調課補課',
+              requestedBy: '行政教務組',
+              requestedAt: s.created_at || '',
+            }
+          : undefined,
       };
     });
 

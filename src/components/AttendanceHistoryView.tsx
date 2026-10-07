@@ -80,8 +80,9 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
       if (selectedClassFilter !== 'all' && c.className !== selectedClassFilter) return false;
       if (selectedStatusFilter !== 'all') {
         if (selectedStatusFilter === 'completed' && c.status !== 'completed') return false;
-        if (selectedStatusFilter === 'unmarked' && c.status !== 'unmarked') return false;
+        if (selectedStatusFilter === 'unmarked' && (c.status !== 'unmarked' || c.isCancelled || c.status === 'holiday')) return false;
         if (selectedStatusFilter === 'rescheduled' && !c.rescheduleInfo) return false;
+        if (selectedStatusFilter === 'cancelled' && !c.isCancelled && c.status !== 'holiday') return false;
       }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -277,7 +278,11 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
                     </td>
 
                     <td className="py-3.5 px-3 text-center">
-                      {isCompleted ? (
+                      {course.isCancelled || course.status === 'holiday' ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                          ❌ 已停課
+                        </span>
+                      ) : isCompleted ? (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                           🟢 已完成
                         </span>
@@ -301,12 +306,14 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
-                      {isRescheduledOut ? (
+                      {course.isCancelled || course.status === 'holiday' ? (
+                        <span className="text-slate-400 text-[11px]">停課免點名</span>
+                      ) : isRescheduledOut ? (
                         <span className="text-slate-400 text-[11px]">已移轉至補課日</span>
                       ) : (
                         <button
                           onClick={() => onOpenAttendance(course)}
-                          className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 inline-flex items-center space-x-1 transition-colors"
+                          className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 inline-flex items-center space-x-1 transition-colors cursor-pointer"
                         >
                           <Eye className="w-3.5 h-3.5 text-slate-500" />
                           <span>{isCompleted ? '檢視紀錄' : '前往點名'}</span>

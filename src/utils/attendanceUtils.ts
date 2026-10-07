@@ -272,7 +272,7 @@ export function calculateStudentAttendanceHistory(
 
   // Filter and process all sessions that belonged to this student
   safeCourses.forEach((c) => {
-    if (!c || c.status === 'holiday' || c.status === 'rescheduled_out') return;
+    if (!c || c.status === 'holiday' || c.status === 'rescheduled_out' || c.isCancelled || c.isSuspended) return;
 
     // Rule: Strictly verify genuine class. Never process sessions with empty or fake placeholder class names
     const invalidClassNames = ['華語班級', '班級', '未命名班級', '原班級', '新班級', '華語課程', '未設定班級', '華語密集班', '預設班級'];

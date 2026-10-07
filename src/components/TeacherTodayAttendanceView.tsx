@@ -73,13 +73,26 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
   const realTodayStr = getTodayDateStr();
   const isViewingToday = selectedDate === realTodayStr;
 
-  // Filter & sort today's courses by action priority:
+  // Filter out cancelled / suspended / holiday courses so they never demand teacher attendance
+  const activeTodayCourses = useMemo(() => {
+    return todayCourses.filter(
+      (c) => !c.isCancelled && !c.isSuspended && c.status !== 'holiday' && c.status !== 'rescheduled_out'
+    );
+  }, [todayCourses]);
+
+  const cancelledTodayCourses = useMemo(() => {
+    return todayCourses.filter(
+      (c) => c.isCancelled || c.isSuspended || c.status === 'holiday'
+    );
+  }, [todayCourses]);
+
+  // Filter & sort today's active courses by action priority:
   // 1. In Session & Unmarked (Highest)
   // 2. In Progress
   // 3. Unmarked
   // 4. Completed
   const sortedTodayCourses = useMemo(() => {
-    const list = [...todayCourses];
+    const list = [...activeTodayCourses];
     return list.sort((a, b) => {
       const aInSession = isViewingToday && isCurrentlyInSession(a.timeSlot) && a.status !== 'completed';
       const bInSession = isViewingToday && isCurrentlyInSession(b.timeSlot) && b.status !== 'completed';
@@ -100,11 +113,11 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
       // Secondary: by timeSlot
       return (a.timeSlot || '').localeCompare(b.timeSlot || '');
     });
-  }, [todayCourses, isViewingToday]);
+  }, [activeTodayCourses, isViewingToday]);
 
   const unmarkedTodayCount = useMemo(() => {
-    return todayCourses.filter((c) => c.status === 'unmarked' || c.status === 'in_progress').length;
-  }, [todayCourses]);
+    return activeTodayCourses.filter((c) => c.status === 'unmarked' || c.status === 'in_progress').length;
+  }, [activeTodayCourses]);
 
   const displayedPendingCourses = useMemo(() => {
     if (showAllPending) return pendingMakeupCourses;
@@ -141,7 +154,7 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
               {isViewingToday ? '今日點名' : '課程點名'}
             </h1>
             <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-              今日 {todayCourses.length} 堂 {unmarkedTodayCount > 0 ? `• 待點名 ${unmarkedTodayCount}` : '• 全部完成 ✓'}
+              今日 {activeTodayCourses.length} 堂 {unmarkedTodayCount > 0 ? `• 待點名 ${unmarkedTodayCount}` : '• 全部完成 ✓'}
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-600 font-semibold mt-1">
@@ -154,7 +167,7 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
           <button
             type="button"
             onClick={() => setIsDatePickerModalOpen(true)}
-            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-colors"
+            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-colors cursor-pointer"
             title="選擇其他日期"
           >
             <Calendar className="w-4 h-4 text-slate-500" />
@@ -162,6 +175,28 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
           </button>
         </div>
       </div>
+
+      {/* Notice Banner: Cancelled Sessions on selected date */}
+      {cancelledTodayCourses.length > 0 && (
+        <div className="bg-rose-50/90 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center space-x-2.5 text-xs font-semibold text-rose-900">
+            <X className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>
+              本日有 <strong>{cancelledTodayCourses.length} 堂課已停課</strong>（免點名，系統已自動排除於待點名名單，不計入學生應到與實到時數）
+            </span>
+          </div>
+          <div className="flex items-center flex-wrap gap-1.5">
+            {cancelledTodayCourses.map((c) => (
+              <span
+                key={c.id}
+                className="text-[11px] font-bold text-rose-800 bg-white px-2 py-0.5 rounded-lg border border-rose-200"
+              >
+                {c.className} {c.cancelReason ? `(${c.cancelReason})` : ''}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Pending Makeup Section (待補點名精簡區塊) */}
       {pendingMakeupCourses.length > 0 && (

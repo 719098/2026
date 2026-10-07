@@ -82,6 +82,16 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
     return calculateAttendanceStats(students, attendance, periodsCount);
   }, [students, attendance, periodsCount]);
 
+  // Live count of actual present students (實到人數)
+  const actualPresentStudentsCount = useMemo(() => {
+    return students.filter((s) => {
+      const record = attendance[s.id];
+      if (!record) return false;
+      const periods = [record.period1, record.period2, record.period3, record.period4].slice(0, periodsCount);
+      return periods.some((p) => p === 'present');
+    }).length;
+  }, [students, attendance, periodsCount]);
+
   // Check approved leaves for this date
   const applicableLeaves = useMemo(() => {
     return leaveRecords.filter((l) => l.date === course.date && l.status === 'approved');
@@ -287,15 +297,11 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
               <button
                 id="btn-back-to-courses"
                 onClick={onBack}
-                className="flex items-center space-x-1 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors"
+                className="flex items-center space-x-1 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
               >
                 <ArrowLeft className="w-4 h-4" />
                 <span>返回課程列表</span>
               </button>
-              <span className="text-slate-300">/</span>
-              <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
-                教師{periodsCount}節分節點名表 ({periodsCount} 小時班)
-              </span>
             </div>
 
             <div className="mt-2.5 flex flex-wrap items-center gap-3">
@@ -329,9 +335,9 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                 {course.classroom}
               </span>
               <span>•</span>
-              <span className="flex items-center font-semibold text-slate-700">
-                <Users className="w-3.5 h-3.5 mr-1 text-slate-400" />
-                應到學生 {students.length} 人 (共 {periodsCount} 節課 / 總計 {students.length * periodsCount} 小時)
+              <span className="flex items-center font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
+                <Users className="w-3.5 h-3.5 mr-1.5 text-teal-600" />
+                應到 {students.length} 人 / 實到 {actualPresentStudentsCount} 人
               </span>
             </div>
           </div>
@@ -466,29 +472,28 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                   />
                 </th>
                 <th className="py-3.5 px-3 w-10 text-center">#</th>
-                <th className="py-3.5 px-4 min-w-[200px]">學生資訊</th>
-                <th className="py-3.5 px-3 text-center min-w-[150px]">
+                <th className="py-3.5 px-4 min-w-[160px]">學生資訊</th>
+                <th className="py-3.5 px-2 text-center min-w-[95px]">
                   <div>第 1 節</div>
                   <div className="text-[10px] font-normal text-slate-500">{course?.periodTimes?.[0] || '09:00-09:50'}</div>
                 </th>
-                <th className="py-3.5 px-3 text-center min-w-[150px]">
+                <th className="py-3.5 px-2 text-center min-w-[95px]">
                   <div>第 2 節</div>
                   <div className="text-[10px] font-normal text-slate-500">{course?.periodTimes?.[1] || '10:00-10:50'}</div>
                 </th>
                 {is3H && (
-                  <th className="py-3.5 px-3 text-center min-w-[150px]">
+                  <th className="py-3.5 px-2 text-center min-w-[95px]">
                     <div>第 3 節</div>
                     <div className="text-[10px] font-normal text-slate-500">{course?.periodTimes?.[2] || '11:00-11:50'}</div>
                   </th>
                 )}
                 {is4H && (
-                  <th className="py-3.5 px-3 text-center min-w-[150px]">
+                  <th className="py-3.5 px-2 text-center min-w-[95px]">
                     <div>第 4 節</div>
                     <div className="text-[10px] font-normal text-slate-500">{course?.periodTimes?.[3] || '12:00-12:50'}</div>
                   </th>
                 )}
                 <th className="py-3.5 px-3 text-center min-w-[140px]">整堂快捷</th>
-                <th className="py-3.5 px-4 text-center min-w-[110px]">今日統計</th>
                 <th className="py-3.5 px-4 text-right min-w-[100px]">備註</th>
               </tr>
             </thead>
@@ -540,14 +545,9 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                       <div className="flex items-center space-x-3">
                         <StudentAvatar avatarUrl={student.avatarUrl} name={student.name} sizeClassName="w-10 h-10" />
                         <div>
-                          <div className="flex items-center space-x-1.5">
+                          <div className="flex items-center space-x-2">
                             <span className="font-extrabold text-slate-900 text-sm">{student.name}</span>
-                            <span className="text-[11px] font-medium text-slate-500">{student.englishName}</span>
-                          </div>
-                          <div className="flex items-center space-x-2 text-[11px] text-slate-500 mt-0.5">
-                            <span className="font-mono">{student.studentNumber}</span>
-                            <span>•</span>
-                            <span className="bg-slate-100 text-slate-700 px-1 rounded font-medium">
+                            <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[11px] font-medium border border-slate-200">
                               {student.nationality}
                             </span>
                           </div>
@@ -560,188 +560,115 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                       </div>
                     </td>
 
-                    {/* Period 1 Toggle Buttons */}
-                    <td className="py-3 px-3">
-                      <div className="flex items-center justify-center space-x-1">
-                        <button
-                          disabled={isReadOnly}
-                          onClick={() => handleSetPeriodStatus(student.id, 'period1', 'present')}
-                          className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                            record.period1 === 'present'
-                              ? 'bg-emerald-600 text-white shadow-xs'
-                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          }`}
-                        >
-                          出席
-                        </button>
-                        <button
-                          disabled={isReadOnly}
-                          onClick={() => handleSetPeriodStatus(student.id, 'period1', 'leave')}
-                          className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                            record.period1 === 'leave'
-                              ? 'bg-blue-600 text-white shadow-xs'
-                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          }`}
-                        >
-                          請假
-                        </button>
-                        <button
-                          disabled={isReadOnly}
-                          onClick={() => handleSetPeriodStatus(student.id, 'period1', 'absent')}
-                          className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                            record.period1 === 'absent'
-                              ? 'bg-rose-600 text-white shadow-xs'
-                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          }`}
-                        >
-                          缺席
-                        </button>
-                      </div>
+                    {/* Period 1 Compact Dropdown */}
+                    <td className="py-3 px-2 text-center">
+                      <select
+                        disabled={isReadOnly}
+                        value={record.period1 || 'present'}
+                        onChange={(e) => handleSetPeriodStatus(student.id, 'period1', e.target.value as AttendanceStatus)}
+                        className={`w-full max-w-[85px] mx-auto px-2 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer focus:outline-hidden focus:ring-2 focus:ring-teal-500 disabled:opacity-60 disabled:cursor-not-allowed ${
+                          record.period1 === 'present'
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                            : record.period1 === 'leave'
+                            ? 'bg-blue-50 text-blue-800 border-blue-300'
+                            : 'bg-rose-50 text-rose-800 border-rose-300'
+                        }`}
+                      >
+                        <option value="present" className="text-emerald-700 font-bold bg-white">出席</option>
+                        <option value="leave" className="text-blue-700 font-bold bg-white">請假</option>
+                        <option value="absent" className="text-rose-700 font-bold bg-white">缺席</option>
+                      </select>
                     </td>
 
-                    {/* Period 2 Toggle Buttons */}
-                    <td className="py-3 px-3">
-                      <div className="flex items-center justify-center space-x-1">
-                        <button
-                          disabled={isReadOnly}
-                          onClick={() => handleSetPeriodStatus(student.id, 'period2', 'present')}
-                          className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                            record.period2 === 'present'
-                              ? 'bg-emerald-600 text-white shadow-xs'
-                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          }`}
-                        >
-                          出席
-                        </button>
-                        <button
-                          disabled={isReadOnly}
-                          onClick={() => handleSetPeriodStatus(student.id, 'period2', 'leave')}
-                          className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                            record.period2 === 'leave'
-                              ? 'bg-blue-600 text-white shadow-xs'
-                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          }`}
-                        >
-                          請假
-                        </button>
-                        <button
-                          disabled={isReadOnly}
-                          onClick={() => handleSetPeriodStatus(student.id, 'period2', 'absent')}
-                          className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                            record.period2 === 'absent'
-                              ? 'bg-rose-600 text-white shadow-xs'
-                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          }`}
-                        >
-                          缺席
-                        </button>
-                      </div>
+                    {/* Period 2 Compact Dropdown */}
+                    <td className="py-3 px-2 text-center">
+                      <select
+                        disabled={isReadOnly}
+                        value={record.period2 || 'present'}
+                        onChange={(e) => handleSetPeriodStatus(student.id, 'period2', e.target.value as AttendanceStatus)}
+                        className={`w-full max-w-[85px] mx-auto px-2 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer focus:outline-hidden focus:ring-2 focus:ring-teal-500 disabled:opacity-60 disabled:cursor-not-allowed ${
+                          record.period2 === 'present'
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                            : record.period2 === 'leave'
+                            ? 'bg-blue-50 text-blue-800 border-blue-300'
+                            : 'bg-rose-50 text-rose-800 border-rose-300'
+                        }`}
+                      >
+                        <option value="present" className="text-emerald-700 font-bold bg-white">出席</option>
+                        <option value="leave" className="text-blue-700 font-bold bg-white">請假</option>
+                        <option value="absent" className="text-rose-700 font-bold bg-white">缺席</option>
+                      </select>
                     </td>
 
-                    {/* Period 3 Toggle Buttons (If >= 3-hour class) */}
+                    {/* Period 3 Compact Dropdown (If >= 3-hour class) */}
                     {is3H && (
-                      <td className="py-3 px-3">
-                        <div className="flex items-center justify-center space-x-1">
-                          <button
-                            disabled={isReadOnly}
-                            onClick={() => handleSetPeriodStatus(student.id, 'period3', 'present')}
-                            className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                              record.period3 === 'present'
-                                ? 'bg-emerald-600 text-white shadow-xs'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                            }`}
-                          >
-                            出席
-                          </button>
-                          <button
-                            disabled={isReadOnly}
-                            onClick={() => handleSetPeriodStatus(student.id, 'period3', 'leave')}
-                            className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                              record.period3 === 'leave'
-                                ? 'bg-blue-600 text-white shadow-xs'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                            }`}
-                          >
-                            請假
-                          </button>
-                          <button
-                            disabled={isReadOnly}
-                            onClick={() => handleSetPeriodStatus(student.id, 'period3', 'absent')}
-                            className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                              record.period3 === 'absent'
-                                ? 'bg-rose-600 text-white shadow-xs'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                            }`}
-                          >
-                            缺席
-                          </button>
-                        </div>
+                      <td className="py-3 px-2 text-center">
+                        <select
+                          disabled={isReadOnly}
+                          value={record.period3 || 'present'}
+                          onChange={(e) => handleSetPeriodStatus(student.id, 'period3', e.target.value as AttendanceStatus)}
+                          className={`w-full max-w-[85px] mx-auto px-2 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer focus:outline-hidden focus:ring-2 focus:ring-teal-500 disabled:opacity-60 disabled:cursor-not-allowed ${
+                            record.period3 === 'present'
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                              : record.period3 === 'leave'
+                              ? 'bg-blue-50 text-blue-800 border-blue-300'
+                              : 'bg-rose-50 text-rose-800 border-rose-300'
+                          }`}
+                        >
+                          <option value="present" className="text-emerald-700 font-bold bg-white">出席</option>
+                          <option value="leave" className="text-blue-700 font-bold bg-white">請假</option>
+                          <option value="absent" className="text-rose-700 font-bold bg-white">缺席</option>
+                        </select>
                       </td>
                     )}
 
-                    {/* Period 4 Toggle Buttons (If >= 4-hour class) */}
+                    {/* Period 4 Compact Dropdown (If >= 4-hour class) */}
                     {is4H && (
-                      <td className="py-3 px-3">
-                        <div className="flex items-center justify-center space-x-1">
-                          <button
-                            disabled={isReadOnly}
-                            onClick={() => handleSetPeriodStatus(student.id, 'period4', 'present')}
-                            className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                              record.period4 === 'present'
-                                ? 'bg-emerald-600 text-white shadow-xs'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                            }`}
-                          >
-                            出席
-                          </button>
-                          <button
-                            disabled={isReadOnly}
-                            onClick={() => handleSetPeriodStatus(student.id, 'period4', 'leave')}
-                            className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                              record.period4 === 'leave'
-                                ? 'bg-blue-600 text-white shadow-xs'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                            }`}
-                          >
-                            請假
-                          </button>
-                          <button
-                            disabled={isReadOnly}
-                            onClick={() => handleSetPeriodStatus(student.id, 'period4', 'absent')}
-                            className={`px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all ${
-                              record.period4 === 'absent'
-                                ? 'bg-rose-600 text-white shadow-xs'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                            }`}
-                          >
-                            缺席
-                          </button>
-                        </div>
+                      <td className="py-3 px-2 text-center">
+                        <select
+                          disabled={isReadOnly}
+                          value={record.period4 || 'present'}
+                          onChange={(e) => handleSetPeriodStatus(student.id, 'period4', e.target.value as AttendanceStatus)}
+                          className={`w-full max-w-[85px] mx-auto px-2 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer focus:outline-hidden focus:ring-2 focus:ring-teal-500 disabled:opacity-60 disabled:cursor-not-allowed ${
+                            record.period4 === 'present'
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                            : record.period4 === 'leave'
+                            ? 'bg-blue-50 text-blue-800 border-blue-300'
+                            : 'bg-rose-50 text-rose-800 border-rose-300'
+                          }`}
+                        >
+                          <option value="present" className="text-emerald-700 font-bold bg-white">出席</option>
+                          <option value="leave" className="text-blue-700 font-bold bg-white">請假</option>
+                          <option value="absent" className="text-rose-700 font-bold bg-white">缺席</option>
+                        </select>
                       </td>
                     )}
 
-                    {/* Batch Actions for this student */}
+                    {/* Batch Actions for this student (整堂快捷) */}
                     <td className="py-3 px-3 text-center">
                       {!isReadOnly ? (
                         <div className="flex items-center justify-center space-x-1">
                           <button
+                            type="button"
                             onClick={() => handleBatchStudentStatus(student.id, 'present')}
                             title={`一鍵將 ${periodsCount} 節全設為出席`}
-                            className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded text-[11px] font-bold transition-colors"
+                            className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded text-[11px] font-bold transition-colors cursor-pointer"
                           >
                             全到
                           </button>
                           <button
+                            type="button"
                             onClick={() => handleBatchStudentStatus(student.id, 'leave')}
                             title={`一鍵將 ${periodsCount} 節全設為請假`}
-                            className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded text-[11px] font-bold transition-colors"
+                            className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded text-[11px] font-bold transition-colors cursor-pointer"
                           >
                             整堂請假
                           </button>
                           <button
+                            type="button"
                             onClick={() => handleBatchStudentStatus(student.id, 'absent')}
                             title={`一鍵將 ${periodsCount} 節全設為缺席`}
-                            className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded text-[11px] font-bold transition-colors"
+                            className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded text-[11px] font-bold transition-colors cursor-pointer"
                           >
                             整堂缺席
                           </button>
@@ -749,25 +676,6 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                       ) : (
                         <span className="text-slate-400 text-[11px]">-</span>
                       )}
-                    </td>
-
-                    {/* Today Summary */}
-                    <td className="py-3 px-4 text-center">
-                      <div className="font-mono text-xs">
-                        {studentHours.present === periodsCount ? (
-                          <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded">
-                            {periodsCount}H 全勤
-                          </span>
-                        ) : studentHours.absent > 0 ? (
-                          <span className="text-rose-700 font-bold bg-rose-50 px-2 py-0.5 rounded">
-                            缺 {studentHours.absent}H
-                          </span>
-                        ) : (
-                          <span className="text-blue-700 font-bold bg-blue-50 px-2 py-0.5 rounded">
-                            假 {studentHours.leave}H
-                          </span>
-                        )}
-                      </div>
                     </td>
 
                     {/* Remarks & Evidence Button */}

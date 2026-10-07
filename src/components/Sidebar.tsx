@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   CalendarCheck, 
   CalendarDays, 
@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Sparkles,
   ChevronRight,
+  ChevronDown,
   ShieldCheck,
   UserCheck,
   ArrowRightLeft,
@@ -82,8 +83,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   adminProfile,
   onLogout,
 }) => {
-  // Teacher navigation items
-  const teacherMenuItems: MenuItem[] = [
+  // Teacher core navigation items (授課核心)
+  const coreMenuItems: MenuItem[] = [
     {
       id: 'today',
       label: '今日點名與日程',
@@ -98,6 +99,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badge: '100%',
       badgeColor: 'bg-zinc-800 text-zinc-300 border-zinc-700',
     },
+  ];
+
+  // Teacher tracking and history items (追蹤與紀錄 - 下拉收合選單)
+  const trackingMenuItems: MenuItem[] = [
     {
       id: 'classes',
       label: '個別學生出席統計',
@@ -121,6 +126,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: ClipboardList,
     },
   ];
+
+  const isTrackingTabActive = ['classes', 'stats', 'schedule', 'history'].includes(activeTab);
+  const [isTrackingOpen, setIsTrackingOpen] = useState<boolean>(() => isTrackingTabActive);
+
+  // Auto-expand if the active tab switches to one of the tracking items
+  useEffect(() => {
+    if (isTrackingTabActive) {
+      setIsTrackingOpen(true);
+    }
+  }, [isTrackingTabActive]);
 
   // Admin navigation items
   const adminMenuItems: AdminMenuItem[] = [
@@ -344,12 +359,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           ) : (
             <div className="space-y-4">
+              {/* Category 1: Teaching Core (授課核心) */}
               <div>
                 <div className="text-[10px] font-bold text-slate-400 px-3 mb-1.5 tracking-wider uppercase">
                   授課核心
                 </div>
                 <nav className="space-y-0.5">
-                  {teacherMenuItems.slice(0, 3).map((item) => {
+                  {coreMenuItems.map((item) => {
                     const Icon = item.icon;
                     const isActive = activeTab === item.id;
                     return (
@@ -378,33 +394,67 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </nav>
               </div>
 
+              {/* Category 2: Tracking & History (追蹤與紀錄 - 可展開/收合選單) */}
               <div>
-                <div className="text-[10px] font-bold text-slate-400 px-3 mb-1.5 tracking-wider uppercase">
-                  追蹤與紀錄
-                </div>
-                <nav className="space-y-0.5">
-                  {teacherMenuItems.slice(3).map((item) => {
-                    const Icon = item.icon;
-                    const isActive = activeTab === item.id;
-                    return (
-                      <button
-                        key={item.id}
-                        id={`nav-${item.id}`}
-                        onClick={() => handleTabSelect(item.id)}
-                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
-                          isActive
-                            ? 'bg-[#E8EEF2] text-[#26313B] font-bold border-l-3 border-[#536B7A] shadow-2xs pl-2.5'
-                            : 'text-slate-600 hover:bg-[#F1F5F9] hover:text-slate-900 font-medium'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-2.5">
-                          <Icon className={`w-4 h-4 ${isActive ? 'text-[#536B7A]' : 'text-slate-400'}`} />
-                          <span>{item.label}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </nav>
+                <button
+                  type="button"
+                  id="teacher-nav-tracking-toggle"
+                  onClick={() => setIsTrackingOpen((prev) => !prev)}
+                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-colors cursor-pointer ${
+                    isTrackingTabActive && !isTrackingOpen
+                      ? 'bg-slate-100 text-[#26313B]'
+                      : 'text-slate-400 hover:text-slate-700 hover:bg-slate-50'
+                  }`}
+                  title={isTrackingOpen ? '點擊收合選單' : '點擊展開選單'}
+                >
+                  <span className="flex items-center space-x-1.5">
+                    <span>追蹤與紀錄</span>
+                    {isTrackingTabActive && !isTrackingOpen && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#536B7A]" title="目前頁面在此分組中" />
+                    )}
+                  </span>
+                  <div className="flex items-center space-x-1">
+                    <span className="text-[9px] font-normal normal-case opacity-75">
+                      {isTrackingOpen ? '收合' : '展開'}
+                    </span>
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                        isTrackingOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </div>
+                </button>
+
+                {isTrackingOpen && (
+                  <nav className="space-y-0.5 mt-1">
+                    {trackingMenuItems.map((item) => {
+                      const Icon = item.icon;
+                      const isActive = activeTab === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          id={`nav-${item.id}`}
+                          onClick={() => handleTabSelect(item.id)}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
+                            isActive
+                              ? 'bg-[#E8EEF2] text-[#26313B] font-bold border-l-3 border-[#536B7A] shadow-2xs pl-2.5'
+                              : 'text-slate-600 hover:bg-[#F1F5F9] hover:text-slate-900 font-medium'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-2.5">
+                            <Icon className={`w-4 h-4 ${isActive ? 'text-[#536B7A]' : 'text-slate-400'}`} />
+                            <span>{item.label}</span>
+                          </div>
+                          {item.badge && (
+                            <span className="text-[10px] font-medium px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                              {item.badge}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </nav>
+                )}
               </div>
             </div>
           )}

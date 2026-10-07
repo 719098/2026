@@ -347,6 +347,9 @@ export interface CourseSession {
   lastUpdated?: string;
   isLocked?: boolean;
   lockReason?: string;
+  isCancelled?: boolean;
+  isSuspended?: boolean;
+  cancelReason?: string;
 }
 
 export interface DayScheduleSummary {

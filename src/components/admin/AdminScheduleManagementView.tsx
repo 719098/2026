@@ -603,6 +603,7 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
       } else {
         showToast(`調課成功！原堂次已標記為調課，並於 ${rescheduleTargetDate} 建立補課堂次。`);
         setReschedulingSession(null);
+        onRefreshData?.();
         await loadScheduleData();
       }
     } catch (err: any) {
@@ -624,6 +625,7 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
         showToast(res.error.message || '停課操作失敗', true);
       } else {
         showToast('課堂已標記為停課狀態');
+        onRefreshData?.();
         await loadScheduleData();
       }
     } catch (err: any) {
@@ -727,6 +729,7 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
         showToast(`已成功將 ${res.updatedCount} 堂課設定為【停課】狀態！`);
         setSelectedSessionIds(new Set());
         setShowBatchCancelModal(false);
+        onRefreshData?.();
         await loadScheduleData();
       }
     } catch (err: any) {
@@ -747,6 +750,7 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
       } else {
         showToast(`已成功將 ${res.updatedCount} 堂課恢復為【正常授課】！`);
         setSelectedSessionIds(new Set());
+        onRefreshData?.();
         await loadScheduleData();
       }
     } catch (err: any) {
@@ -772,6 +776,7 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
         }
         showToast(msg, res.deletedCount === 0 && res.blockedCount > 0);
         setSelectedSessionIds(new Set());
+        onRefreshData?.();
         await loadScheduleData();
       }
     } catch (err: any) {
@@ -1275,6 +1280,7 @@ export const AdminScheduleManagementView: React.FC<AdminScheduleManagementViewPr
                                   if (res.error) showToast(res.error.message || '恢復失敗', true);
                                   else {
                                     showToast('課堂已恢復正常上課');
+                                    onRefreshData?.();
                                     await loadScheduleData();
                                   }
                                 }}

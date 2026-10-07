@@ -1029,12 +1029,22 @@ export default function App() {
         c.date < today &&
         c.date >= sevenDaysAgo &&
         c.status === 'unmarked' &&
-        !c.isLocked
+        !c.isLocked &&
+        !c.isCancelled &&
+        !c.isSuspended &&
+        c.status !== 'holiday'
     );
   }, [teacherCourses]);
 
   const pendingCountForHeader = useMemo(() => {
-    return currentDayCourses.filter((c) => c.status === 'unmarked' || c.status === 'in_progress').length;
+    return currentDayCourses.filter(
+      (c) =>
+        (c.status === 'unmarked' || c.status === 'in_progress') &&
+        !c.isLocked &&
+        !c.isCancelled &&
+        !c.isSuspended &&
+        c.status !== 'holiday'
+    ).length;
   }, [currentDayCourses]);
 
   const pendingLeaveCount = useMemo(() => {
@@ -1076,6 +1086,10 @@ export default function App() {
   const handleStartAttendance = (course: CourseSession) => {
     if (!isCourseOwnedByCurrentTeacher(course)) {
       showToast('⚠️ 無權限存取非本人授課之課堂點名！', 'warning');
+      return;
+    }
+    if (course.isCancelled || course.isSuspended || course.status === 'holiday') {
+      showToast('⚠️ 該堂課已由行政端設定為停課，無需點名！', 'info');
       return;
     }
     setIsReadOnlyAttendance(false);
@@ -1499,6 +1513,7 @@ export default function App() {
                     handleStartAttendance(c);
                   }}
                   onShowToast={showToast}
+                  onRefreshData={loadSupabaseStudents}
                 />
               ) : activeTab === 'history' ? (
                 /* 5. Attendance History */

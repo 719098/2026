@@ -103,6 +103,7 @@ interface RescheduleScheduleViewProps {
   onSelectDate: (date: string) => void;
   onStartAttendance: (course: CourseSession) => void;
   onShowToast?: (message: string, type?: 'success' | 'warning' | 'info') => void;
+  onRefreshData?: () => void;
 }
 
 export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
@@ -113,6 +114,7 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
   onSelectDate,
   onStartAttendance,
   onShowToast,
+  onRefreshData,
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'rescheduled' | 'makeup' | 'cancelled' | 'holiday'>('all');
   const [dbSessions, setDbSessions] = useState<ClassSessionEntity[]>([]);
@@ -269,6 +271,7 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
       setIsMakeupModalOpen(false);
       setMakeupReason('');
       setMakeupDate('');
+      onRefreshData?.();
       loadScheduleData();
     }
   };
@@ -292,6 +295,7 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
       if (onShowToast) onShowToast('✨ 已將課堂標記為停課！', 'success');
       setCancelTargetSession(null);
       setCancelReason('');
+      onRefreshData?.();
       loadScheduleData();
     }
   };
@@ -311,6 +315,7 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
       if (onShowToast) onShowToast(`❌ 恢復上課失敗: ${error.message || '請確認權限'}`, 'warning');
     } else {
       if (onShowToast) onShowToast('✨ 已將課堂恢復為正常上課！', 'success');
+      onRefreshData?.();
       loadScheduleData();
     }
   };
