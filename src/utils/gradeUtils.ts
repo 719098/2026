@@ -1,5 +1,5 @@
 import { Student, StudentGrade, CourseSession, TransferClassRecord } from '../types';
-import { calculateStudentAttendanceHistory } from './attendanceUtils';
+import { calculateStudentAttendanceHistory, isSessionCancelledOrSuspended } from './attendanceUtils';
 
 export const GRADE_WEIGHTS = {
   attendance: 0.20, // 20% 出席
@@ -47,7 +47,7 @@ export function calculateStudentAttendanceScore(
     return {
       attendanceScore,
       weightedScore,
-      totalSessions: history.dailyRecords.length,
+      totalSessions: history.dailyRecords.filter((r) => !r.isCancelled).length,
       totalPeriods,
       presentPeriods: history.presentHours,
       leavePeriods: history.leaveHours,
@@ -63,6 +63,10 @@ export function calculateStudentAttendanceScore(
   let sessionCount = 0;
 
   for (const c of courses) {
+    if (!c || isSessionCancelledOrSuspended(c)) {
+      continue;
+    }
+
     if (studentClassName && c.className && c.className !== studentClassName && c.classId !== studentClassName) {
       continue;
     }
@@ -103,8 +107,8 @@ export function calculateStudentAttendanceScore(
 
   if (totalPeriods === 0) {
     return {
-      attendanceScore: 0,
-      weightedScore: 0,
+      attendanceScore: 100,
+      weightedScore: 20,
       totalSessions: 0,
       totalPeriods: 0,
       presentPeriods: 0,
@@ -148,6 +152,65 @@ export function calculateTotalGrade(
     attitudeScore * GRADE_WEIGHTS.attitude;
 
   return Math.round(total * 100) / 100;
+}
+
+/**
+ * Unified getter for student's effective grade:
+ * Guarantees that ADMIN, TEACHER, reports, detail modal, and CSV exports
+ * all evaluate the exact same 6 categories, dynamic attendance, and total score.
+ */
+export function getStudentEffectiveGrade(
+  student: Student,
+  allGrades?: Record<string, StudentGrade>,
+  allCourses?: CourseSession[],
+  transferRecords?: TransferClassRecord[]
+): StudentGrade {
+  const existing = allGrades ? allGrades[student.id] : undefined;
+  const quizScore = existing?.quizScore ?? 85;
+  const midtermScore = existing?.midtermScore ?? 80;
+  const finalScore = existing?.finalScore ?? 85;
+  const homeworkScore = existing?.homeworkScore ?? 90;
+  const attitudeScore = existing?.attitudeScore ?? 90;
+
+  let attendanceScore = 100;
+  if (allCourses && allCourses.length > 0) {
+    const attResult = calculateStudentAttendanceScore(
+      student.id,
+      allCourses,
+      student.className,
+      student,
+      transferRecords
+    );
+    attendanceScore = attResult.attendanceScore;
+  } else if (existing?.attendanceScore !== undefined) {
+    attendanceScore = existing.attendanceScore;
+  } else if (student.overallAttendanceRate !== undefined) {
+    attendanceScore = student.overallAttendanceRate;
+  }
+
+  const totalScore = calculateTotalGrade(
+    attendanceScore,
+    quizScore,
+    midtermScore,
+    finalScore,
+    homeworkScore,
+    attitudeScore
+  );
+
+  return {
+    studentId: student.id,
+    studentName: student.name,
+    className: student.className || '',
+    classId: student.classId,
+    attendanceScore,
+    quizScore,
+    midtermScore,
+    finalScore,
+    homeworkScore,
+    attitudeScore,
+    totalScore,
+    updatedAt: existing?.updatedAt,
+  };
 }
 
 // Calculate comprehensive final grade: 40% Listening/Speaking + 40% Reading/Writing + 20% Performance (50% attendance + 50% daily)

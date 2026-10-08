@@ -14,19 +14,23 @@ import {
   Layers,
   FileSpreadsheet
 } from 'lucide-react';
-import { Student, ClassEntity, CourseSession } from '../../types';
-import { calculateFinalGrade, getStudentScores } from '../../utils/gradeUtils';
+import { Student, ClassEntity, CourseSession, StudentGrade, TransferClassRecord } from '../../types';
+import { getStudentEffectiveGrade, getLetterGrade } from '../../utils/gradeUtils';
 
 interface AdminReportsViewProps {
   students: Student[];
   classes: ClassEntity[];
   allCourses: CourseSession[];
+  allGrades?: Record<string, StudentGrade>;
+  transferRecords?: TransferClassRecord[];
 }
 
 export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
   students,
   classes,
   allCourses,
+  allGrades = {},
+  transferRecords = [],
 }) => {
   const [selectedReportTab, setSelectedReportTab] = useState<'attendance' | 'grades' | 'certificate'>('attendance');
   const [selectedStudentId, setSelectedStudentId] = useState<string>(students?.[0]?.id || '');
@@ -39,35 +43,23 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
     students.reduce((acc, s) => acc + s.overallAttendanceRate, 0) / (totalStudents || 1)
   ).toFixed(1);
 
-  // Helper to compute attendance grade score (50% leave weighting)
-  const getAttendanceScore = (s: Student) => {
-    const total = (s.totalPresentHours || 0) + (s.totalLeaveHours || 0) + (s.totalAbsenceHours || 0);
-    if (total > 0) {
-      const earned = (s.totalPresentHours || 0) * 1.0 + (s.totalLeaveHours || 0) * 0.5;
-      return Math.round((earned / total) * 1000) / 10;
-    }
-    return s.overallAttendanceRate ?? 100;
-  };
-
-  // Grade distributions
+  // Grade distributions based on official unified 6-item grades
   const gradeBuckets = {
     A: students.filter((s) => {
-      const scores = getStudentScores(s);
-      return calculateFinalGrade(scores.listeningSpeaking, scores.readingWriting, scores.dailyPerformance, getAttendanceScore(s)) >= 80;
+      const g = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords);
+      return g.totalScore >= 80;
     }).length,
     B: students.filter((s) => {
-      const scores = getStudentScores(s);
-      const g = calculateFinalGrade(scores.listeningSpeaking, scores.readingWriting, scores.dailyPerformance, getAttendanceScore(s));
-      return g >= 70 && g < 80;
+      const g = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords);
+      return g.totalScore >= 70 && g.totalScore < 80;
     }).length,
     C: students.filter((s) => {
-      const scores = getStudentScores(s);
-      const g = calculateFinalGrade(scores.listeningSpeaking, scores.readingWriting, scores.dailyPerformance, getAttendanceScore(s));
-      return g >= 60 && g < 70;
+      const g = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords);
+      return g.totalScore >= 60 && g.totalScore < 70;
     }).length,
     F: students.filter((s) => {
-      const scores = getStudentScores(s);
-      return calculateFinalGrade(scores.listeningSpeaking, scores.readingWriting, scores.dailyPerformance, getAttendanceScore(s)) < 60;
+      const g = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords);
+      return g.totalScore < 60;
     }).length,
   };
 
@@ -309,15 +301,9 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
                     <strong className="text-emerald-700">{selectedStudentForCert.overallAttendanceRate}%</strong>，期末學業總評成績為{' '}
                     <strong className="text-[#536B7A]">
                       {(() => {
-                        const certScores = getStudentScores(selectedStudentForCert);
-                        const finalG = calculateFinalGrade(
-                          certScores.listeningSpeaking,
-                          certScores.readingWriting,
-                          certScores.dailyPerformance,
-                          selectedStudentForCert.overallAttendanceRate
-                        );
-                        const letter = finalG >= 90 ? 'A+' : finalG >= 80 ? 'A' : finalG >= 70 ? 'B' : finalG >= 60 ? 'C' : 'F';
-                        return `${finalG.toFixed(1)} 分（成績等第 ${letter}）`;
+                        const certGrade = getStudentEffectiveGrade(selectedStudentForCert, allGrades, allCourses, transferRecords);
+                        const letter = getLetterGrade(certGrade.totalScore);
+                        return `${certGrade.totalScore} 分（成績等第 ${letter.letter}）`;
                       })()}
                     </strong>
                     ，特頒此證，以資證明。

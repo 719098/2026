@@ -10,8 +10,8 @@ import {
   AlertTriangle,
   X
 } from 'lucide-react';
-import { Student, ClassEntity } from '../../types';
-import { calculateFinalGrade, calculatePerformanceScore, getStudentScores } from '../../utils/gradeUtils';
+import { Student, ClassEntity, StudentGrade, CourseSession, TransferClassRecord } from '../../types';
+import { getStudentEffectiveGrade, getLetterGrade } from '../../utils/gradeUtils';
 import { exportGradesToCsv } from '../../utils/csvExport';
 import { InfoTooltip } from '../common/InfoTooltip';
 import { BatchActionBar, BatchActionItem } from '../common/BatchActionBar';
@@ -19,12 +19,18 @@ import { BatchActionBar, BatchActionItem } from '../common/BatchActionBar';
 interface AdminGradesManagementViewProps {
   students: Student[];
   classes: ClassEntity[];
+  allCourses?: CourseSession[];
+  allGrades?: Record<string, StudentGrade>;
+  transferRecords?: TransferClassRecord[];
   onSelectStudentDetail: (student: Student) => void;
 }
 
 export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps> = ({
   students,
   classes,
+  allCourses = [],
+  allGrades = {},
+  transferRecords = [],
   onSelectStudentDetail,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -34,16 +40,6 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
   // Batch selection
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
 
-  // Helper to compute attendance grade score (50% leave weighting)
-  const getAttendanceScore = (s: Student) => {
-    const total = (s.totalPresentHours || 0) + (s.totalLeaveHours || 0) + (s.totalAbsenceHours || 0);
-    if (total > 0) {
-      const earned = (s.totalPresentHours || 0) * 1.0 + (s.totalLeaveHours || 0) * 0.5;
-      return Math.round((earned / total) * 1000) / 10;
-    }
-    return s.overallAttendanceRate ?? 100;
-  };
-
   // Filter students
   const filteredStudents = students.filter((s) => {
     const matchSearch =
@@ -52,15 +48,9 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
       s.studentNumber.includes(searchTerm);
     const matchClass = selectedClassFilter === 'ALL' || s.className === selectedClassFilter;
     
-    // Final score calculation
-    const scores = getStudentScores(s);
-    const attendanceScore = getAttendanceScore(s);
-    const finalScore = calculateFinalGrade(
-      scores.listeningSpeaking,
-      scores.readingWriting,
-      scores.dailyPerformance,
-      attendanceScore
-    );
+    // Unified effective grade calculation
+    const grade = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords);
+    const finalScore = grade.totalScore;
 
     let matchBand = true;
     if (selectedGradeBandFilter === 'A') matchBand = finalScore >= 80;
@@ -106,13 +96,13 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
   };
 
   const handleExportAllCSV = () => {
-    exportGradesToCsv(filteredStudents);
+    exportGradesToCsv(filteredStudents, '全校學員期末成績冊', allGrades, allCourses, transferRecords);
   };
 
   const handleBatchExportCSV = () => {
     const targets = filteredStudents.filter((s) => selectedStudentIds.has(s.id));
     if (targets.length === 0) return;
-    exportGradesToCsv(targets, `學員成績冊_選取_${targets.length}人`);
+    exportGradesToCsv(targets, `學員成績冊_選取_${targets.length}人`, allGrades, allCourses, transferRecords);
   };
 
   const batchActions: BatchActionItem[] = [
@@ -135,7 +125,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
             <h1 className="text-lg font-bold text-[#26313B]">學員期末成績與等第總評</h1>
             <InfoTooltip
               title="學期成績結算標準"
-              content="成績權重公式：聽說 40% + 讀寫 40% + 平時 20%（平時成績包含 50% 考勤出席率與 50% 課堂綜合表現）。"
+              content="成績權重公式：出席成績 20% + 平時測驗 15% + 期中考試 20% + 期末考試 20% + 作業習作 15% + 學習態度 10%。出席成績依各堂實際出缺勤即時折算（停課堂次自動排除不計）。"
             />
           </div>
         </div>
@@ -156,15 +146,24 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
             <Sliders className="w-4 h-4 text-[#536B7A]" />
             <span className="font-bold">中心標準評分標準 (Official Grading Standards)：</span>
           </div>
-          <div className="flex flex-wrap items-center gap-3 text-[11px]">
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
             <span className="bg-white px-2.5 py-1 rounded-md border border-[#DCE2E6] font-semibold text-[#536B7A]">
-              🗣️ 聽力與口語：<strong>40%</strong>
+              🕒 出席成績：<strong>20%</strong>
             </span>
             <span className="bg-white px-2.5 py-1 rounded-md border border-[#DCE2E6] font-semibold text-[#536B7A]">
-              📖 閱讀與寫作：<strong>40%</strong>
+              ✏️ 平時測驗：<strong>15%</strong>
             </span>
             <span className="bg-white px-2.5 py-1 rounded-md border border-[#DCE2E6] font-semibold text-[#536B7A]">
-              📝 平時考核：<strong>20%</strong> (出席 50% + 平時 50%)
+              📝 期中考試：<strong>20%</strong>
+            </span>
+            <span className="bg-white px-2.5 py-1 rounded-md border border-[#DCE2E6] font-semibold text-[#536B7A]">
+              🎓 期末考試：<strong>20%</strong>
+            </span>
+            <span className="bg-white px-2.5 py-1 rounded-md border border-[#DCE2E6] font-semibold text-[#536B7A]">
+              📚 作業習作：<strong>15%</strong>
+            </span>
+            <span className="bg-white px-2.5 py-1 rounded-md border border-[#DCE2E6] font-semibold text-[#536B7A]">
+              🌟 學習態度：<strong>10%</strong>
             </span>
           </div>
         </div>
@@ -236,52 +235,30 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
                     title={filteredStudents.every((s) => selectedStudentIds.has(s.id)) ? '取消全選' : '全選目前頁面'}
                   />
                 </th>
-                <th className="py-3 px-4">學號 / 姓名</th>
-                <th className="py-3 px-3">所屬班級</th>
-                <th className="py-3 px-3 text-right">聽說 (40%)</th>
-                <th className="py-3 px-3 text-right">讀寫 (40%)</th>
-                <th className="py-3 px-3 text-right">平時綜合 (20%)</th>
-                <th className="py-3 px-3 text-right">出席率折算</th>
-                <th className="py-3 px-3 text-right">學期總成績</th>
-                <th className="py-3 px-4 text-center">評定等第</th>
+                <th className="py-3 px-4 min-w-[140px]">學號 / 姓名</th>
+                <th className="py-3 px-3 min-w-[100px]">所屬班級</th>
+                <th className="py-3 px-3 text-right min-w-[90px]">出席 (20%)</th>
+                <th className="py-3 px-3 text-right min-w-[85px]">平時 (15%)</th>
+                <th className="py-3 px-3 text-right min-w-[85px]">期中 (20%)</th>
+                <th className="py-3 px-3 text-right min-w-[85px]">期末 (20%)</th>
+                <th className="py-3 px-3 text-right min-w-[85px]">作業 (15%)</th>
+                <th className="py-3 px-3 text-right min-w-[85px]">態度 (10%)</th>
+                <th className="py-3 px-3 text-right min-w-[100px]">學期總成績</th>
+                <th className="py-3 px-4 text-center min-w-[100px]">評定等第</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F0F4F7]">
               {filteredStudents.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-[#66717C] text-xs">
+                  <td colSpan={11} className="py-12 text-center text-[#66717C] text-xs">
                     查無學員成績紀錄
                   </td>
                 </tr>
               ) : (
                 filteredStudents.map((student) => {
-                  const studentScores = getStudentScores(student);
-                  const finalScore = calculateFinalGrade(
-                    studentScores.listeningSpeaking,
-                    studentScores.readingWriting,
-                    studentScores.dailyPerformance,
-                    getAttendanceScore(student)
-                  );
+                  const grade = getStudentEffectiveGrade(student, allGrades, allCourses, transferRecords);
+                  const letter = getLetterGrade(grade.totalScore);
                   const isSelected = selectedStudentIds.has(student.id);
-
-                  let badgeColor = 'bg-emerald-50 text-emerald-800 border-emerald-200';
-                  let gradeLetter = 'A';
-                  if (finalScore >= 90) {
-                    gradeLetter = 'A+';
-                    badgeColor = 'bg-[#E8EEF2] text-[#536B7A] border-[#C9D1D7]';
-                  } else if (finalScore >= 80) {
-                    gradeLetter = 'A';
-                    badgeColor = 'bg-emerald-50 text-emerald-800 border-emerald-200';
-                  } else if (finalScore >= 70) {
-                    gradeLetter = 'B';
-                    badgeColor = 'bg-slate-100 text-slate-800 border-slate-300';
-                  } else if (finalScore >= 60) {
-                    gradeLetter = 'C';
-                    badgeColor = 'bg-amber-50 text-amber-800 border-amber-200';
-                  } else {
-                    gradeLetter = 'F (不及格)';
-                    badgeColor = 'bg-rose-50 text-rose-800 border-rose-200';
-                  }
 
                   return (
                     <tr
@@ -312,29 +289,37 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
                         {student.className}
                       </td>
 
-                      <td className="py-3 px-3 text-right font-mono font-bold text-[#26313B]">
-                        {studentScores.listeningSpeaking.toFixed(1)}
+                      <td className="py-3 px-3 text-right font-mono font-bold text-teal-700">
+                        {grade.attendanceScore}%
                       </td>
 
                       <td className="py-3 px-3 text-right font-mono font-bold text-[#26313B]">
-                        {studentScores.readingWriting.toFixed(1)}
+                        {grade.quizScore}
                       </td>
 
                       <td className="py-3 px-3 text-right font-mono font-bold text-[#26313B]">
-                        {studentScores.dailyPerformance.toFixed(1)}
+                        {grade.midtermScore}
                       </td>
 
-                      <td className="py-3 px-3 text-right font-mono text-slate-500">
-                        {student.overallAttendanceRate}%
+                      <td className="py-3 px-3 text-right font-mono font-bold text-[#26313B]">
+                        {grade.finalScore}
                       </td>
 
-                      <td className="py-3 px-3 text-right font-mono font-bold text-[#26313B] text-sm">
-                        {finalScore.toFixed(1)}
+                      <td className="py-3 px-3 text-right font-mono font-bold text-[#26313B]">
+                        {grade.homeworkScore}
+                      </td>
+
+                      <td className="py-3 px-3 text-right font-mono font-bold text-[#26313B]">
+                        {grade.attitudeScore}
+                      </td>
+
+                      <td className="py-3 px-3 text-right font-mono font-extrabold text-[#26313B] text-sm">
+                        {grade.totalScore}
                       </td>
 
                       <td className="py-3 px-4 text-center">
-                        <span className={`inline-block px-2.5 py-0.5 rounded-md text-xs font-bold border ${badgeColor}`}>
-                          {gradeLetter}
+                        <span className={`inline-block px-2.5 py-0.5 rounded-md text-xs font-bold border ${letter.color}`}>
+                          {letter.letter} ({letter.label})
                         </span>
                       </td>
                     </tr>

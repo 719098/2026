@@ -19,7 +19,7 @@ import {
 import { CourseSession, Student, ClassEntity, StudentPeriodAttendance } from '../../types';
 import { getTodayDateStr } from '../../utils/quarterScheduler';
 import { formatDateFull } from '../../utils/dateUtils';
-import { calculateAttendanceStats } from '../../utils/attendanceUtils';
+import { calculateAttendanceStats, isSessionCancelledOrSuspended } from '../../utils/attendanceUtils';
 import { StudentAvatar } from '../StudentAvatar';
 import { InfoTooltip } from '../common/InfoTooltip';
 
@@ -64,12 +64,19 @@ export const AdminAttendanceManagementView: React.FC<AdminAttendanceManagementVi
     let has3HClasses = false;
 
     dateCourses.forEach((session) => {
+      const isCancelled = isSessionCancelledOrSuspended(session);
       const pCount = session.periodsCount || 3;
       if (pCount >= 3) has3HClasses = true;
 
       const enrolled = students.filter(
         (s) => (session.studentIds || []).includes(s.id) || (session.className && s.className === session.className)
       );
+
+      // Do NOT count cancelled/suspended sessions in school-wide active statistics
+      if (isCancelled) {
+        return;
+      }
+
       totalStudentsCount += enrolled.length;
 
       if (session.status === 'completed' || session.attendanceData) {
@@ -276,11 +283,12 @@ export const AdminAttendanceManagementView: React.FC<AdminAttendanceManagementVi
           </div>
         ) : (
           dateCourses.map((session) => {
+            const isCancelled = isSessionCancelledOrSuspended(session);
             const isCompleted = session.status === 'completed';
             const enrolledStudents = students.filter(
               (s) => (session.studentIds || []).includes(s.id) || (session.className && s.className === session.className)
             );
-            const sessionStats = session.attendanceData
+            const sessionStats = (!isCancelled && session.attendanceData)
               ? calculateAttendanceStats(enrolledStudents, session.attendanceData, session.periodsCount || 3)
               : null;
 
@@ -303,7 +311,12 @@ export const AdminAttendanceManagementView: React.FC<AdminAttendanceManagementVi
                       </div>
                     </div>
 
-                    {isCompleted ? (
+                    {isCancelled ? (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-200">
+                        <AlertTriangle className="w-3.5 h-3.5 mr-1 text-rose-600" />
+                        已停課（免點名）
+                      </span>
+                    ) : isCompleted ? (
                       <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
                         <CheckCircle className="w-3.5 h-3.5 mr-1 text-emerald-600" />
                         已完成點名 {sessionStats ? `(${sessionStats.attendanceRate}%)` : ''}
@@ -322,11 +335,15 @@ export const AdminAttendanceManagementView: React.FC<AdminAttendanceManagementVi
                     </div>
                     <div className="text-[#66717C] text-[11px] flex items-center justify-between">
                       <span>在班學生：{enrolledStudents.length} 人 • 授課節數：{session.periodsCount || 3} 節</span>
-                      {isCompleted && sessionStats && (
+                      {isCancelled ? (
+                        <span className="font-mono font-semibold text-rose-600">
+                          {session.cancelReason || '停課不計出缺勤'}
+                        </span>
+                      ) : isCompleted && sessionStats ? (
                         <span className="font-mono font-bold text-emerald-700">
                           實到 {sessionStats.totalPresentHours}H / 請假 {sessionStats.totalLeaveHours}H
                         </span>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                 </div>

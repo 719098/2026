@@ -147,14 +147,17 @@ export function formatTimeRange(start: string, end: string): string {
 // 計算全季排課統計 (相容舊版介面)
 export function calculateQuarterStats(courses: CourseSession[], className: string): QuarterScheduleSummary {
   const classCourses = courses.filter((c) => c.className === className);
-  const totalSessions = classCourses.filter((c) => c.status !== 'holiday' && c.status !== 'rescheduled_out').length;
+  const isCancelledSession = (c: CourseSession) =>
+    c.isCancelled || c.isSuspended || c.status === 'holiday' || c.status === 'rescheduled_out' || (c.status as string) === 'CANCELLED';
+
+  const totalSessions = classCourses.filter((c) => !isCancelledSession(c)).length;
   
   let totalScheduledHours = 0;
   let completedHours = 0;
   let makeupHours = 0;
 
   classCourses.forEach((c) => {
-    if (c.status === 'holiday' || c.status === 'rescheduled_out') return;
+    if (isCancelledSession(c)) return;
     const hours = c.periodsCount;
     totalScheduledHours += hours;
     if (c.status === 'completed') {

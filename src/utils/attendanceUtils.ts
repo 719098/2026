@@ -196,6 +196,35 @@ import {
   isSessionEnded,
 } from './studentTimelineUtils';
 
+/**
+ * Universal checker: returns true if a session is cancelled, suspended, or rescheduled-out.
+ */
+export function isSessionCancelledOrSuspended(session?: {
+  status?: string;
+  isCancelled?: boolean;
+  isSuspended?: boolean;
+  rescheduleInfo?: { type?: string };
+} | null): boolean {
+  if (!session) return true;
+  if (session.isCancelled === true || session.isSuspended === true) return true;
+  const s = String(session.status || '').toLowerCase();
+  if (s === 'holiday' || s === 'cancelled' || s === 'suspended' || s === 'rescheduled_out') return true;
+  if (session.rescheduleInfo?.type === 'out') return true;
+  return false;
+}
+
+/**
+ * Universal checker: returns true if a session is a valid, active teaching session.
+ */
+export function isSessionValidForAttendance(session?: {
+  status?: string;
+  isCancelled?: boolean;
+  isSuspended?: boolean;
+  rescheduleInfo?: { type?: string };
+} | null): boolean {
+  return !isSessionCancelledOrSuspended(session);
+}
+
 // Calculate individual student history across all completed courses in the quarter
 export function calculateStudentAttendanceHistory(
   student?: Student | null,
@@ -225,6 +254,7 @@ export function calculateStudentAttendanceHistory(
     statusSummary: string;
     remarks?: string;
     isDefaultPresent?: boolean;
+    isCancelled?: boolean;
   }>;
 } {
   if (!student || !student.id) {
@@ -241,7 +271,6 @@ export function calculateStudentAttendanceHistory(
   }
 
   const safeCourses = Array.isArray(allCourses) ? allCourses : [];
-  const todayDateStr = getTodayDateStr();
   const timeline = getStudentClassTimeline(student, transferRecords);
 
   const requiredHours = student.totalRequiredHours || 165;
@@ -266,13 +295,15 @@ export function calculateStudentAttendanceHistory(
     statusSummary: string;
     remarks?: string;
     isDefaultPresent?: boolean;
+    isCancelled?: boolean;
   }> = [];
 
   const processedSessionKeys = new Set<string>();
 
   // Filter and process all sessions that belonged to this student
   safeCourses.forEach((c) => {
-    if (!c || c.status === 'holiday' || c.status === 'rescheduled_out' || c.isCancelled || c.isSuspended) return;
+    if (!c) return;
+    const isCancelled = isSessionCancelledOrSuspended(c);
 
     // Rule: Strictly verify genuine class. Never process sessions with empty or fake placeholder class names
     const invalidClassNames = ['華語班級', '班級', '未命名班級', '原班級', '新班級', '華語課程', '未設定班級', '華語密集班', '預設班級'];
@@ -281,9 +312,6 @@ export function calculateStudentAttendanceHistory(
       return;
     }
 
-    // Check if student has explicit attendance record
-    const hasExplicitRecord = Boolean(c.attendanceData && student.id && c.attendanceData[student.id]);
-
     // Check if session belonged to the student on c.date
     const isSessionInStudentClass = isStudentInSessionClass(
       c.date,
@@ -291,6 +319,41 @@ export function calculateStudentAttendanceHistory(
       cleanClassName,
       timeline
     );
+
+    // If session is cancelled or suspended:
+    // STRICT RULE: Exclude 100% from completedHours, presentHours, leaveHours, absentHours, attendanceRate, attendanceScore.
+    // If student was in this class, show in dailyRecords as "停課（不計出缺勤）" with 0 hours for UI clarity.
+    if (isCancelled) {
+      if (isSessionInStudentClass) {
+        const sessionKey = `${c.id || c.date}_${cleanClassName}_${c.timeSlot || ''}`;
+        if (!processedSessionKeys.has(sessionKey)) {
+          processedSessionKeys.add(sessionKey);
+          const periodsCount = c.periodsCount || 3;
+          dailyRecords.push({
+            date: c.date,
+            courseName: c.courseName || cleanClassName,
+            className: cleanClassName,
+            periodsCount,
+            period1: 'present',
+            period2: 'present',
+            period3: periodsCount >= 3 ? 'present' : undefined,
+            period4: periodsCount >= 4 ? 'present' : undefined,
+            totalHours: 0,
+            presentHours: 0,
+            leaveHours: 0,
+            absentHours: 0,
+            statusSummary: '停課（不計出缺勤）',
+            remarks: c.cancelReason || '中心停課免點名',
+            isDefaultPresent: false,
+            isCancelled: true,
+          });
+        }
+      }
+      return;
+    }
+
+    // Check if student has explicit attendance record
+    const hasExplicitRecord = Boolean(c.attendanceData && student.id && c.attendanceData[student.id]);
 
     // Rule: Strictly check if session has already ended in real time
     const sessionHasEnded = isSessionEnded(c.date, c.endTime);
@@ -343,10 +406,12 @@ export function calculateStudentAttendanceHistory(
         statusSummary,
         remarks: rec.remarks,
         isDefaultPresent: false,
+        isCancelled: false,
       });
     } else if (sessionHasEnded) {
       // 2. Past session where teacher did not mark attendance:
       // Official CLC System Rule: Default Present (預設學生有到)
+      // Only valid teaching sessions produce default_present (cancelled sessions already returned above!)
       completedHours += periodsCount;
       presentHours += periodsCount; // 100% present
       leaveHours += 0;
@@ -368,6 +433,7 @@ export function calculateStudentAttendanceHistory(
         statusSummary: `${periodsCount}H 全勤出席`,
         remarks: '系統預設到課（未點名）',
         isDefaultPresent: true,
+        isCancelled: false,
       });
     }
   });

@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
-import { Student, ClassEntity, StudentGrade, TransferClassRecord } from '../types';
-import { calculateTotalGrade, getLetterGrade } from '../utils/gradeUtils';
+import { Student, ClassEntity, StudentGrade, TransferClassRecord, CourseSession } from '../types';
+import { calculateTotalGrade, getLetterGrade, calculateStudentAttendanceScore } from '../utils/gradeUtils';
 import { batchResolveStudentAvatars, extractStoragePath, deleteStudentStorageFiles } from './storageService';
 import { mapDbToClass, fetchClassesFromSupabase } from './classService';
 import { getTodayDateStr } from '../utils/quarterScheduler';
@@ -556,13 +556,50 @@ export async function fetchStudentsFromSupabase(
   }
 
   // 4.5 Compute real actual attendance rates (Present=100%, Leave=0%, Absent=0%)
+  // STRICT RULE: Any attendance records belonging to CANCELLED, SUSPENDED, or RESCHEDULED sessions must be 100% excluded!
   try {
+    // 1. Identify cancelled or rescheduled sessions from class_sessions
+    const { data: invalidClassSessions } = await supabase
+      .from('class_sessions')
+      .select('id, class_id, session_date, status');
+
+    const invalidKeySet = new Set<string>();
+    const invalidCourseSessionIds = new Set<string>();
+
+    (invalidClassSessions || []).forEach((is: any) => {
+      const st = String(is.status || '').toUpperCase();
+      if (st === 'CANCELLED' || st === 'SUSPENDED' || st === 'RESCHEDULED' || st === 'HOLIDAY') {
+        if (is.class_id && is.session_date) {
+          invalidKeySet.add(`${is.class_id}_${is.session_date}`);
+        }
+        if (is.id) {
+          invalidCourseSessionIds.add(String(is.id));
+        }
+      }
+    });
+
+    // 2. Identify corresponding course_sessions row IDs
+    const { data: courseSessions } = await supabase
+      .from('course_sessions')
+      .select('id, class_id, session_date');
+
+    (courseSessions || []).forEach((cs: any) => {
+      if (invalidKeySet.has(`${cs.class_id}_${cs.session_date}`)) {
+        invalidCourseSessionIds.add(String(cs.id));
+      }
+    });
+
     const { data: attRecs } = await supabase
       .from('attendance_records')
-      .select('student_id, period_1, period_2, period_3, period_4');
+      .select('session_id, student_id, period_1, period_2, period_3, period_4');
     if (attRecs && attRecs.length > 0) {
+      // Exclude attendance records from cancelled or rescheduled sessions
+      const validAttRecs = attRecs.filter(
+        (r: any) => !r.session_id || !invalidCourseSessionIds.has(String(r.session_id))
+      );
+
       const studentAttStats: Record<string, { present: number; leave: number; absent: number }> = {};
-      attRecs.forEach((r: any) => {
+      validAttRecs.forEach((r: any) => {
         const sId = String(r.student_id);
         if (!studentAttStats[sId]) {
           studentAttStats[sId] = { present: 0, leave: 0, absent: 0 };
@@ -587,14 +624,14 @@ export async function fetchStudentsFromSupabase(
             s.totalLeaveHours = stat.leave;
             s.totalAbsenceHours = stat.absent;
           } else {
-            s.overallAttendanceRate = 0;
+            s.overallAttendanceRate = 100;
             s.totalPresentHours = 0;
             s.totalLeaveHours = 0;
             s.totalAbsenceHours = 0;
           }
         } else {
-          // No attendance records at all -> NOT 100%!
-          s.overallAttendanceRate = 0;
+          // No attendance records yet -> maintain standard initial 100%
+          s.overallAttendanceRate = 100;
           s.totalPresentHours = 0;
           s.totalLeaveHours = 0;
           s.totalAbsenceHours = 0;
@@ -602,7 +639,7 @@ export async function fetchStudentsFromSupabase(
       });
     } else {
       students.forEach((s) => {
-        s.overallAttendanceRate = 0;
+        s.overallAttendanceRate = 100;
         s.totalPresentHours = 0;
         s.totalLeaveHours = 0;
         s.totalAbsenceHours = 0;
@@ -1046,7 +1083,9 @@ export async function deleteStudentInSupabase(
  */
 export async function fetchStudentGradesFromSupabase(
   students: Student[],
-  classes: ClassEntity[]
+  classes: ClassEntity[],
+  allCourses?: CourseSession[],
+  transferRecords?: TransferClassRecord[]
 ): Promise<Record<string, StudentGrade>> {
   if (!supabase) return {};
 
@@ -1068,8 +1107,19 @@ export async function fetchStudentGradesFromSupabase(
         const student = studentMap.get(studentId);
         const classObj = r.class_id ? classMap.get(String(r.class_id)) : null;
 
-        // Dynamic Attendance Score based on real attendance records
-        const att = student ? student.overallAttendanceRate : Number(r.attendance_score ?? 0);
+        // Dynamic Attendance Score based on real attendance records & exclusion of cancelled sessions
+        let att = student?.overallAttendanceRate !== undefined ? student.overallAttendanceRate : Number(r.attendance_score ?? 100);
+        if (allCourses && allCourses.length > 0) {
+          const attResult = calculateStudentAttendanceScore(
+            studentId,
+            allCourses,
+            classObj?.name || student?.className,
+            student,
+            transferRecords
+          );
+          att = attResult.attendanceScore;
+        }
+
         const quiz = Number(r.quiz_score ?? 85);
         const mid = Number(r.midterm_score ?? 80);
         const fin = Number(r.final_score ?? 85);
@@ -1107,7 +1157,18 @@ export async function fetchStudentGradesFromSupabase(
     // Ensure all active students have grade entries initialized in database
     for (const s of students) {
       if (!gradeMap[s.id]) {
-        const att = s.overallAttendanceRate;
+        let att = s.overallAttendanceRate ?? 100;
+        if (allCourses && allCourses.length > 0) {
+          const attResult = calculateStudentAttendanceScore(
+            s.id,
+            allCourses,
+            s.className,
+            s,
+            transferRecords
+          );
+          att = attResult.attendanceScore;
+        }
+
         const quiz = 85;
         const mid = 80;
         const fin = 85;

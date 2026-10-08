@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { Student, CourseSession, StudentGrade, TransferClassRecord } from '../types';
 import { calculateStudentAttendanceHistory } from '../utils/attendanceUtils';
-import { GRADE_WEIGHTS, getLetterGrade } from '../utils/gradeUtils';
+import { GRADE_WEIGHTS, getLetterGrade, getStudentEffectiveGrade, calculateTotalGrade } from '../utils/gradeUtils';
 import { StudentAvatar } from './StudentAvatar';
 import { exportIndividualStudentAttendanceToCsv } from '../utils/csvExport';
 
@@ -45,60 +45,13 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   }, [student, allCourses, transferRecords]);
 
   const effectiveGrade = useMemo<StudentGrade>(() => {
-    const attendanceScore = history.attendanceScore;
-    if (grade) {
-      const quiz = grade.quizScore ?? 85;
-      const midterm = grade.midtermScore ?? 85;
-      const final = grade.finalScore ?? 85;
-      const homework = grade.homeworkScore ?? 85;
-      const attitude = grade.attitudeScore ?? 90;
-      const totalScore = Math.round((
-        attendanceScore * GRADE_WEIGHTS.attendance +
-        quiz * GRADE_WEIGHTS.quiz +
-        midterm * GRADE_WEIGHTS.midterm +
-        final * GRADE_WEIGHTS.final +
-        homework * GRADE_WEIGHTS.homework +
-        attitude * GRADE_WEIGHTS.attitude
-      ) * 10) / 10;
-      return {
-        ...grade,
-        attendanceScore,
-        quizScore: quiz,
-        midtermScore: midterm,
-        finalScore: final,
-        homeworkScore: homework,
-        attitudeScore: attitude,
-        totalScore,
-      };
-    }
-    // Default synthesized grade for complete transparency
-    const defaultQuiz = 85;
-    const defaultMidterm = 85;
-    const defaultFinal = 85;
-    const defaultHomework = 85;
-    const defaultAttitude = 90;
-    const totalScore = Math.round((
-      attendanceScore * GRADE_WEIGHTS.attendance +
-      defaultQuiz * GRADE_WEIGHTS.quiz +
-      defaultMidterm * GRADE_WEIGHTS.midterm +
-      defaultFinal * GRADE_WEIGHTS.final +
-      defaultHomework * GRADE_WEIGHTS.homework +
-      defaultAttitude * GRADE_WEIGHTS.attitude
-    ) * 10) / 10;
-    return {
-      studentId: student.id,
-      studentName: student.name,
-      className: student.className,
-      attendanceScore,
-      quizScore: defaultQuiz,
-      midtermScore: defaultMidterm,
-      finalScore: defaultFinal,
-      homeworkScore: defaultHomework,
-      attitudeScore: defaultAttitude,
-      totalScore,
-      updatedAt: '即時計算',
-    };
-  }, [grade, history.attendanceScore, student]);
+    return getStudentEffectiveGrade(
+      student,
+      grade ? { [student.id]: grade } : undefined,
+      allCourses,
+      transferRecords
+    );
+  }, [student, grade, allCourses, transferRecords]);
 
   const letterGrade = getLetterGrade(effectiveGrade.totalScore);
 
@@ -407,13 +360,15 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                   ) : (
                     history.dailyRecords.map((rec, index) => {
                       const is3H = rec.periodsCount === 3;
-                      const hasIssue = rec.absentHours > 0 || rec.leaveHours > 0;
+                      const isCancelled = rec.isCancelled || rec.statusSummary.includes('停課');
 
                       return (
                         <tr 
                           key={index} 
                           className={`hover:bg-slate-50/80 ${
-                            rec.absentHours > 0 
+                            isCancelled
+                              ? 'bg-slate-50/60 text-slate-400'
+                              : rec.absentHours > 0 
                               ? 'bg-rose-50/30' 
                               : rec.leaveHours > 0 
                               ? 'bg-blue-50/20' 
@@ -433,31 +388,47 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                           </td>
                           {/* Period 1 */}
                           <td className="py-2.5 px-3 text-center">
-                            <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-bold ${
-                              rec.period1 === 'present'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : rec.period1 === 'leave'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-rose-100 text-rose-800'
-                            }`}>
-                              {rec.period1 === 'present' ? '出席' : rec.period1 === 'leave' ? '請假' : '缺席'}
-                            </span>
+                            {isCancelled ? (
+                              <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
+                                停課
+                              </span>
+                            ) : (
+                              <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-bold ${
+                                rec.period1 === 'present'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : rec.period1 === 'leave'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}>
+                                {rec.period1 === 'present' ? '出席' : rec.period1 === 'leave' ? '請假' : '缺席'}
+                              </span>
+                            )}
                           </td>
                           {/* Period 2 */}
                           <td className="py-2.5 px-3 text-center">
-                            <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-bold ${
-                              rec.period2 === 'present'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : rec.period2 === 'leave'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-rose-100 text-rose-800'
-                            }`}>
-                              {rec.period2 === 'present' ? '出席' : rec.period2 === 'leave' ? '請假' : '缺席'}
-                            </span>
+                            {isCancelled ? (
+                              <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
+                                停課
+                              </span>
+                            ) : (
+                              <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-bold ${
+                                rec.period2 === 'present'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : rec.period2 === 'leave'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}>
+                                {rec.period2 === 'present' ? '出席' : rec.period2 === 'leave' ? '請假' : '缺席'}
+                              </span>
+                            )}
                           </td>
                           {/* Period 3 */}
                           <td className="py-2.5 px-3 text-center">
-                            {is3H ? (
+                            {isCancelled ? (
+                              <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
+                                停課
+                              </span>
+                            ) : is3H ? (
                               <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-bold ${
                                 rec.period3 === 'present'
                                   ? 'bg-emerald-100 text-emerald-800'
@@ -473,13 +444,21 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                           </td>
                           {/* Total */}
                           <td className="py-2.5 px-3 text-center font-semibold">
-                            <span className={rec.absentHours > 0 ? 'text-rose-600' : rec.leaveHours > 0 ? 'text-blue-600' : 'text-emerald-600'}>
-                              {rec.statusSummary}
-                            </span>
+                            {isCancelled ? (
+                              <span className="text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-[11px]">
+                                停課（不計出缺勤）
+                              </span>
+                            ) : (
+                              <span className={rec.absentHours > 0 ? 'text-rose-600' : rec.leaveHours > 0 ? 'text-blue-600' : 'text-emerald-600'}>
+                                {rec.statusSummary}
+                              </span>
+                            )}
                           </td>
                           {/* Remarks */}
                           <td className="py-2.5 px-3 text-slate-500 truncate max-w-[180px]">
-                            {rec.isDefaultPresent && !rec.remarks ? (
+                            {isCancelled ? (
+                              <span className="text-[11px] text-slate-500 font-medium">{rec.remarks || '停課免點名'}</span>
+                            ) : rec.isDefaultPresent && !rec.remarks ? (
                               <span className="inline-flex items-center text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
                                 系統預設到課
                               </span>

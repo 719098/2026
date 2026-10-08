@@ -865,9 +865,12 @@ export async function fetchCourseSessionsFromSupabase(
       // 1. Determine roster strictly based on historical facts and verified enrollment timeline on session_date
       let sessionStudentIds: string[] = [];
 
-      if (!isCancelledOrSuspended && !isRescheduledOut && savedAtt && savedAtt.attendanceData) {
+      if (savedAtt && savedAtt.attendanceData) {
+        // Preserve historical attendance records so they are not deleted or lost
         attendanceData = savedAtt.attendanceData;
-        calculatedStatus = savedAtt.isSubmitted ? 'completed' : 'in_progress';
+        if (!isCancelledOrSuspended && !isRescheduledOut) {
+          calculatedStatus = savedAtt.isSubmitted ? 'completed' : 'in_progress';
+        }
         const recordedIds = Object.keys(attendanceData || {});
         // Formal attendance records taken are historical facts
         sessionStudentIds = recordedIds;

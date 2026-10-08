@@ -1,5 +1,5 @@
-import { Student } from '../types';
-import { calculateFinalGrade, getStudentScores } from './gradeUtils';
+import { Student, StudentGrade, CourseSession, TransferClassRecord } from '../types';
+import { calculateFinalGrade, getStudentScores, getStudentEffectiveGrade, getLetterGrade } from './gradeUtils';
 
 /**
  * Universal CSV export utility with UTF-8 BOM for Microsoft Excel compatibility
@@ -182,46 +182,34 @@ export function exportAttendanceSummaryToCsv(
 /**
  * Export grades report
  */
-export function exportGradesToCsv(students: Student[], filename = '期末成績冊') {
+export function exportGradesToCsv(
+  students: Student[],
+  filename: string = '期末成績冊',
+  allGrades?: Record<string, StudentGrade>,
+  allCourses?: CourseSession[],
+  transferRecords?: TransferClassRecord[]
+) {
   const headers = [
     '學號',
     '姓名',
     '英文姓名',
     '所屬班級',
     '國籍',
-    '聽說成績 (40%)',
-    '讀寫成績 (40%)',
-    '平時考核 (20%)',
-    '總出席率 (%)',
-    '期末總成績',
+    '出席成績 (20%)',
+    '平時測驗 (15%)',
+    '期中考試 (20%)',
+    '期末考試 (20%)',
+    '作業習作 (15%)',
+    '學習態度 (10%)',
+    '學期總成績 (100%)',
     '評定等第',
     '是否及格',
   ];
 
   const rows = students.map((s) => {
-    const scores = getStudentScores(s);
-    const attendanceRate = s.overallAttendanceRate ?? 100;
-    const totalHours = (s.totalPresentHours || 0) + (s.totalLeaveHours || 0) + (s.totalAbsenceHours || 0);
-    const attendanceGradeScore = totalHours > 0
-      ? Math.round(((s.totalPresentHours || 0) + (s.totalLeaveHours || 0) * 0.5) / totalHours * 1000) / 10
-      : (s.overallAttendanceRate ?? 100);
-    const finalScore = calculateFinalGrade(
-      scores.listeningSpeaking,
-      scores.readingWriting,
-      scores.dailyPerformance,
-      attendanceGradeScore
-    );
-
-    let gradeLetter = 'F';
-    if (finalScore >= 90) gradeLetter = 'A+';
-    else if (finalScore >= 85) gradeLetter = 'A';
-    else if (finalScore >= 80) gradeLetter = 'A-';
-    else if (finalScore >= 77) gradeLetter = 'B+';
-    else if (finalScore >= 73) gradeLetter = 'B';
-    else if (finalScore >= 70) gradeLetter = 'B-';
-    else if (finalScore >= 60) gradeLetter = 'C';
-
-    const isPass = finalScore >= 60 ? '及格' : '不及格';
+    const grade = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords);
+    const letter = getLetterGrade(grade.totalScore);
+    const isPass = grade.totalScore >= 60 ? '及格' : '不及格';
 
     return [
       s.studentNumber,
@@ -229,12 +217,14 @@ export function exportGradesToCsv(students: Student[], filename = '期末成績�
       s.englishName,
       s.className || '未分班',
       s.nationality,
-      scores.listeningSpeaking,
-      scores.readingWriting,
-      scores.dailyPerformance,
-      attendanceRate,
-      finalScore,
-      gradeLetter,
+      grade.attendanceScore,
+      grade.quizScore,
+      grade.midtermScore,
+      grade.finalScore,
+      grade.homeworkScore,
+      grade.attitudeScore,
+      grade.totalScore,
+      letter.letter,
       isPass,
     ];
   });

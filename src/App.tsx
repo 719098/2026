@@ -466,18 +466,13 @@ export default function App() {
         setCourses(dbSessions);
       }
 
-      // 7. Fetch student grades from Supabase public.student_grades
-      const fetchedGrades = await fetchStudentGradesFromSupabase(data || [], currentClasses);
-      setAllGrades(fetchedGrades);
+      // Determine active course sessions for accurate attendance and grade calculation
+      const activeSessions = (dbSessions && dbSessions.length > 0) ? dbSessions : courses;
 
-      // 8. Fetch leave requests from Supabase public.leave_requests
-      const fetchedLeaves = await fetchLeavesFromSupabase(data || [], currentClasses);
-      setAdminLeaves(fetchedLeaves);
-
-      // 9. Sync actual attendance rates across all students using comprehensive history calculation
+      // 7. Sync actual attendance rates across all students using comprehensive history calculation
+      let syncedStudents = data || [];
       if (data && data.length > 0) {
-        const activeSessions = (dbSessions && dbSessions.length > 0) ? dbSessions : courses;
-        const syncedStudents = data.map((s) => {
+        syncedStudents = data.map((s) => {
           const history = calculateStudentAttendanceHistory(s, activeSessions || [], fetchedTransfers || []);
           return {
             ...s,
@@ -489,6 +484,19 @@ export default function App() {
         });
         setDbStudents(syncedStudents);
       }
+
+      // 8. Fetch student grades from Supabase public.student_grades using synced attendance & active sessions
+      const fetchedGrades = await fetchStudentGradesFromSupabase(
+        syncedStudents,
+        currentClasses,
+        activeSessions,
+        fetchedTransfers
+      );
+      setAllGrades(fetchedGrades);
+
+      // 9. Fetch leave requests from Supabase public.leave_requests
+      const fetchedLeaves = await fetchLeavesFromSupabase(syncedStudents, currentClasses);
+      setAdminLeaves(fetchedLeaves);
     } catch (err: any) {
       console.error('Error in loadSupabaseStudents:', err);
       setStudentsError(`載入資料時發生未預期錯誤: ${err.message || String(err)}`);
@@ -1432,6 +1440,9 @@ export default function App() {
                 <AdminGradesManagementView
                   students={dbStudents}
                   classes={adminClasses}
+                  allCourses={courses}
+                  allGrades={allGrades}
+                  transferRecords={adminTransferRecords}
                   onSelectStudentDetail={(student) => setSelectedStudentForDetail(student)}
                 />
               )}
@@ -1441,6 +1452,8 @@ export default function App() {
                   students={dbStudents}
                   classes={adminClasses}
                   allCourses={courses}
+                  allGrades={allGrades}
+                  transferRecords={adminTransferRecords}
                 />
               )}
             </div>

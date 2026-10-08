@@ -89,7 +89,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
         student,
         transferRecords
       );
-      const score = attResult.hasRecords ? attResult.attendanceScore : (student?.overallAttendanceRate ?? 0);
+      const score = attResult.hasRecords ? attResult.attendanceScore : (student?.overallAttendanceRate ?? 100);
       return {
         attResult,
         attendanceScore: score,

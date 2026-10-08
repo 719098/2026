@@ -104,13 +104,16 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
       return;
     }
     const records = completedOrPastCourses.map((c) => {
+      const isCancelled = c.isCancelled || c.isSuspended || c.status === 'holiday' || (c.status as string) === 'CANCELLED';
       let stats = undefined;
-      if (c.status === 'completed' && c.attendanceData) {
+      if (!isCancelled && c.status === 'completed' && c.attendanceData) {
         const studentList = (c.studentIds || []).map((id) => ({ id, name: id } as Student));
         stats = calculateAttendanceStats(studentList, c.attendanceData);
       }
       const statusText =
-        c.status === 'completed'
+        isCancelled
+          ? '已停課（免點名）'
+          : c.status === 'completed'
           ? '已完成點名'
           : c.status === 'unmarked'
           ? '待點名'
@@ -130,9 +133,9 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
         classroom: c.classroom,
         textbook: c.textbook,
         studentCount: c.studentCount,
-        attendanceRate: stats?.attendanceRate,
-        presentHours: stats?.totalPresentHours,
-        totalHours: stats?.totalHours,
+        attendanceRate: isCancelled ? undefined : stats?.attendanceRate,
+        presentHours: isCancelled ? 0 : stats?.totalPresentHours,
+        totalHours: isCancelled ? 0 : stats?.totalHours,
         statusText,
       };
     });
@@ -228,7 +231,8 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
             </thead>
             <tbody className="divide-y divide-slate-100">
               {completedOrPastCourses.map((course) => {
-                const isCompleted = course.status === 'completed';
+                const isCancelled = course.isCancelled || course.status === 'holiday' || (course.status as string) === 'CANCELLED';
+                const isCompleted = !isCancelled && course.status === 'completed';
                 const isRescheduledOut = course.status === 'rescheduled_out';
                 const isRescheduledIn = course.status === 'rescheduled_in' || course.rescheduleInfo?.type === 'in';
                 const isLocked = course.status === 'locked' || course.isLocked;
@@ -247,6 +251,10 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
                         實到 {stats.totalPresentHours} / 應到 {stats.totalHours}H
                       </span>
                     </div>
+                  );
+                } else if (isCancelled) {
+                  rateBadge = (
+                    <span className="text-slate-400 text-[11px]">停課免計</span>
                   );
                 }
 

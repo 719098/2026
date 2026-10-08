@@ -20,6 +20,7 @@ import {
 import { Student, Teacher, CourseSession, LeaveRecord, ClassEntity, AdminNavigationTab } from '../../types';
 import { getTodayDateStr } from '../../utils/quarterScheduler';
 import { formatDateFull } from '../../utils/dateUtils';
+import { isSessionCancelledOrSuspended } from '../../utils/attendanceUtils';
 import { StudentAvatar } from '../StudentAvatar';
 
 interface AdminDashboardViewProps {
@@ -43,10 +44,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 }) => {
   const todayStr = getTodayDateStr();
 
-  // Today's courses across all classes
+  // Today's courses across all classes (strictly excluding cancelled sessions)
   const todayCourses = allCourses.filter((c) => c.date === todayStr);
-  const completedTodayCourses = todayCourses.filter((c) => c.status === 'completed');
-  const pendingTodayCourses = todayCourses.filter(
+  const activeTodayCourses = todayCourses.filter((c) => !isSessionCancelledOrSuspended(c));
+  const completedTodayCourses = activeTodayCourses.filter((c) => c.status === 'completed');
+  const pendingTodayCourses = activeTodayCourses.filter(
     (c) => c.status === 'unmarked' || c.status === 'in_progress'
   );
 
@@ -61,9 +63,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   // Total completed hours in quarter
   const totalQuarterRequired = classes.reduce((acc, c) => acc + (c.totalTargetHours || 0), 0) || 0;
-  // Estimate completed hours from level 1 class
+  // Estimate completed hours from level 1 class (excluding cancelled sessions)
   const level1Completed = allCourses
-    .filter((c) => c.className.includes('初級華語一') && c.status === 'completed')
+    .filter((c) => c.className.includes('初級華語一') && c.status === 'completed' && !isSessionCancelledOrSuspended(c))
     .reduce((acc, c) => acc + c.periodsCount, 0);
   const progressPercent = Math.min(100, Math.round((level1Completed / totalQuarterRequired) * 100));
 
