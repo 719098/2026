@@ -41,72 +41,119 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
   const isBatch = Boolean(students && students.length > 0 && !student);
   const targetCount = isBatch ? students.length : 1;
 
-  const [attendanceWeight, setAttendanceWeight] = useState<number>(20);
-  const [quizWeight, setQuizWeight] = useState<number>(15);
-  const [midtermWeight, setMidtermWeight] = useState<number>(20);
-  const [finalWeight, setFinalWeight] = useState<number>(20);
-  const [homeworkWeight, setHomeworkWeight] = useState<number>(15);
-  const [attitudeWeight, setAttitudeWeight] = useState<number>(10);
+  // 使用字串狀態儲存六項權重，支援 Backspace 刪除清空、避免被強制補 0 或變成 030
+  const [attendanceWeight, setAttendanceWeight] = useState<string>('20');
+  const [quizWeight, setQuizWeight] = useState<string>('15');
+  const [midtermWeight, setMidtermWeight] = useState<string>('20');
+  const [finalWeight, setFinalWeight] = useState<string>('20');
+  const [homeworkWeight, setHomeworkWeight] = useState<string>('15');
+  const [attitudeWeight, setAttitudeWeight] = useState<string>('10');
   const [changeReason, setChangeReason] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState<boolean>(false);
 
+  // 僅在 Modal 由關閉轉為開啟時初始化一次，絕不在父元件 re-render 或輸入過程中覆寫
+  const prevIsOpenRef = React.useRef<boolean>(false);
+
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !prevIsOpenRef.current) {
       setErrorMsg(null);
       setIsResetConfirmOpen(Boolean(initialResetMode));
       setChangeReason('');
 
       if (!isBatch && currentWeight) {
-        setAttendanceWeight(currentWeight.attendanceWeight);
-        setQuizWeight(currentWeight.quizWeight);
-        setMidtermWeight(currentWeight.midtermWeight);
-        setFinalWeight(currentWeight.finalWeight);
-        setHomeworkWeight(currentWeight.homeworkWeight);
-        setAttitudeWeight(currentWeight.attitudeWeight);
+        setAttendanceWeight(String(currentWeight.attendanceWeight ?? DEFAULT_GRADE_WEIGHTS.attendanceWeight));
+        setQuizWeight(String(currentWeight.quizWeight ?? DEFAULT_GRADE_WEIGHTS.quizWeight));
+        setMidtermWeight(String(currentWeight.midtermWeight ?? DEFAULT_GRADE_WEIGHTS.midtermWeight));
+        setFinalWeight(String(currentWeight.finalWeight ?? DEFAULT_GRADE_WEIGHTS.finalWeight));
+        setHomeworkWeight(String(currentWeight.homeworkWeight ?? DEFAULT_GRADE_WEIGHTS.homeworkWeight));
+        setAttitudeWeight(String(currentWeight.attitudeWeight ?? DEFAULT_GRADE_WEIGHTS.attitudeWeight));
       } else {
-        // Default 20, 15, 20, 20, 15, 10
-        setAttendanceWeight(DEFAULT_GRADE_WEIGHTS.attendanceWeight);
-        setQuizWeight(DEFAULT_GRADE_WEIGHTS.quizWeight);
-        setMidtermWeight(DEFAULT_GRADE_WEIGHTS.midtermWeight);
-        setFinalWeight(DEFAULT_GRADE_WEIGHTS.finalWeight);
-        setHomeworkWeight(DEFAULT_GRADE_WEIGHTS.homeworkWeight);
-        setAttitudeWeight(DEFAULT_GRADE_WEIGHTS.attitudeWeight);
+        // 標準預設比例 20, 15, 20, 20, 15, 10
+        setAttendanceWeight(String(DEFAULT_GRADE_WEIGHTS.attendanceWeight));
+        setQuizWeight(String(DEFAULT_GRADE_WEIGHTS.quizWeight));
+        setMidtermWeight(String(DEFAULT_GRADE_WEIGHTS.midtermWeight));
+        setFinalWeight(String(DEFAULT_GRADE_WEIGHTS.finalWeight));
+        setHomeworkWeight(String(DEFAULT_GRADE_WEIGHTS.homeworkWeight));
+        setAttitudeWeight(String(DEFAULT_GRADE_WEIGHTS.attitudeWeight));
       }
     }
-  }, [isOpen, student, students, currentWeight, isBatch, initialResetMode]);
+    prevIsOpenRef.current = isOpen;
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
+  // 數字輸入處理器：支援完全清空、全選輸入新數值、防止 030、限制 0~100
+  const handleWeightChange = (setter: React.Dispatch<React.SetStateAction<string>>) => (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const raw = e.target.value;
+    // 允許清空為空白（如按 Backspace 刪除最後一位數時）
+    if (raw === '') {
+      setter('');
+      return;
+    }
+    // 僅保留數字
+    const cleaned = raw.replace(/[^\d]/g, '');
+    if (cleaned === '') {
+      setter('');
+      return;
+    }
+    // 移除前導 0（如原本為 0，輸入 30 時變為 30 而非 030；若輸入為單一 0 則保留為 "0"）
+    const normalized = cleaned.replace(/^0+(?=\d)/, '');
+    const num = parseInt(normalized, 10);
+    if (!isNaN(num) && num <= 100) {
+      setter(normalized);
+    } else if (!isNaN(num) && num > 100) {
+      setter('100');
+    }
+  };
+
+  const attNum = attendanceWeight.trim() === '' ? null : Number(attendanceWeight);
+  const quizNum = quizWeight.trim() === '' ? null : Number(quizWeight);
+  const midNum = midtermWeight.trim() === '' ? null : Number(midtermWeight);
+  const finNum = finalWeight.trim() === '' ? null : Number(finalWeight);
+  const hwNum = homeworkWeight.trim() === '' ? null : Number(homeworkWeight);
+  const attdNum = attitudeWeight.trim() === '' ? null : Number(attitudeWeight);
+
+  const hasEmpty =
+    attNum === null ||
+    quizNum === null ||
+    midNum === null ||
+    finNum === null ||
+    hwNum === null ||
+    attdNum === null;
+
   const totalSum =
-    (Number(attendanceWeight) || 0) +
-    (Number(quizWeight) || 0) +
-    (Number(midtermWeight) || 0) +
-    (Number(finalWeight) || 0) +
-    (Number(homeworkWeight) || 0) +
-    (Number(attitudeWeight) || 0);
+    (attNum ?? 0) +
+    (quizNum ?? 0) +
+    (midNum ?? 0) +
+    (finNum ?? 0) +
+    (hwNum ?? 0) +
+    (attdNum ?? 0);
 
-  const isSumValid = totalSum === 100;
-  const isReasonValid = changeReason.trim().length > 0;
+  const isSumValid = !hasEmpty && totalSum === 100;
   const areRangesValid =
-    attendanceWeight >= 0 && attendanceWeight <= 100 &&
-    quizWeight >= 0 && quizWeight <= 100 &&
-    midtermWeight >= 0 && midtermWeight <= 100 &&
-    finalWeight >= 0 && finalWeight <= 100 &&
-    homeworkWeight >= 0 && homeworkWeight <= 100 &&
-    attitudeWeight >= 0 && attitudeWeight <= 100;
+    !hasEmpty &&
+    attNum! >= 0 && attNum! <= 100 &&
+    quizNum! >= 0 && quizNum! <= 100 &&
+    midNum! >= 0 && midNum! <= 100 &&
+    finNum! >= 0 && finNum! <= 100 &&
+    hwNum! >= 0 && hwNum! <= 100 &&
+    attdNum! >= 0 && attdNum! <= 100;
 
-  const canSubmit = isSumValid && isReasonValid && areRangesValid && !isSubmitting && !isLocked;
+  const isReasonValid = changeReason.trim().length > 0;
+  const canSubmit = isSumValid && areRangesValid && !isSubmitting && !isLocked;
 
   const handleApplyDefaults = () => {
     if (isLocked) return;
-    setAttendanceWeight(DEFAULT_GRADE_WEIGHTS.attendanceWeight);
-    setQuizWeight(DEFAULT_GRADE_WEIGHTS.quizWeight);
-    setMidtermWeight(DEFAULT_GRADE_WEIGHTS.midtermWeight);
-    setFinalWeight(DEFAULT_GRADE_WEIGHTS.finalWeight);
-    setHomeworkWeight(DEFAULT_GRADE_WEIGHTS.homeworkWeight);
-    setAttitudeWeight(DEFAULT_GRADE_WEIGHTS.attitudeWeight);
+    setAttendanceWeight(String(DEFAULT_GRADE_WEIGHTS.attendanceWeight));
+    setQuizWeight(String(DEFAULT_GRADE_WEIGHTS.quizWeight));
+    setMidtermWeight(String(DEFAULT_GRADE_WEIGHTS.midtermWeight));
+    setFinalWeight(String(DEFAULT_GRADE_WEIGHTS.finalWeight));
+    setHomeworkWeight(String(DEFAULT_GRADE_WEIGHTS.homeworkWeight));
+    setAttitudeWeight(String(DEFAULT_GRADE_WEIGHTS.attitudeWeight));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -118,13 +165,13 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
 
     try {
       const res = await onSave({
-        attendanceWeight,
-        quizWeight,
-        midtermWeight,
-        finalWeight,
-        homeworkWeight,
-        attitudeWeight,
-        changeReason: changeReason.trim(),
+        attendanceWeight: attNum!,
+        quizWeight: quizNum!,
+        midtermWeight: midNum!,
+        finalWeight: finNum!,
+        homeworkWeight: hwNum!,
+        attitudeWeight: attdNum!,
+        changeReason: changeReason.trim() || '教務處個別學生成績權重調整',
       });
 
       if (!res.success) {
@@ -272,13 +319,13 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                 </div>
                 <div className="relative">
                   <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={1}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     disabled={isLocked || isSubmitting}
                     value={attendanceWeight}
-                    onChange={(e) => setAttendanceWeight(Number(e.target.value))}
+                    onChange={handleWeightChange(setAttendanceWeight)}
+                    placeholder="0"
                     className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
@@ -293,13 +340,13 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                 </div>
                 <div className="relative">
                   <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={1}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     disabled={isLocked || isSubmitting}
                     value={quizWeight}
-                    onChange={(e) => setQuizWeight(Number(e.target.value))}
+                    onChange={handleWeightChange(setQuizWeight)}
+                    placeholder="0"
                     className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
@@ -314,13 +361,13 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                 </div>
                 <div className="relative">
                   <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={1}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     disabled={isLocked || isSubmitting}
                     value={midtermWeight}
-                    onChange={(e) => setMidtermWeight(Number(e.target.value))}
+                    onChange={handleWeightChange(setMidtermWeight)}
+                    placeholder="0"
                     className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
@@ -335,13 +382,13 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                 </div>
                 <div className="relative">
                   <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={1}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     disabled={isLocked || isSubmitting}
                     value={finalWeight}
-                    onChange={(e) => setFinalWeight(Number(e.target.value))}
+                    onChange={handleWeightChange(setFinalWeight)}
+                    placeholder="0"
                     className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
@@ -356,13 +403,13 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                 </div>
                 <div className="relative">
                   <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={1}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     disabled={isLocked || isSubmitting}
                     value={homeworkWeight}
-                    onChange={(e) => setHomeworkWeight(Number(e.target.value))}
+                    onChange={handleWeightChange(setHomeworkWeight)}
+                    placeholder="0"
                     className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
@@ -377,13 +424,13 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                 </div>
                 <div className="relative">
                   <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={1}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     disabled={isLocked || isSubmitting}
                     value={attitudeWeight}
-                    onChange={(e) => setAttitudeWeight(Number(e.target.value))}
+                    onChange={handleWeightChange(setAttitudeWeight)}
+                    placeholder="0"
                     className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>

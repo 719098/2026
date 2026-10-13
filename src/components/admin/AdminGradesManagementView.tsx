@@ -77,18 +77,22 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
   React.useEffect(() => {
     if (!selectedTermId && activeTerm?.id) {
       setSelectedTermId(activeTerm.id);
+      if (onReloadGradeWeights) {
+        onReloadGradeWeights(activeTerm.id);
+      }
     }
-  }, [activeTerm, selectedTermId]);
+  }, [activeTerm, selectedTermId, onReloadGradeWeights]);
 
   const currentTermObj = useMemo(() => {
     return terms.find((t) => t.id === selectedTermId) || activeTerm;
   }, [terms, selectedTermId, activeTerm]);
 
-  // Term-specific classes
+  // Term-specific classes: strictly filter by selectedTermId without falling back to classes of other terms
   const termClasses = useMemo(() => {
     if (!selectedTermId) return classes;
-    const matched = classes.filter((c) => c.termId === selectedTermId);
-    return matched.length > 0 ? matched : classes;
+    const hasAnyTermConfigured = classes.some((c) => Boolean(c.termId));
+    if (!hasAnyTermConfigured) return classes;
+    return classes.filter((c) => c.termId === selectedTermId);
   }, [classes, selectedTermId]);
 
   const termClassIds = useMemo(() => {
@@ -274,7 +278,15 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
     attitudeWeight: number;
     changeReason: string;
   }): Promise<{ success: boolean; error?: string }> => {
-    const termId = selectedTermId || currentTermObj?.id;
+    // 優先使用當前篩選學期，若單生其所屬班級有精確 termId 則保持一致
+    let termId = selectedTermId || currentTermObj?.id || '';
+    if (!isBatchMode && modalTargetStudent?.classId) {
+      const studentClass = classes.find((c) => c.id === modalTargetStudent.classId);
+      if (studentClass?.termId) {
+        termId = studentClass.termId;
+      }
+    }
+
     if (!termId) {
       return { success: false, error: '請先選擇有效學期' };
     }
@@ -299,7 +311,9 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
 
       if (res.success) {
         if (onShowToast) onShowToast(`成功套用自訂權重至 ${targetIds.length} 位學生`, 'success');
-        if (onReloadGradeWeights) onReloadGradeWeights(termId);
+        if (onReloadGradeWeights) {
+          await onReloadGradeWeights(termId);
+        }
         setSelectedStudentIds(new Set());
         return { success: true };
       }
@@ -319,7 +333,9 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
 
       if (res.success) {
         if (onShowToast) onShowToast(`已成功更新 ${modalTargetStudent.name} 的個別成績權重`, 'success');
-        if (onReloadGradeWeights) onReloadGradeWeights(termId);
+        if (onReloadGradeWeights) {
+          await onReloadGradeWeights(termId);
+        }
         return { success: true };
       }
       return { success: false, error: res.error };
@@ -330,7 +346,14 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
 
   // Handle Reset to Default (Single or Batch)
   const handleResetToDefault = async (changeReason: string): Promise<{ success: boolean; error?: string }> => {
-    const termId = selectedTermId || currentTermObj?.id;
+    let termId = selectedTermId || currentTermObj?.id || '';
+    if (!isBatchMode && modalTargetStudent?.classId) {
+      const studentClass = classes.find((c) => c.id === modalTargetStudent.classId);
+      if (studentClass?.termId) {
+        termId = studentClass.termId;
+      }
+    }
+
     if (!termId) {
       return { success: false, error: '請先選擇有效學期' };
     }
@@ -349,7 +372,9 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
 
       if (res.success) {
         if (onShowToast) onShowToast(`已成功將 ${targetIds.length} 位學生恢復為標準預設權重`, 'success');
-        if (onReloadGradeWeights) onReloadGradeWeights(termId);
+        if (onReloadGradeWeights) {
+          await onReloadGradeWeights(termId);
+        }
         setSelectedStudentIds(new Set());
         return { success: true };
       }
@@ -363,7 +388,9 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
 
       if (res.success) {
         if (onShowToast) onShowToast(`已成功將 ${modalTargetStudent.name} 恢復為全校標準預設權重`, 'success');
-        if (onReloadGradeWeights) onReloadGradeWeights(termId);
+        if (onReloadGradeWeights) {
+          await onReloadGradeWeights(termId);
+        }
         return { success: true };
       }
       return { success: false, error: res.error };
@@ -707,6 +734,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
 
       {/* Grade Weight Config Modal */}
       <GradeWeightConfigModal
+        key={isWeightModalOpen ? (modalTargetStudent ? `single-${modalTargetStudent.id}` : `batch-${selectedStudentIds.size}`) : 'closed'}
         isOpen={isWeightModalOpen}
         onClose={() => setIsWeightModalOpen(false)}
         student={modalTargetStudent}

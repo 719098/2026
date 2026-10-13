@@ -73,17 +73,25 @@ export async function setSingleStudentWeight(params: {
     return { success: false, error: '資料庫連線尚未初始化' };
   }
 
+  const sId = String(params.studentId || '').trim();
+  const tId = String(params.termId || '').trim();
+  if (!sId || !tId) {
+    return { success: false, error: '無效的學生或學期代碼' };
+  }
+
+  const reason = (params.changeReason && params.changeReason.trim()) || '教務處個別學生成績權重調整';
+
   try {
     const { data, error } = await supabase.rpc('set_student_grade_weights', {
-      p_student_id: params.studentId,
-      p_term_id: params.termId,
-      p_attendance_weight: params.attendanceWeight,
-      p_quiz_weight: params.quizWeight,
-      p_midterm_weight: params.midtermWeight,
-      p_final_weight: params.finalWeight,
-      p_homework_weight: params.homeworkWeight,
-      p_attitude_weight: params.attitudeWeight,
-      p_change_reason: params.changeReason.trim(),
+      p_student_id: sId,
+      p_term_id: tId,
+      p_attendance_weight: Number(params.attendanceWeight),
+      p_quiz_weight: Number(params.quizWeight),
+      p_midterm_weight: Number(params.midtermWeight),
+      p_final_weight: Number(params.finalWeight),
+      p_homework_weight: Number(params.homeworkWeight),
+      p_attitude_weight: Number(params.attitudeWeight),
+      p_change_reason: reason,
     });
 
     if (error) {
@@ -124,17 +132,25 @@ export async function applyBatchStudentWeights(params: {
     return { success: false, error: `批量設定單次最多 500 人 (目前選取: ${params.studentIds.length} 人)` };
   }
 
+  const tId = String(params.termId || '').trim();
+  if (!tId) {
+    return { success: false, error: '無效的學期代碼' };
+  }
+
+  const sIds = params.studentIds.map((id) => String(id).trim()).filter(Boolean);
+  const reason = (params.changeReason && params.changeReason.trim()) || '教務處批量學生成績權重調整';
+
   try {
     const { data, error } = await supabase.rpc('apply_batch_grade_weights', {
-      p_student_ids: params.studentIds,
-      p_term_id: params.termId,
-      p_attendance_weight: params.attendanceWeight,
-      p_quiz_weight: params.quizWeight,
-      p_midterm_weight: params.midtermWeight,
-      p_final_weight: params.finalWeight,
-      p_homework_weight: params.homeworkWeight,
-      p_attitude_weight: params.attitudeWeight,
-      p_change_reason: params.changeReason.trim(),
+      p_student_ids: sIds,
+      p_term_id: tId,
+      p_attendance_weight: Number(params.attendanceWeight),
+      p_quiz_weight: Number(params.quizWeight),
+      p_midterm_weight: Number(params.midtermWeight),
+      p_final_weight: Number(params.finalWeight),
+      p_homework_weight: Number(params.homeworkWeight),
+      p_attitude_weight: Number(params.attitudeWeight),
+      p_change_reason: reason,
     });
 
     if (error) {
@@ -161,11 +177,19 @@ export async function resetSingleStudentWeight(params: {
     return { success: false, error: '資料庫連線尚未初始化' };
   }
 
+  const sId = String(params.studentId || '').trim();
+  const tId = String(params.termId || '').trim();
+  if (!sId || !tId) {
+    return { success: false, error: '無效的學生或學期代碼' };
+  }
+
+  const reason = (params.changeReason && params.changeReason.trim()) || '教務處恢復標準預設成績權重';
+
   try {
     const { data, error } = await supabase.rpc('reset_student_grade_weights', {
-      p_student_id: params.studentId,
-      p_term_id: params.termId,
-      p_change_reason: params.changeReason.trim(),
+      p_student_id: sId,
+      p_term_id: tId,
+      p_change_reason: reason,
     });
 
     if (error) {
@@ -200,11 +224,19 @@ export async function resetBatchStudentWeights(params: {
     return { success: false, error: `批量重置單次最多 500 人 (目前選取: ${params.studentIds.length} 人)` };
   }
 
+  const tId = String(params.termId || '').trim();
+  if (!tId) {
+    return { success: false, error: '無效的學期代碼' };
+  }
+
+  const sIds = params.studentIds.map((id) => String(id).trim()).filter(Boolean);
+  const reason = (params.changeReason && params.changeReason.trim()) || '教務處批量恢復標準預設成績權重';
+
   try {
     const { data, error } = await supabase.rpc('reset_batch_grade_weights', {
-      p_student_ids: params.studentIds,
-      p_term_id: params.termId,
-      p_change_reason: params.changeReason.trim(),
+      p_student_ids: sIds,
+      p_term_id: tId,
+      p_change_reason: reason,
     });
 
     if (error) {
