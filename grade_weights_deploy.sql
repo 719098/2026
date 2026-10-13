@@ -530,13 +530,40 @@ BEGIN
         RAISE EXCEPTION '該學期已結算鎖定，禁止修改權重 (term_id: %)', p_term_id;
     END IF;
 
-    -- 驗證學生在該學期確實有修課紀錄
+    -- 驗證學生在該學期確實具有有效修課或班級關聯（支援 class_students、轉班歷史、成績紀錄與自訂權重紀錄）
     SELECT EXISTS (
+        -- 1. 班級學生目前關聯 (class_students)
         SELECT 1 
         FROM public.class_students cs
         JOIN public.classes c ON c.id = cs.class_id
         WHERE cs.student_id = p_student_id
           AND c.term_id = p_term_id
+
+        UNION ALL
+
+        -- 2. 轉班/歷史分班紀錄 (student_enrollment_history)
+        SELECT 1
+        FROM public.student_enrollment_history seh
+        JOIN public.classes c ON (c.id = seh.to_class_id OR c.id = seh.from_class_id)
+        WHERE seh.student_id = p_student_id
+          AND c.term_id = p_term_id
+
+        UNION ALL
+
+        -- 3. 成績冊既有紀錄 (student_grades)
+        SELECT 1
+        FROM public.student_grades sg
+        JOIN public.classes c ON c.id = sg.class_id
+        WHERE sg.student_id = p_student_id
+          AND c.term_id = p_term_id
+
+        UNION ALL
+
+        -- 4. 既有自訂權重紀錄 (student_grade_weights)
+        SELECT 1
+        FROM public.student_grade_weights w
+        WHERE w.student_id = p_student_id
+          AND w.term_id = p_term_id
     ) INTO v_has_enrollment;
 
     IF NOT v_has_enrollment THEN
@@ -716,15 +743,41 @@ BEGIN
         RAISE EXCEPTION '該學期已結算鎖定，禁止批量修改權重 (term_id: %)', p_term_id;
     END IF;
 
-    -- 3. 驗證「所有」學生均在該學期有修課紀錄（全有全無）
+    -- 3. 驗證「所有」學生均在該學期具有有效修課或班級關聯（支援 class_students、轉班歷史、成績紀錄與自訂權重紀錄）
     SELECT sid INTO v_invalid_student_id
     FROM unnest(p_student_ids) AS sid
-    WHERE NOT EXISTS (
-        SELECT 1 
-        FROM public.class_students cs
-        JOIN public.classes c ON c.id = cs.class_id
-        WHERE cs.student_id = sid
-          AND c.term_id = p_term_id
+    WHERE NOT (
+        -- 1. 班級學生目前關聯 (class_students)
+        EXISTS (
+            SELECT 1 
+            FROM public.class_students cs
+            JOIN public.classes c ON c.id = cs.class_id
+            WHERE cs.student_id = sid
+              AND c.term_id = p_term_id
+        )
+        -- 2. 轉班/歷史分班紀錄 (student_enrollment_history)
+        OR EXISTS (
+            SELECT 1
+            FROM public.student_enrollment_history seh
+            JOIN public.classes c ON (c.id = seh.to_class_id OR c.id = seh.from_class_id)
+            WHERE seh.student_id = sid
+              AND c.term_id = p_term_id
+        )
+        -- 3. 成績冊既有紀錄 (student_grades)
+        OR EXISTS (
+            SELECT 1
+            FROM public.student_grades sg
+            JOIN public.classes c ON c.id = sg.class_id
+            WHERE sg.student_id = sid
+              AND c.term_id = p_term_id
+        )
+        -- 4. 既有自訂權重紀錄 (student_grade_weights)
+        OR EXISTS (
+            SELECT 1
+            FROM public.student_grade_weights w
+            WHERE w.student_id = sid
+              AND w.term_id = p_term_id
+        )
     )
     LIMIT 1;
 
@@ -960,15 +1013,41 @@ BEGIN
         RAISE EXCEPTION '該學期已結算鎖定，禁止批量重置權重 (term_id: %)', p_term_id;
     END IF;
 
-    -- 2. 驗證「所有」學生均在該學期有修課紀錄（全有全無）
+    -- 2. 驗證「所有」學生均在該學期具有有效修課或班級關聯（支援 class_students、轉班歷史、成績紀錄與自訂權重紀錄）
     SELECT sid INTO v_invalid_student_id
     FROM unnest(p_student_ids) AS sid
-    WHERE NOT EXISTS (
-        SELECT 1 
-        FROM public.class_students cs
-        JOIN public.classes c ON c.id = cs.class_id
-        WHERE cs.student_id = sid
-          AND c.term_id = p_term_id
+    WHERE NOT (
+        -- 1. 班級學生目前關聯 (class_students)
+        EXISTS (
+            SELECT 1 
+            FROM public.class_students cs
+            JOIN public.classes c ON c.id = cs.class_id
+            WHERE cs.student_id = sid
+              AND c.term_id = p_term_id
+        )
+        -- 2. 轉班/歷史分班紀錄 (student_enrollment_history)
+        OR EXISTS (
+            SELECT 1
+            FROM public.student_enrollment_history seh
+            JOIN public.classes c ON (c.id = seh.to_class_id OR c.id = seh.from_class_id)
+            WHERE seh.student_id = sid
+              AND c.term_id = p_term_id
+        )
+        -- 3. 成績冊既有紀錄 (student_grades)
+        OR EXISTS (
+            SELECT 1
+            FROM public.student_grades sg
+            JOIN public.classes c ON c.id = sg.class_id
+            WHERE sg.student_id = sid
+              AND c.term_id = p_term_id
+        )
+        -- 4. 既有自訂權重紀錄 (student_grade_weights)
+        OR EXISTS (
+            SELECT 1
+            FROM public.student_grade_weights w
+            WHERE w.student_id = sid
+              AND w.term_id = p_term_id
+        )
     )
     LIMIT 1;
 
@@ -1036,14 +1115,27 @@ USING (
     EXISTS (
         SELECT 1 
         FROM public.profiles p
-        JOIN public.teachers t ON t.profile_id = p.id
+        JOIN public.teachers t ON (t.profile_id = p.id OR t.id = p.id OR t.emp_email = p.email)
         JOIN public.classes c ON c.teacher_id = t.id
-        JOIN public.class_students cs ON cs.class_id = c.id
         WHERE p.id = auth.uid()
           AND p.role = 'TEACHER'
           AND p.is_active = true
-          AND cs.student_id = student_grade_weights.student_id
           AND c.term_id = student_grade_weights.term_id
+          AND (
+              EXISTS (
+                  SELECT 1 FROM public.class_students cs
+                  WHERE cs.class_id = c.id AND cs.student_id = student_grade_weights.student_id
+              )
+              OR EXISTS (
+                  SELECT 1 FROM public.student_enrollment_history seh
+                  WHERE (seh.to_class_id = c.id OR seh.from_class_id = c.id)
+                    AND seh.student_id = student_grade_weights.student_id
+              )
+              OR EXISTS (
+                  SELECT 1 FROM public.student_grades sg
+                  WHERE sg.class_id = c.id AND sg.student_id = student_grade_weights.student_id
+              )
+          )
     )
 );
 

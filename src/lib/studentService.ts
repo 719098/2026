@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { Student, ClassEntity, StudentGrade, TransferClassRecord, CourseSession } from '../types';
+import { Student, ClassEntity, StudentGrade, TransferClassRecord, CourseSession, StudentGradeWeight } from '../types';
 import { calculateTotalGrade, calculateStudentAttendanceScore } from '../utils/gradeUtils';
 import { batchResolveStudentAvatars, extractStoragePath, deleteStudentStorageFiles } from './storageService';
 import { mapDbToClass, fetchClassesFromSupabase } from './classService';

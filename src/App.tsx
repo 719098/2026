@@ -438,11 +438,13 @@ export default function App() {
       setAdminTerms(fetchedTerms);
 
       // Load custom grade weights for the active term
+      let initialWeightsData: Record<string, StudentGradeWeight> | undefined = undefined;
       const activeOrFirstTerm = fetchedTerms.find((t) => t.isActive && !t.isLocked) || fetchedTerms[0];
       if (activeOrFirstTerm?.id) {
         try {
           const { data: weightsData } = await fetchGradeWeightsForTerm(activeOrFirstTerm.id);
           if (weightsData) {
+            initialWeightsData = weightsData;
             setGradeWeightsMap(weightsData);
           }
         } catch (wErr) {
@@ -510,7 +512,7 @@ export default function App() {
         currentClasses,
         activeSessions,
         fetchedTransfers,
-        weightsData || undefined
+        initialWeightsData || undefined
       );
       setAllGrades(fetchedGrades);
 

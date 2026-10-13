@@ -84,9 +84,26 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
     return terms.find((t) => t.id === selectedTermId) || activeTerm;
   }, [terms, selectedTermId, activeTerm]);
 
-  // When switching terms, immediately reload weights for that term
+  // Term-specific classes
+  const termClasses = useMemo(() => {
+    if (!selectedTermId) return classes;
+    const matched = classes.filter((c) => c.termId === selectedTermId);
+    return matched.length > 0 ? matched : classes;
+  }, [classes, selectedTermId]);
+
+  const termClassIds = useMemo(() => {
+    return new Set(termClasses.map((c) => c.id));
+  }, [termClasses]);
+
+  const termClassNames = useMemo(() => {
+    return new Set(termClasses.map((c) => c.name));
+  }, [termClasses]);
+
+  // When switching terms, immediately reload weights and reset term filters/selections
   const handleTermChange = (newTermId: string) => {
     setSelectedTermId(newTermId);
+    setSelectedClassFilter('ALL');
+    setSelectedStudentIds(new Set());
     if (onReloadGradeWeights) {
       onReloadGradeWeights(newTermId);
     }
@@ -104,6 +121,30 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
   // Filter students
   const filteredStudents = useMemo(() => {
     return students.filter((s) => {
+      // 1. Term association: check if student belongs to the selected term
+      const hasTermClasses = termClasses.length > 0 && classes.some((c) => Boolean(c.termId));
+      if (hasTermClasses) {
+        const inTermClass =
+          (s.classId && termClassIds.has(s.classId)) ||
+          (s.className && termClassNames.has(s.className));
+        const inTransfer = transferRecords.some(
+          (t) =>
+            t.studentId === s.id &&
+            ((t.fromClassId && termClassIds.has(t.fromClassId)) ||
+             (t.toClassId && termClassIds.has(t.toClassId)))
+        );
+        const inGrades = Boolean(
+          allGrades[s.id] &&
+          allGrades[s.id].classId &&
+          termClassIds.has(allGrades[s.id].classId!)
+        );
+        const inWeights = Boolean(gradeWeightsMap[s.id]);
+
+        if (!inTermClass && !inTransfer && !inGrades && !inWeights) {
+          return false;
+        }
+      }
+
       const matchSearch =
         s.name.includes(searchTerm) ||
         s.englishName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -139,6 +180,10 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
     allCourses,
     transferRecords,
     gradeWeightsMap,
+    termClasses,
+    termClassIds,
+    termClassNames,
+    classes,
   ]);
 
   const handleToggleSelectStudent = (studentId: string) => {
@@ -457,8 +502,8 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
             onChange={(e) => setSelectedClassFilter(e.target.value)}
             className="px-3 py-2 text-xs border border-[#DCE2E6] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#536B7A] font-semibold text-[#26313B]"
           >
-            <option value="ALL">全部班級名冊</option>
-            {classes.map((c) => (
+            <option value="ALL">全部班級名冊 ({termClasses.length} 班)</option>
+            {termClasses.map((c) => (
               <option key={c.id} value={c.name}>
                 {c.name}
               </option>
