@@ -53,11 +53,9 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState<boolean>(false);
 
-  // 僅在 Modal 由關閉轉為開啟時初始化一次，絕不在父元件 re-render 或輸入過程中覆寫
-  const prevIsOpenRef = React.useRef<boolean>(false);
-
+  // 僅在 Modal 開啟時或切換目標時初始化，絕不在輸入過程中覆寫
   useEffect(() => {
-    if (isOpen && !prevIsOpenRef.current) {
+    if (isOpen) {
       setErrorMsg(null);
       setIsResetConfirmOpen(Boolean(initialResetMode));
       setChangeReason('');
@@ -79,8 +77,7 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
         setAttitudeWeight(String(DEFAULT_GRADE_WEIGHTS.attitudeWeight));
       }
     }
-    prevIsOpenRef.current = isOpen;
-  }, [isOpen]);
+  }, [isOpen, student?.id, termId]);
 
   if (!isOpen) return null;
 
@@ -89,24 +86,24 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
     const raw = e.target.value;
-    // 允許清空為空白（如按 Backspace 刪除最後一位數時）
+    // 允許清空為空白（如按 Backspace 刪除最後一位數或全選刪除）
     if (raw === '') {
       setter('');
       return;
     }
-    // 僅保留數字
-    const cleaned = raw.replace(/[^\d]/g, '');
-    if (cleaned === '') {
+    // 僅保留純數字字元
+    const digits = raw.replace(/[^\d]/g, '');
+    if (digits === '') {
       setter('');
       return;
     }
-    // 移除前導 0（如原本為 0，輸入 30 時變為 30 而非 030；若輸入為單一 0 則保留為 "0"）
-    const normalized = cleaned.replace(/^0+(?=\d)/, '');
+    // 移除前導 0：若輸入如 "030" 轉為 "30"；若為單一 "0" 則保留為 "0"
+    const normalized = digits.replace(/^0+(?=\d)/, '');
     const num = parseInt(normalized, 10);
-    if (!isNaN(num) && num <= 100) {
-      setter(normalized);
-    } else if (!isNaN(num) && num > 100) {
+    if (!isNaN(num) && num > 100) {
       setter('100');
+    } else {
+      setter(normalized);
     }
   };
 
@@ -325,7 +322,9 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                     disabled={isLocked || isSubmitting}
                     value={attendanceWeight}
                     onChange={handleWeightChange(setAttendanceWeight)}
-                    placeholder="0"
+                    onFocus={(e) => e.target.select()}
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                    placeholder=""
                     className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
@@ -346,7 +345,9 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                     disabled={isLocked || isSubmitting}
                     value={quizWeight}
                     onChange={handleWeightChange(setQuizWeight)}
-                    placeholder="0"
+                    onFocus={(e) => e.target.select()}
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                    placeholder=""
                     className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
@@ -367,7 +368,9 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                     disabled={isLocked || isSubmitting}
                     value={midtermWeight}
                     onChange={handleWeightChange(setMidtermWeight)}
-                    placeholder="0"
+                    onFocus={(e) => e.target.select()}
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                    placeholder=""
                     className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
@@ -388,7 +391,9 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                     disabled={isLocked || isSubmitting}
                     value={finalWeight}
                     onChange={handleWeightChange(setFinalWeight)}
-                    placeholder="0"
+                    onFocus={(e) => e.target.select()}
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                    placeholder=""
                     className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
@@ -409,7 +414,9 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                     disabled={isLocked || isSubmitting}
                     value={homeworkWeight}
                     onChange={handleWeightChange(setHomeworkWeight)}
-                    placeholder="0"
+                    onFocus={(e) => e.target.select()}
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                    placeholder=""
                     className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
@@ -430,7 +437,9 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                     disabled={isLocked || isSubmitting}
                     value={attitudeWeight}
                     onChange={handleWeightChange(setAttitudeWeight)}
-                    placeholder="0"
+                    onFocus={(e) => e.target.select()}
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                    placeholder=""
                     className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>

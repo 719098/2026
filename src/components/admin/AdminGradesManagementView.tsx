@@ -127,7 +127,9 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
     return students.filter((s) => {
       // 1. Term association: check if student belongs to the selected term
       const hasTermClasses = termClasses.length > 0 && classes.some((c) => Boolean(c.termId));
-      if (hasTermClasses) {
+      const hasSearch = Boolean(searchTerm.trim());
+      
+      if (hasTermClasses && !hasSearch) {
         const inTermClass =
           (s.classId && termClassIds.has(s.classId)) ||
           (s.className && termClassNames.has(s.className));
@@ -278,14 +280,8 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
     attitudeWeight: number;
     changeReason: string;
   }): Promise<{ success: boolean; error?: string }> => {
-    // 優先使用當前篩選學期，若單生其所屬班級有精確 termId 則保持一致
-    let termId = selectedTermId || currentTermObj?.id || '';
-    if (!isBatchMode && modalTargetStudent?.classId) {
-      const studentClass = classes.find((c) => c.id === modalTargetStudent.classId);
-      if (studentClass?.termId) {
-        termId = studentClass.termId;
-      }
-    }
+    // 嚴格依據當前行政端所選學期進行權重設定，不被學生班級之舊學期覆寫
+    const termId = selectedTermId || currentTermObj?.id || '';
 
     if (!termId) {
       return { success: false, error: '請先選擇有效學期' };
@@ -346,13 +342,8 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
 
   // Handle Reset to Default (Single or Batch)
   const handleResetToDefault = async (changeReason: string): Promise<{ success: boolean; error?: string }> => {
-    let termId = selectedTermId || currentTermObj?.id || '';
-    if (!isBatchMode && modalTargetStudent?.classId) {
-      const studentClass = classes.find((c) => c.id === modalTargetStudent.classId);
-      if (studentClass?.termId) {
-        termId = studentClass.termId;
-      }
-    }
+    // 嚴格依據當前行政端所選學期進行權重設定，不被學生班級之舊學期覆寫
+    const termId = selectedTermId || currentTermObj?.id || '';
 
     if (!termId) {
       return { success: false, error: '請先選擇有效學期' };
@@ -734,7 +725,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
 
       {/* Grade Weight Config Modal */}
       <GradeWeightConfigModal
-        key={isWeightModalOpen ? (modalTargetStudent ? `single-${modalTargetStudent.id}` : `batch-${selectedStudentIds.size}`) : 'closed'}
+        key={isWeightModalOpen ? (modalTargetStudent ? `single-${modalTargetStudent.id}` : 'batch') : 'closed'}
         isOpen={isWeightModalOpen}
         onClose={() => setIsWeightModalOpen(false)}
         student={modalTargetStudent}

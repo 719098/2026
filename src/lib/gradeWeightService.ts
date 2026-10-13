@@ -68,7 +68,7 @@ export async function setSingleStudentWeight(params: {
   homeworkWeight: number;
   attitudeWeight: number;
   changeReason: string;
-}): Promise<{ success: boolean; data?: any; error?: string }> {
+}): Promise<{ success: boolean; data?: any; error?: string; rawError?: any }> {
   if (!supabase) {
     return { success: false, error: '資料庫連線尚未初始化' };
   }
@@ -95,8 +95,35 @@ export async function setSingleStudentWeight(params: {
     });
 
     if (error) {
-      console.error('[GradeWeightService] Error calling set_student_grade_weights:', error);
-      return { success: false, error: error.message };
+      console.error('[GradeWeightService] Error calling set_student_grade_weights:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
+      return { 
+        success: false, 
+        error: error.message || '儲存權重失敗',
+        rawError: error 
+      };
+    }
+
+    // 儲存後立即重新讀取資料庫，確認實體資料表真正存在寫入結果
+    try {
+      const { data: verifiedRow, error: verifyErr } = await supabase
+        .from('student_grade_weights')
+        .select('*')
+        .eq('student_id', sId)
+        .eq('term_id', tId)
+        .maybeSingle();
+
+      if (verifyErr) {
+        console.warn('[GradeWeightService] Post-save verification notice:', verifyErr);
+      } else {
+        console.log('[GradeWeightService] Verified saved weight record in DB:', verifiedRow);
+      }
+    } catch (vErr) {
+      console.warn('[GradeWeightService] Verification read error:', vErr);
     }
 
     return { success: true, data };
@@ -119,7 +146,7 @@ export async function applyBatchStudentWeights(params: {
   homeworkWeight: number;
   attitudeWeight: number;
   changeReason: string;
-}): Promise<{ success: boolean; data?: any; error?: string }> {
+}): Promise<{ success: boolean; data?: any; error?: string; rawError?: any }> {
   if (!supabase) {
     return { success: false, error: '資料庫連線尚未初始化' };
   }
@@ -154,8 +181,17 @@ export async function applyBatchStudentWeights(params: {
     });
 
     if (error) {
-      console.error('[GradeWeightService] Error calling apply_batch_grade_weights:', error);
-      return { success: false, error: error.message };
+      console.error('[GradeWeightService] Error calling apply_batch_grade_weights:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
+      return { 
+        success: false, 
+        error: error.message || '批量設定權重失敗',
+        rawError: error 
+      };
     }
 
     return { success: true, data };
@@ -166,13 +202,13 @@ export async function applyBatchStudentWeights(params: {
 }
 
 /**
- * Reset a single student's weights to default via RPC reset_student_grade_weights
+ * Reset a single student's weights to default via RPC reset_student_grade_weights (with fallback to reset_batch_grade_weights)
  */
 export async function resetSingleStudentWeight(params: {
   studentId: string;
   termId: string;
   changeReason: string;
-}): Promise<{ success: boolean; data?: any; error?: string }> {
+}): Promise<{ success: boolean; data?: any; error?: string; rawError?: any }> {
   if (!supabase) {
     return { success: false, error: '資料庫連線尚未初始化' };
   }
@@ -186,6 +222,7 @@ export async function resetSingleStudentWeight(params: {
   const reason = (params.changeReason && params.changeReason.trim()) || '教務處恢復標準預設成績權重';
 
   try {
+    // 優先呼叫 reset_student_grade_weights
     const { data, error } = await supabase.rpc('reset_student_grade_weights', {
       p_student_id: sId,
       p_term_id: tId,
@@ -193,8 +230,28 @@ export async function resetSingleStudentWeight(params: {
     });
 
     if (error) {
-      console.error('[GradeWeightService] Error calling reset_student_grade_weights:', error);
-      return { success: false, error: error.message };
+      // 若 reset_student_grade_weights 不存在或報錯，Fallback 呼叫最新已部署的 reset_batch_grade_weights
+      console.warn('[GradeWeightService] reset_student_grade_weights error, falling back to reset_batch_grade_weights:', error);
+      const { data: bData, error: bError } = await supabase.rpc('reset_batch_grade_weights', {
+        p_student_ids: [sId],
+        p_term_id: tId,
+        p_change_reason: reason,
+      });
+
+      if (bError) {
+        console.error('[GradeWeightService] Fallback reset_batch_grade_weights failed:', {
+          code: bError.code,
+          message: bError.message,
+          details: bError.details,
+          hint: bError.hint,
+        });
+        return { 
+          success: false, 
+          error: bError.message || '重置權重失敗',
+          rawError: bError 
+        };
+      }
+      return { success: true, data: bData };
     }
 
     return { success: true, data };
@@ -211,7 +268,7 @@ export async function resetBatchStudentWeights(params: {
   studentIds: string[];
   termId: string;
   changeReason: string;
-}): Promise<{ success: boolean; data?: any; error?: string }> {
+}): Promise<{ success: boolean; data?: any; error?: string; rawError?: any }> {
   if (!supabase) {
     return { success: false, error: '資料庫連線尚未初始化' };
   }
@@ -240,8 +297,17 @@ export async function resetBatchStudentWeights(params: {
     });
 
     if (error) {
-      console.error('[GradeWeightService] Error calling reset_batch_grade_weights:', error);
-      return { success: false, error: error.message };
+      console.error('[GradeWeightService] Error calling reset_batch_grade_weights:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
+      return { 
+        success: false, 
+        error: error.message || '批量重置權重失敗',
+        rawError: error 
+      };
     }
 
     return { success: true, data };
