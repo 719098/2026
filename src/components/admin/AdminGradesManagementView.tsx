@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Award, 
   Search, 
@@ -8,58 +8,138 @@ import {
   Sliders,
   CheckCircle,
   AlertTriangle,
-  X
+  X,
+  RotateCcw,
+  Settings,
+  Users,
+  Calendar,
+  Lock
 } from 'lucide-react';
-import { Student, ClassEntity, StudentGrade, CourseSession, TransferClassRecord } from '../../types';
-import { getStudentEffectiveGrade, getLetterGrade } from '../../utils/gradeUtils';
+import { 
+  Student, 
+  ClassEntity, 
+  StudentGrade, 
+  CourseSession, 
+  TransferClassRecord, 
+  Term, 
+  StudentGradeWeight 
+} from '../../types';
+import { getStudentEffectiveGrade, DEFAULT_GRADE_WEIGHTS } from '../../utils/gradeUtils';
 import { exportGradesToCsv } from '../../utils/csvExport';
 import { InfoTooltip } from '../common/InfoTooltip';
 import { BatchActionBar, BatchActionItem } from '../common/BatchActionBar';
+import { GradeWeightConfigModal } from './GradeWeightConfigModal';
+import { 
+  setSingleStudentWeight, 
+  applyBatchStudentWeights, 
+  resetSingleStudentWeight, 
+  resetBatchStudentWeights 
+} from '../../lib/gradeWeightService';
 
 interface AdminGradesManagementViewProps {
   students: Student[];
   classes: ClassEntity[];
+  terms?: Term[];
   allCourses?: CourseSession[];
   allGrades?: Record<string, StudentGrade>;
   transferRecords?: TransferClassRecord[];
+  gradeWeightsMap?: Record<string, StudentGradeWeight>;
+  onReloadGradeWeights?: (termId?: string) => void;
   onSelectStudentDetail: (student: Student) => void;
+  onShowToast?: (message: string, type?: 'success' | 'info' | 'warning') => void;
 }
 
 export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps> = ({
   students,
   classes,
+  terms = [],
   allCourses = [],
   allGrades = {},
   transferRecords = [],
+  gradeWeightsMap = {},
+  onReloadGradeWeights,
   onSelectStudentDetail,
+  onShowToast,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClassFilter, setSelectedClassFilter] = useState('ALL');
   const [selectedGradeBandFilter, setSelectedGradeBandFilter] = useState('ALL');
+  const [selectedWeightTypeFilter, setSelectedWeightTypeFilter] = useState<'ALL' | 'CUSTOM' | 'DEFAULT'>('ALL');
+
+  // Term selection: default to first active term or first available term
+  const activeTerm = useMemo(() => {
+    return terms.find((t) => t.isActive && !t.isLocked) || terms[0] || null;
+  }, [terms]);
+
+  const [selectedTermId, setSelectedTermId] = useState<string>(activeTerm?.id || '');
+
+  // Keep selectedTermId in sync if terms change and was empty
+  React.useEffect(() => {
+    if (!selectedTermId && activeTerm?.id) {
+      setSelectedTermId(activeTerm.id);
+    }
+  }, [activeTerm, selectedTermId]);
+
+  const currentTermObj = useMemo(() => {
+    return terms.find((t) => t.id === selectedTermId) || activeTerm;
+  }, [terms, selectedTermId, activeTerm]);
+
+  // When switching terms, immediately reload weights for that term
+  const handleTermChange = (newTermId: string) => {
+    setSelectedTermId(newTermId);
+    if (onReloadGradeWeights) {
+      onReloadGradeWeights(newTermId);
+    }
+  };
 
   // Batch selection
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
 
+  // Modal states
+  const [isWeightModalOpen, setIsWeightModalOpen] = useState(false);
+  const [modalTargetStudent, setModalTargetStudent] = useState<Student | null>(null);
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [isBatchResetMode, setIsBatchResetMode] = useState(false);
+
   // Filter students
-  const filteredStudents = students.filter((s) => {
-    const matchSearch =
-      s.name.includes(searchTerm) ||
-      s.englishName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      s.studentNumber.includes(searchTerm);
-    const matchClass = selectedClassFilter === 'ALL' || s.className === selectedClassFilter;
-    
-    // Unified effective grade calculation
-    const grade = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords);
-    const finalScore = grade.totalScore;
+  const filteredStudents = useMemo(() => {
+    return students.filter((s) => {
+      const matchSearch =
+        s.name.includes(searchTerm) ||
+        s.englishName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        s.studentNumber.includes(searchTerm);
+      const matchClass = selectedClassFilter === 'ALL' || s.className === selectedClassFilter;
 
-    let matchBand = true;
-    if (selectedGradeBandFilter === 'A') matchBand = finalScore >= 80;
-    if (selectedGradeBandFilter === 'B') matchBand = finalScore >= 70 && finalScore < 80;
-    if (selectedGradeBandFilter === 'PASS') matchBand = finalScore >= 60;
-    if (selectedGradeBandFilter === 'FAIL') matchBand = finalScore < 60;
+      // Custom weight check
+      const customWeight = gradeWeightsMap[s.id];
+      const isCustom = Boolean(customWeight);
+      let matchWeightType = true;
+      if (selectedWeightTypeFilter === 'CUSTOM') matchWeightType = isCustom;
+      if (selectedWeightTypeFilter === 'DEFAULT') matchWeightType = !isCustom;
 
-    return matchSearch && matchClass && matchBand;
-  });
+      // Unified effective grade calculation with custom weight
+      const grade = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords, gradeWeightsMap);
+      const finalScore = grade.totalScore;
+
+      let matchBand = true;
+      if (selectedGradeBandFilter === 'A') matchBand = finalScore >= 80;
+      if (selectedGradeBandFilter === 'B') matchBand = finalScore >= 70 && finalScore < 80;
+      if (selectedGradeBandFilter === 'PASS') matchBand = finalScore >= 60;
+      if (selectedGradeBandFilter === 'FAIL') matchBand = finalScore < 60;
+
+      return matchSearch && matchClass && matchWeightType && matchBand;
+    });
+  }, [
+    students,
+    searchTerm,
+    selectedClassFilter,
+    selectedWeightTypeFilter,
+    selectedGradeBandFilter,
+    allGrades,
+    allCourses,
+    transferRecords,
+    gradeWeightsMap,
+  ]);
 
   const handleToggleSelectStudent = (studentId: string) => {
     setSelectedStudentIds((prev) => {
@@ -85,7 +165,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
     } else {
       setSelectedStudentIds((prev) => {
         const next = new Set(prev);
-        filteredStudents.forEach((s) => next.add(s.id));
+        filteredStudents.slice(0, 500).forEach((s) => next.add(s.id));
         return next;
       });
     }
@@ -96,21 +176,186 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
   };
 
   const handleExportAllCSV = () => {
-    exportGradesToCsv(filteredStudents, '全校學員期末成績冊', allGrades, allCourses, transferRecords);
+    exportGradesToCsv(filteredStudents, '全校學員期末成績冊', allGrades, allCourses, transferRecords, gradeWeightsMap);
   };
 
   const handleBatchExportCSV = () => {
     const targets = filteredStudents.filter((s) => selectedStudentIds.has(s.id));
     if (targets.length === 0) return;
-    exportGradesToCsv(targets, `學員成績冊_選取_${targets.length}人`, allGrades, allCourses, transferRecords);
+    exportGradesToCsv(targets, `學員成績冊_選取_${targets.length}人`, allGrades, allCourses, transferRecords, gradeWeightsMap);
   };
+
+  // Open single student modal
+  const handleOpenSingleWeightModal = (student: Student) => {
+    setModalTargetStudent(student);
+    setIsBatchMode(false);
+    setIsBatchResetMode(false);
+    setIsWeightModalOpen(true);
+  };
+
+  // Open batch set modal
+  const handleOpenBatchWeightModal = () => {
+    if (selectedStudentIds.size === 0) return;
+    if (selectedStudentIds.size > 500) {
+      if (onShowToast) onShowToast('單次批量操作上限為 500 人', 'warning');
+      return;
+    }
+    setModalTargetStudent(null);
+    setIsBatchMode(true);
+    setIsBatchResetMode(false);
+    setIsWeightModalOpen(true);
+  };
+
+  // Open batch reset modal
+  const handleOpenBatchResetModal = () => {
+    if (selectedStudentIds.size === 0) return;
+    if (selectedStudentIds.size > 500) {
+      if (onShowToast) onShowToast('單次批量操作上限為 500 人', 'warning');
+      return;
+    }
+    setModalTargetStudent(null);
+    setIsBatchMode(true);
+    setIsBatchResetMode(true);
+    setIsWeightModalOpen(true);
+  };
+
+  // Handle Save (Single or Batch)
+  const handleSaveWeights = async (weights: {
+    attendanceWeight: number;
+    quizWeight: number;
+    midtermWeight: number;
+    finalWeight: number;
+    homeworkWeight: number;
+    attitudeWeight: number;
+    changeReason: string;
+  }): Promise<{ success: boolean; error?: string }> => {
+    const termId = selectedTermId || currentTermObj?.id;
+    if (!termId) {
+      return { success: false, error: '請先選擇有效學期' };
+    }
+
+    if (currentTermObj?.isLocked) {
+      return { success: false, error: '該學期已結算鎖定，禁止修改或新增自訂權重' };
+    }
+
+    if (isBatchMode) {
+      const targetIds: string[] = Array.from(selectedStudentIds);
+      const res = await applyBatchStudentWeights({
+        studentIds: targetIds,
+        termId,
+        attendanceWeight: weights.attendanceWeight,
+        quizWeight: weights.quizWeight,
+        midtermWeight: weights.midtermWeight,
+        finalWeight: weights.finalWeight,
+        homeworkWeight: weights.homeworkWeight,
+        attitudeWeight: weights.attitudeWeight,
+        changeReason: weights.changeReason,
+      });
+
+      if (res.success) {
+        if (onShowToast) onShowToast(`成功套用自訂權重至 ${targetIds.length} 位學生`, 'success');
+        if (onReloadGradeWeights) onReloadGradeWeights(termId);
+        setSelectedStudentIds(new Set());
+        return { success: true };
+      }
+      return { success: false, error: res.error };
+    } else if (modalTargetStudent) {
+      const res = await setSingleStudentWeight({
+        studentId: modalTargetStudent.id,
+        termId,
+        attendanceWeight: weights.attendanceWeight,
+        quizWeight: weights.quizWeight,
+        midtermWeight: weights.midtermWeight,
+        finalWeight: weights.finalWeight,
+        homeworkWeight: weights.homeworkWeight,
+        attitudeWeight: weights.attitudeWeight,
+        changeReason: weights.changeReason,
+      });
+
+      if (res.success) {
+        if (onShowToast) onShowToast(`已成功更新 ${modalTargetStudent.name} 的個別成績權重`, 'success');
+        if (onReloadGradeWeights) onReloadGradeWeights(termId);
+        return { success: true };
+      }
+      return { success: false, error: res.error };
+    }
+
+    return { success: false, error: '無效的操作目標' };
+  };
+
+  // Handle Reset to Default (Single or Batch)
+  const handleResetToDefault = async (changeReason: string): Promise<{ success: boolean; error?: string }> => {
+    const termId = selectedTermId || currentTermObj?.id;
+    if (!termId) {
+      return { success: false, error: '請先選擇有效學期' };
+    }
+
+    if (currentTermObj?.isLocked) {
+      return { success: false, error: '該學期已結算鎖定，禁止重置權重' };
+    }
+
+    if (isBatchMode) {
+      const targetIds: string[] = Array.from(selectedStudentIds);
+      const res = await resetBatchStudentWeights({
+        studentIds: targetIds,
+        termId,
+        changeReason,
+      });
+
+      if (res.success) {
+        if (onShowToast) onShowToast(`已成功將 ${targetIds.length} 位學生恢復為標準預設權重`, 'success');
+        if (onReloadGradeWeights) onReloadGradeWeights(termId);
+        setSelectedStudentIds(new Set());
+        return { success: true };
+      }
+      return { success: false, error: res.error };
+    } else if (modalTargetStudent) {
+      const res = await resetSingleStudentWeight({
+        studentId: modalTargetStudent.id,
+        termId,
+        changeReason,
+      });
+
+      if (res.success) {
+        if (onShowToast) onShowToast(`已成功將 ${modalTargetStudent.name} 恢復為全校標準預設權重`, 'success');
+        if (onReloadGradeWeights) onReloadGradeWeights(termId);
+        return { success: true };
+      }
+      return { success: false, error: res.error };
+    }
+
+    return { success: false, error: '無效的操作目標' };
+  };
+
+  // Selected students list for batch modal
+  const selectedStudentsList = useMemo(() => {
+    return students.filter((s) => selectedStudentIds.has(s.id));
+  }, [students, selectedStudentIds]);
+
+  const isTermLocked = Boolean(currentTermObj?.isLocked);
 
   const batchActions: BatchActionItem[] = [
     {
-      key: 'batch-export',
-      label: `匯出選取成績 (${selectedStudentIds.size}人)`,
-      icon: <Download className="w-4 h-4" />,
+      key: 'batch-weights',
+      label: `批次設定權重 (${selectedStudentIds.size}人)`,
+      icon: <Sliders className="w-4 h-4" />,
       variant: 'primary',
+      disabled: isTermLocked,
+      onClick: handleOpenBatchWeightModal,
+    },
+    {
+      key: 'batch-reset',
+      label: `批次恢復預設 (${selectedStudentIds.size}人)`,
+      icon: <RotateCcw className="w-4 h-4" />,
+      variant: 'secondary',
+      disabled: isTermLocked,
+      onClick: handleOpenBatchResetModal,
+    },
+    {
+      key: 'batch-export',
+      label: `匯出成績冊 (${selectedStudentIds.size}人)`,
+      icon: <Download className="w-4 h-4" />,
+      variant: 'secondary',
       onClick: handleBatchExportCSV,
     },
   ];
@@ -122,29 +367,52 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
         <div>
           <div className="flex items-center space-x-2">
             <Award className="w-5 h-5 text-[#536B7A]" />
-            <h1 className="text-lg font-bold text-[#26313B]">學員期末成績與等第總評</h1>
+            <h1 className="text-lg font-bold text-[#26313B]">學員期末成績總評與自訂權重</h1>
             <InfoTooltip
-              title="學期成績結算標準"
-              content="成績權重公式：出席成績 20% + 平時測驗 15% + 期中考試 20% + 期末考試 20% + 作業習作 15% + 學習態度 10%。出席成績依各堂實際出缺勤即時折算（停課堂次自動排除不計）。"
+              title="學生成績結算與個別自訂權重"
+              content="全校預設比例：出席 20% + 平時 15% + 期中 20% + 期末 20% + 作業 15% + 態度 10%（合計 100%）。可針對單一或批量學生自訂比例；未自訂者自動套用預設值。學期鎖定後不可修改。"
             />
           </div>
+          <p className="text-xs text-[#66717C] mt-1">
+            支援學生個別成績比例客製化與批量設定，儲存後即時更新學期加權總成績。
+          </p>
         </div>
 
-        <button
-          onClick={handleExportAllCSV}
-          className="inline-flex items-center space-x-1.5 px-4 py-2 bg-[#536B7A] hover:bg-[#455865] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors"
-        >
-          <FileSpreadsheet className="w-4 h-4" />
-          <span>匯出全校成績冊 (CSV)</span>
-        </button>
+        <div className="flex items-center space-x-2">
+          {terms.length > 0 && (
+            <div className="flex items-center space-x-1.5 bg-[#F8FAFC] border border-[#DCE2E6] px-3 py-1.5 rounded-lg text-xs">
+              <Calendar className="w-3.5 h-3.5 text-[#536B7A]" />
+              <span className="font-semibold text-slate-600">學期：</span>
+              <select
+                value={selectedTermId}
+                onChange={(e) => handleTermChange(e.target.value)}
+                className="bg-transparent font-bold text-[#26313B] focus:outline-none"
+              >
+                {terms.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} {t.isLocked ? '(已鎖定)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <button
+            onClick={handleExportAllCSV}
+            className="inline-flex items-center space-x-1.5 px-4 py-2 bg-[#536B7A] hover:bg-[#455865] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>匯出全校成績冊 (CSV)</span>
+          </button>
+        </div>
       </div>
 
       {/* Grade Formula Specs Banner */}
       <div className="bg-[#F8FAFC] border border-[#DCE2E6] rounded-xl p-3.5 text-xs text-[#26313B] shadow-2xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div className="flex items-center space-x-2">
             <Sliders className="w-4 h-4 text-[#536B7A]" />
-            <span className="font-bold">中心標準評分標準 (Official Grading Standards)：</span>
+            <span className="font-bold">全校標準預設評分比例：</span>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-[11px]">
             <span className="bg-white px-2.5 py-1 rounded-md border border-[#DCE2E6] font-semibold text-[#536B7A]">
@@ -170,8 +438,8 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
       </div>
 
       {/* Filter toolbar */}
-      <div className="bg-white p-4 rounded-xl border border-[#DCE2E6] shadow-2xs flex flex-col sm:flex-row gap-3 items-center justify-between">
-        <div className="relative w-full sm:w-72">
+      <div className="bg-white p-4 rounded-xl border border-[#DCE2E6] shadow-2xs flex flex-col lg:flex-row gap-3 items-center justify-between">
+        <div className="relative w-full lg:w-72">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -182,7 +450,8 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+          {/* Class Filter */}
           <select
             value={selectedClassFilter}
             onChange={(e) => setSelectedClassFilter(e.target.value)}
@@ -196,15 +465,27 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
             ))}
           </select>
 
+          {/* Weight Type Filter */}
+          <select
+            value={selectedWeightTypeFilter}
+            onChange={(e) => setSelectedWeightTypeFilter(e.target.value as any)}
+            className="px-3 py-2 text-xs border border-[#DCE2E6] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#536B7A] font-semibold text-[#26313B]"
+          >
+            <option value="ALL">全部權重類型</option>
+            <option value="CUSTOM">僅顯示個別自訂權重</option>
+            <option value="DEFAULT">僅顯示標準預設權重</option>
+          </select>
+
+          {/* Grade Band Filter */}
           <select
             value={selectedGradeBandFilter}
             onChange={(e) => setSelectedGradeBandFilter(e.target.value)}
             className="px-3 py-2 text-xs border border-[#DCE2E6] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#536B7A] font-semibold text-[#26313B]"
           >
             <option value="ALL">全部成績區間</option>
-            <option value="A">優異 A 等級 (80分以上)</option>
-            <option value="B">良好 B 等級 (70-79分)</option>
-            <option value="PASS">及格 PASS (60分以上)</option>
+            <option value="A">優異等級 (80分以上)</option>
+            <option value="B">良好等級 (70-79分)</option>
+            <option value="PASS">及格 (60分以上)</option>
             <option value="FAIL">不及格預警 (&lt; 60分)</option>
           </select>
         </div>
@@ -232,33 +513,42 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
                     checked={filteredStudents.length > 0 && filteredStudents.every((s) => selectedStudentIds.has(s.id))}
                     onChange={handleSelectAllCurrentPage}
                     className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
-                    title={filteredStudents.every((s) => selectedStudentIds.has(s.id)) ? '取消全選' : '全選目前頁面'}
+                    title={filteredStudents.every((s) => selectedStudentIds.has(s.id)) ? '取消全選' : '全選目前名單 (上限500人)'}
                   />
                 </th>
                 <th className="py-3 px-4 min-w-[140px]">學號 / 姓名</th>
-                <th className="py-3 px-3 min-w-[100px]">所屬班級</th>
-                <th className="py-3 px-3 text-right min-w-[90px]">出席 (20%)</th>
-                <th className="py-3 px-3 text-right min-w-[85px]">平時 (15%)</th>
-                <th className="py-3 px-3 text-right min-w-[85px]">期中 (20%)</th>
-                <th className="py-3 px-3 text-right min-w-[85px]">期末 (20%)</th>
-                <th className="py-3 px-3 text-right min-w-[85px]">作業 (15%)</th>
-                <th className="py-3 px-3 text-right min-w-[85px]">態度 (10%)</th>
-                <th className="py-3 px-3 text-right min-w-[100px]">學期總成績</th>
-                <th className="py-3 px-4 text-center min-w-[100px]">評定等第</th>
+                <th className="py-3 px-3 min-w-[90px]">所屬班級</th>
+                <th className="py-3 px-3 min-w-[110px] text-center">評分權重模式</th>
+                <th className="py-3 px-3 text-right min-w-[80px]">出席</th>
+                <th className="py-3 px-3 text-right min-w-[75px]">平時</th>
+                <th className="py-3 px-3 text-right min-w-[75px]">期中</th>
+                <th className="py-3 px-3 text-right min-w-[75px]">期末</th>
+                <th className="py-3 px-3 text-right min-w-[75px]">作業</th>
+                <th className="py-3 px-3 text-right min-w-[75px]">態度</th>
+                <th className="py-3 px-3 text-right min-w-[90px]">學期總分</th>
+                <th className="py-3 px-3 text-center min-w-[100px]">權重操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F0F4F7]">
               {filteredStudents.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-[#66717C] text-xs">
+                  <td colSpan={12} className="py-12 text-center text-[#66717C] text-xs">
                     查無學員成績紀錄
                   </td>
                 </tr>
               ) : (
                 filteredStudents.map((student) => {
-                  const grade = getStudentEffectiveGrade(student, allGrades, allCourses, transferRecords);
-                  const letter = getLetterGrade(grade.totalScore);
+                  const customWeight = gradeWeightsMap[student.id];
+                  const hasCustom = Boolean(customWeight);
+                  const grade = getStudentEffectiveGrade(student, allGrades, allCourses, transferRecords, gradeWeightsMap);
                   const isSelected = selectedStudentIds.has(student.id);
+
+                  const wAtt = customWeight ? customWeight.attendanceWeight : DEFAULT_GRADE_WEIGHTS.attendanceWeight;
+                  const wQuiz = customWeight ? customWeight.quizWeight : DEFAULT_GRADE_WEIGHTS.quizWeight;
+                  const wMid = customWeight ? customWeight.midtermWeight : DEFAULT_GRADE_WEIGHTS.midtermWeight;
+                  const wFin = customWeight ? customWeight.finalWeight : DEFAULT_GRADE_WEIGHTS.finalWeight;
+                  const wHw = customWeight ? customWeight.homeworkWeight : DEFAULT_GRADE_WEIGHTS.homeworkWeight;
+                  const wAttid = customWeight ? customWeight.attitudeWeight : DEFAULT_GRADE_WEIGHTS.attitudeWeight;
 
                   return (
                     <tr
@@ -289,38 +579,77 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
                         {student.className}
                       </td>
 
-                      <td className="py-3 px-3 text-right font-mono font-bold text-teal-700">
-                        {grade.attendanceScore}%
+                      {/* Weight status badge */}
+                      <td className="py-3 px-3 text-center">
+                        {hasCustom ? (
+                          <span
+                            className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 cursor-help"
+                            title={`個別自訂比例：出席${wAtt}% 平時${wQuiz}% 期中${wMid}% 期末${wFin}% 作業${wHw}% 態度${wAttid}%`}
+                          >
+                            個別自訂
+                          </span>
+                        ) : (
+                          <span
+                            className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200"
+                            title="套用全校標準預設比例：20/15/20/20/15/10"
+                          >
+                            標準預設
+                          </span>
+                        )}
                       </td>
 
-                      <td className="py-3 px-3 text-right font-mono font-bold text-[#26313B]">
-                        {grade.quizScore}
+                      <td className="py-3 px-3 text-right font-mono">
+                        <span className="font-bold text-teal-700">{grade.attendanceScore}%</span>
+                        <span className="text-[10px] text-slate-400 block font-normal">({wAtt}%)</span>
                       </td>
 
-                      <td className="py-3 px-3 text-right font-mono font-bold text-[#26313B]">
-                        {grade.midtermScore}
+                      <td className="py-3 px-3 text-right font-mono">
+                        <span className="font-bold text-[#26313B]">{grade.quizScore}</span>
+                        <span className="text-[10px] text-slate-400 block font-normal">({wQuiz}%)</span>
                       </td>
 
-                      <td className="py-3 px-3 text-right font-mono font-bold text-[#26313B]">
-                        {grade.finalScore}
+                      <td className="py-3 px-3 text-right font-mono">
+                        <span className="font-bold text-[#26313B]">{grade.midtermScore}</span>
+                        <span className="text-[10px] text-slate-400 block font-normal">({wMid}%)</span>
                       </td>
 
-                      <td className="py-3 px-3 text-right font-mono font-bold text-[#26313B]">
-                        {grade.homeworkScore}
+                      <td className="py-3 px-3 text-right font-mono">
+                        <span className="font-bold text-[#26313B]">{grade.finalScore}</span>
+                        <span className="text-[10px] text-slate-400 block font-normal">({wFin}%)</span>
                       </td>
 
-                      <td className="py-3 px-3 text-right font-mono font-bold text-[#26313B]">
-                        {grade.attitudeScore}
+                      <td className="py-3 px-3 text-right font-mono">
+                        <span className="font-bold text-[#26313B]">{grade.homeworkScore}</span>
+                        <span className="text-[10px] text-slate-400 block font-normal">({wHw}%)</span>
+                      </td>
+
+                      <td className="py-3 px-3 text-right font-mono">
+                        <span className="font-bold text-[#26313B]">{grade.attitudeScore}</span>
+                        <span className="text-[10px] text-slate-400 block font-normal">({wAttid}%)</span>
                       </td>
 
                       <td className="py-3 px-3 text-right font-mono font-extrabold text-[#26313B] text-sm">
                         {grade.totalScore}
                       </td>
 
-                      <td className="py-3 px-4 text-center">
-                        <span className={`inline-block px-2.5 py-0.5 rounded-md text-xs font-bold border ${letter.color}`}>
-                          {letter.letter} ({letter.label})
-                        </span>
+                      {/* Action */}
+                      <td className="py-3 px-3 text-center">
+                        {isTermLocked ? (
+                          <span className="inline-flex items-center space-x-1 px-2.5 py-1 text-[11px] font-semibold text-slate-400 bg-slate-100 rounded-lg cursor-not-allowed">
+                            <Lock className="w-3 h-3" />
+                            <span>已鎖定</span>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenSingleWeightModal(student)}
+                            className="inline-flex items-center space-x-1 px-2.5 py-1 text-[11px] font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition-colors"
+                            title="調整該生自訂權重或恢復預設"
+                          >
+                            <Settings className="w-3 h-3" />
+                            <span>調整權重</span>
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -330,6 +659,21 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
           </table>
         </div>
       </div>
+
+      {/* Grade Weight Config Modal */}
+      <GradeWeightConfigModal
+        isOpen={isWeightModalOpen}
+        onClose={() => setIsWeightModalOpen(false)}
+        student={modalTargetStudent}
+        students={isBatchMode ? selectedStudentsList : []}
+        termId={selectedTermId || currentTermObj?.id || ''}
+        termName={currentTermObj?.name}
+        isLocked={isTermLocked}
+        initialResetMode={isBatchResetMode}
+        currentWeight={modalTargetStudent ? gradeWeightsMap[modalTargetStudent.id] : null}
+        onSave={handleSaveWeights}
+        onResetToDefault={handleResetToDefault}
+      />
     </div>
   );
 };

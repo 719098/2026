@@ -1,5 +1,5 @@
-import { Student, StudentGrade, CourseSession, TransferClassRecord } from '../types';
-import { calculateFinalGrade, getStudentScores, getStudentEffectiveGrade, getLetterGrade } from './gradeUtils';
+import { Student, StudentGrade, CourseSession, TransferClassRecord, StudentGradeWeight } from '../types';
+import { calculateFinalGrade, getStudentScores, getStudentEffectiveGrade } from './gradeUtils';
 
 /**
  * Universal CSV export utility with UTF-8 BOM for Microsoft Excel compatibility
@@ -179,6 +179,7 @@ export function exportAttendanceSummaryToCsv(
   exportToCsv(`${filename}_${timestamp}`, headers, rows);
 }
 
+
 /**
  * Export grades report
  */
@@ -187,7 +188,8 @@ export function exportGradesToCsv(
   filename: string = '期末成績冊',
   allGrades?: Record<string, StudentGrade>,
   allCourses?: CourseSession[],
-  transferRecords?: TransferClassRecord[]
+  transferRecords?: TransferClassRecord[],
+  gradeWeightsMap?: Record<string, StudentGradeWeight>
 ) {
   const headers = [
     '學號',
@@ -195,21 +197,24 @@ export function exportGradesToCsv(
     '英文姓名',
     '所屬班級',
     '國籍',
-    '出席成績 (20%)',
-    '平時測驗 (15%)',
-    '期中考試 (20%)',
-    '期末考試 (20%)',
-    '作業習作 (15%)',
-    '學習態度 (10%)',
-    '學期總成績 (100%)',
-    '評定等第',
+    '權重設定',
+    '出席成績',
+    '平時測驗',
+    '期中考試',
+    '期末考試',
+    '作業習作',
+    '學習態度',
+    '學期總成績',
     '是否及格',
   ];
 
   const rows = students.map((s) => {
-    const grade = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords);
-    const letter = getLetterGrade(grade.totalScore);
+    const customWeight = gradeWeightsMap ? gradeWeightsMap[s.id] : undefined;
+    const grade = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords, gradeWeightsMap);
     const isPass = grade.totalScore >= 60 ? '及格' : '不及格';
+    const weightDesc = customWeight
+      ? `個別自訂 (${customWeight.attendanceWeight}/${customWeight.quizWeight}/${customWeight.midtermWeight}/${customWeight.finalWeight}/${customWeight.homeworkWeight}/${customWeight.attitudeWeight}%)`
+      : '標準預設 (20/15/20/20/15/10%)';
 
     return [
       s.studentNumber,
@@ -217,6 +222,7 @@ export function exportGradesToCsv(
       s.englishName,
       s.className || '未分班',
       s.nationality,
+      weightDesc,
       grade.attendanceScore,
       grade.quizScore,
       grade.midtermScore,
@@ -224,7 +230,6 @@ export function exportGradesToCsv(
       grade.homeworkScore,
       grade.attitudeScore,
       grade.totalScore,
-      letter.letter,
       isPass,
     ];
   });

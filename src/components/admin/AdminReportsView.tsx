@@ -14,8 +14,8 @@ import {
   Layers,
   FileSpreadsheet
 } from 'lucide-react';
-import { Student, ClassEntity, CourseSession, StudentGrade, TransferClassRecord } from '../../types';
-import { getStudentEffectiveGrade, getLetterGrade } from '../../utils/gradeUtils';
+import { Student, ClassEntity, CourseSession, StudentGrade, TransferClassRecord, StudentGradeWeight } from '../../types';
+import { getStudentEffectiveGrade } from '../../utils/gradeUtils';
 
 interface AdminReportsViewProps {
   students: Student[];
@@ -23,6 +23,7 @@ interface AdminReportsViewProps {
   allCourses: CourseSession[];
   allGrades?: Record<string, StudentGrade>;
   transferRecords?: TransferClassRecord[];
+  gradeWeightsMap?: Record<string, StudentGradeWeight>;
 }
 
 export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
@@ -31,6 +32,7 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
   allCourses,
   allGrades = {},
   transferRecords = [],
+  gradeWeightsMap = {},
 }) => {
   const [selectedReportTab, setSelectedReportTab] = useState<'attendance' | 'grades' | 'certificate'>('attendance');
   const [selectedStudentId, setSelectedStudentId] = useState<string>(students?.[0]?.id || '');
@@ -43,22 +45,22 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
     students.reduce((acc, s) => acc + s.overallAttendanceRate, 0) / (totalStudents || 1)
   ).toFixed(1);
 
-  // Grade distributions based on official unified 6-item grades
+  // Grade distributions based on official unified 6-item grades with custom weights support
   const gradeBuckets = {
-    A: students.filter((s) => {
-      const g = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords);
+    score80Plus: students.filter((s) => {
+      const g = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords, gradeWeightsMap);
       return g.totalScore >= 80;
     }).length,
-    B: students.filter((s) => {
-      const g = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords);
+    score70To79: students.filter((s) => {
+      const g = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords, gradeWeightsMap);
       return g.totalScore >= 70 && g.totalScore < 80;
     }).length,
-    C: students.filter((s) => {
-      const g = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords);
+    score60To69: students.filter((s) => {
+      const g = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords, gradeWeightsMap);
       return g.totalScore >= 60 && g.totalScore < 70;
     }).length,
-    F: students.filter((s) => {
-      const g = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords);
+    scoreBelow60: students.filter((s) => {
+      const g = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords, gradeWeightsMap);
       return g.totalScore < 60;
     }).length,
   };
@@ -77,7 +79,7 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
             <h1 className="text-lg font-bold text-[#26313B]">全校校務報表統計與官方證明書生成</h1>
           </div>
           <p className="text-xs text-[#66717C] mt-1">
-            提供全校考勤時數匯總、移民署居留證核查用出席證明、期末等第分布與中英文結業證書即時列印。
+            提供全校考勤時數匯總、移民署居留證核查用出席證明、期末成績總分分布與中英文結業證書即時列印。
           </p>
         </div>
 
@@ -101,7 +103,7 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
                 : 'text-[#66717C] hover:text-[#26313B]'
             }`}
           >
-            成績等第分佈
+            成績總分分佈
           </button>
           <button
             onClick={() => setSelectedReportTab('certificate')}
@@ -199,31 +201,31 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
         <div className="space-y-6">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="bg-white p-4 rounded-xl border border-[#DCE2E6] shadow-2xs">
-              <div className="text-xs text-[#536B7A] font-bold">A 等級 (80分以上)</div>
-              <div className="text-2xl font-bold text-[#26313B] mt-1">{gradeBuckets.A} 人</div>
+              <div className="text-xs text-[#536B7A] font-bold">80 分以上 (優秀)</div>
+              <div className="text-2xl font-bold text-[#26313B] mt-1">{gradeBuckets.score80Plus} 人</div>
               <div className="text-[10px] text-[#66717C] mt-0.5">
-                佔比 {((gradeBuckets.A / (totalStudents || 1)) * 100).toFixed(0)}%
+                佔比 {((gradeBuckets.score80Plus / (totalStudents || 1)) * 100).toFixed(0)}%
               </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-[#DCE2E6] shadow-2xs">
-              <div className="text-xs text-slate-700 font-bold">B 等級 (70-79分)</div>
-              <div className="text-2xl font-bold text-[#26313B] mt-1">{gradeBuckets.B} 人</div>
+              <div className="text-xs text-slate-700 font-bold">70 - 79 分 (良好)</div>
+              <div className="text-2xl font-bold text-[#26313B] mt-1">{gradeBuckets.score70To79} 人</div>
               <div className="text-[10px] text-[#66717C] mt-0.5">
-                佔比 {((gradeBuckets.B / (totalStudents || 1)) * 100).toFixed(0)}%
+                佔比 {((gradeBuckets.score70To79 / (totalStudents || 1)) * 100).toFixed(0)}%
               </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-[#DCE2E6] shadow-2xs">
-              <div className="text-xs text-amber-700 font-bold">C 等級 (60-69分)</div>
-              <div className="text-2xl font-bold text-[#26313B] mt-1">{gradeBuckets.C} 人</div>
+              <div className="text-xs text-amber-700 font-bold">60 - 69 分 (及格)</div>
+              <div className="text-2xl font-bold text-[#26313B] mt-1">{gradeBuckets.score60To69} 人</div>
               <div className="text-[10px] text-[#66717C] mt-0.5">
-                佔比 {((gradeBuckets.C / (totalStudents || 1)) * 100).toFixed(0)}%
+                佔比 {((gradeBuckets.score60To69 / (totalStudents || 1)) * 100).toFixed(0)}%
               </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-[#DCE2E6] shadow-2xs">
-              <div className="text-xs text-rose-700 font-bold">F 不及格 (&lt;60分)</div>
-              <div className="text-2xl font-bold text-[#26313B] mt-1">{gradeBuckets.F} 人</div>
+              <div className="text-xs text-rose-700 font-bold">60 分以下 (不及格)</div>
+              <div className="text-2xl font-bold text-[#26313B] mt-1">{gradeBuckets.scoreBelow60} 人</div>
               <div className="text-[10px] text-[#66717C] mt-0.5">
-                佔比 {((gradeBuckets.F / (totalStudents || 1)) * 100).toFixed(0)}%
+                佔比 {((gradeBuckets.scoreBelow60 / (totalStudents || 1)) * 100).toFixed(0)}%
               </div>
             </div>
           </div>
@@ -301,9 +303,8 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
                     <strong className="text-emerald-700">{selectedStudentForCert.overallAttendanceRate}%</strong>，期末學業總評成績為{' '}
                     <strong className="text-[#536B7A]">
                       {(() => {
-                        const certGrade = getStudentEffectiveGrade(selectedStudentForCert, allGrades, allCourses, transferRecords);
-                        const letter = getLetterGrade(certGrade.totalScore);
-                        return `${certGrade.totalScore} 分（成績等第 ${letter.letter}）`;
+                        const certGrade = getStudentEffectiveGrade(selectedStudentForCert, allGrades, allCourses, transferRecords, gradeWeightsMap);
+                        return `${certGrade.totalScore} 分`;
                       })()}
                     </strong>
                     ，特頒此證，以資證明。

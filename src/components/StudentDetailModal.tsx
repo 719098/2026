@@ -15,9 +15,9 @@ import {
   ShieldCheck,
   Download
 } from 'lucide-react';
-import { Student, CourseSession, StudentGrade, TransferClassRecord } from '../types';
+import { Student, CourseSession, StudentGrade, TransferClassRecord, StudentGradeWeight } from '../types';
 import { calculateStudentAttendanceHistory } from '../utils/attendanceUtils';
-import { GRADE_WEIGHTS, getLetterGrade, getStudentEffectiveGrade, calculateTotalGrade } from '../utils/gradeUtils';
+import { GRADE_WEIGHTS, getStudentEffectiveGrade, calculateTotalGrade } from '../utils/gradeUtils';
 import { StudentAvatar } from './StudentAvatar';
 import { exportIndividualStudentAttendanceToCsv } from '../utils/csvExport';
 
@@ -25,6 +25,7 @@ interface StudentDetailModalProps {
   student: Student | null;
   allCourses: CourseSession[];
   grade?: StudentGrade;
+  customWeight?: StudentGradeWeight | null;
   teacherName?: string;
   transferRecords?: TransferClassRecord[];
   onClose: () => void;
@@ -34,6 +35,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   student,
   allCourses,
   grade,
+  customWeight,
   teacherName = '林明學老師',
   transferRecords,
   onClose,
@@ -49,19 +51,25 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
       student,
       grade ? { [student.id]: grade } : undefined,
       allCourses,
-      transferRecords
+      transferRecords,
+      customWeight ? { [student.id]: customWeight } : undefined
     );
-  }, [student, grade, allCourses, transferRecords]);
+  }, [student, grade, allCourses, transferRecords, customWeight]);
 
-  const letterGrade = getLetterGrade(effectiveGrade.totalScore);
+  const wAtt = customWeight ? customWeight.attendanceWeight : 20;
+  const wQuiz = customWeight ? customWeight.quizWeight : 15;
+  const wMid = customWeight ? customWeight.midtermWeight : 20;
+  const wFin = customWeight ? customWeight.finalWeight : 20;
+  const wHw = customWeight ? customWeight.homeworkWeight : 15;
+  const wAttid = customWeight ? customWeight.attitudeWeight : 10;
 
   // Grade calculation components
-  const attendanceWeighted = Math.round(effectiveGrade.attendanceScore * GRADE_WEIGHTS.attendance * 100) / 100;
-  const quizWeighted = Math.round(effectiveGrade.quizScore * GRADE_WEIGHTS.quiz * 100) / 100;
-  const midtermWeighted = Math.round(effectiveGrade.midtermScore * GRADE_WEIGHTS.midterm * 100) / 100;
-  const finalWeighted = Math.round(effectiveGrade.finalScore * GRADE_WEIGHTS.final * 100) / 100;
-  const homeworkWeighted = Math.round(effectiveGrade.homeworkScore * GRADE_WEIGHTS.homework * 100) / 100;
-  const attitudeWeighted = Math.round(effectiveGrade.attitudeScore * GRADE_WEIGHTS.attitude * 100) / 100;
+  const attendanceWeighted = Math.round(effectiveGrade.attendanceScore * (wAtt / 100) * 100) / 100;
+  const quizWeighted = Math.round(effectiveGrade.quizScore * (wQuiz / 100) * 100) / 100;
+  const midtermWeighted = Math.round(effectiveGrade.midtermScore * (wMid / 100) * 100) / 100;
+  const finalWeighted = Math.round(effectiveGrade.finalScore * (wFin / 100) * 100) / 100;
+  const homeworkWeighted = Math.round(effectiveGrade.homeworkScore * (wHw / 100) * 100) / 100;
+  const attitudeWeighted = Math.round(effectiveGrade.attitudeScore * (wAttid / 100) * 100) / 100;
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2.5 sm:p-5 animate-in fade-in duration-200">
@@ -210,7 +218,16 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                 <div>
                   <h3 className="text-sm font-extrabold text-slate-900 flex items-center space-x-2">
                     <Calculator className="w-4 h-4 text-indigo-600" />
-                    <span>本季總成績計算明細 (各項佔比 100%)</span>
+                    <span>本季總成績計算明細 (各項佔比合計 100%)</span>
+                    {customWeight ? (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                        個別自訂權重
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                        全校標準預設
+                      </span>
+                    )}
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
                     出席成績由系統依實際出缺席自動產生；總成績依比例加權即時計算。
@@ -220,85 +237,80 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                 <div className="flex items-center space-x-3 bg-slate-900 text-white px-4 py-2 rounded-xl">
                   <span className="text-xs text-slate-300 font-medium">總成績：</span>
                   <span className="text-2xl font-black text-teal-400 font-mono">{effectiveGrade.totalScore}</span>
-                  {letterGrade && (
-                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${letterGrade.color}`}>
-                      {letterGrade.letter} ({letterGrade.label})
-                    </span>
-                  )}
                 </div>
               </div>
 
               {/* Detailed Breakdown Calculation Cards */}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 text-xs">
-                {/* 出席 20% */}
+                {/* 出席 */}
                 <div className="bg-teal-50/50 p-3 rounded-xl border border-teal-100">
                   <div className="font-bold text-teal-900 flex items-center justify-between">
-                    <span>出席成績 (20%)</span>
+                    <span>出席成績 ({wAtt}%)</span>
                     <span className="text-[10px] text-teal-700 font-semibold">折算50%假單</span>
                   </div>
                   <div className="text-base font-extrabold text-teal-950 font-mono mt-1">
                     {effectiveGrade.attendanceScore} 分
                   </div>
                   <div className="text-[11px] text-teal-700 mt-1 font-mono">
-                    {effectiveGrade.attendanceScore} × 20% = <strong className="text-teal-950 font-bold">{attendanceWeighted}</strong>
+                    {effectiveGrade.attendanceScore} × {wAtt}% = <strong className="text-teal-950 font-bold">{attendanceWeighted}</strong>
                   </div>
                   <div className="text-[10px] text-teal-600 mt-0.5">
                     出席1.0 + 請假0.5
                   </div>
                 </div>
 
-                {/* 平時考 15% */}
+                {/* 平時考 */}
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <div className="font-bold text-slate-700">平時考 (15%)</div>
+                  <div className="font-bold text-slate-700">平時考 ({wQuiz}%)</div>
                   <div className="text-base font-extrabold text-slate-900 font-mono mt-1">
                     {effectiveGrade.quizScore} 分
                   </div>
                   <div className="text-[11px] text-slate-600 mt-1 font-mono">
-                    {effectiveGrade.quizScore} × 15% = <strong className="text-slate-900 font-bold">{quizWeighted}</strong>
+                    {effectiveGrade.quizScore} × {wQuiz}% = <strong className="text-slate-900 font-bold">{quizWeighted}</strong>
                   </div>
                 </div>
 
-                {/* 期中考 20% */}
+                {/* 期中考 */}
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <div className="font-bold text-slate-700">期中考 (20%)</div>
+                  <div className="font-bold text-slate-700">期中考 ({wMid}%)</div>
                   <div className="text-base font-extrabold text-slate-900 font-mono mt-1">
                     {effectiveGrade.midtermScore} 分
                   </div>
                   <div className="text-[11px] text-slate-600 mt-1 font-mono">
-                    {effectiveGrade.midtermScore} × 20% = <strong className="text-slate-900 font-bold">{midtermWeighted}</strong>
+                    {effectiveGrade.midtermScore} × {wMid}% = <strong className="text-slate-900 font-bold">{midtermWeighted}</strong>
                   </div>
                 </div>
 
-                {/* 期末考 20% */}
+                {/* 期末考 */}
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <div className="font-bold text-slate-700">期末考 (20%)</div>
+                  <div className="font-bold text-slate-700">期末考 ({wFin}%)</div>
                   <div className="text-base font-extrabold text-slate-900 font-mono mt-1">
                     {effectiveGrade.finalScore} 分
                   </div>
                   <div className="text-[11px] text-slate-600 mt-1 font-mono">
-                    {effectiveGrade.finalScore} × 20% = <strong className="text-slate-900 font-bold">{finalWeighted}</strong>
+                    {effectiveGrade.finalScore} × {wFin}% = <strong className="text-slate-900 font-bold">{finalWeighted}</strong>
                   </div>
                 </div>
 
-                {/* 作業 15% */}
+                {/* 作業 */}
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <div className="font-bold text-slate-700">作業 (15%)</div>
+                  <div className="font-bold text-slate-700">作業 ({wHw}%)</div>
                   <div className="text-base font-extrabold text-slate-900 font-mono mt-1">
                     {effectiveGrade.homeworkScore} 分
                   </div>
                   <div className="text-[11px] text-slate-600 mt-1 font-mono">
-                    {effectiveGrade.homeworkScore} × 15% = <strong className="text-slate-900 font-bold">{homeworkWeighted}</strong>
+                    {effectiveGrade.homeworkScore} × {wHw}% = <strong className="text-slate-900 font-bold">{homeworkWeighted}</strong>
                   </div>
                 </div>
 
-                {/* 學習態度 10% */}
+                {/* 學習態度 */}
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <div className="font-bold text-slate-700">學習態度 (10%)</div>
+                  <div className="font-bold text-slate-700">學習態度 ({wAttid}%)</div>
                   <div className="text-base font-extrabold text-slate-900 font-mono mt-1">
                     {effectiveGrade.attitudeScore} 分
                   </div>
                   <div className="text-[11px] text-slate-600 mt-1 font-mono">
-                    {effectiveGrade.attitudeScore} × 10% = <strong className="text-slate-900 font-bold">{attitudeWeighted}</strong>
+                    {effectiveGrade.attitudeScore} × {wAttid}% = <strong className="text-slate-900 font-bold">{attitudeWeighted}</strong>
                   </div>
                 </div>
               </div>

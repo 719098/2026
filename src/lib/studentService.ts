@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import { Student, ClassEntity, StudentGrade, TransferClassRecord, CourseSession } from '../types';
-import { calculateTotalGrade, getLetterGrade, calculateStudentAttendanceScore } from '../utils/gradeUtils';
+import { calculateTotalGrade, calculateStudentAttendanceScore } from '../utils/gradeUtils';
 import { batchResolveStudentAvatars, extractStoragePath, deleteStudentStorageFiles } from './storageService';
 import { mapDbToClass, fetchClassesFromSupabase } from './classService';
 import { getTodayDateStr } from '../utils/quarterScheduler';
@@ -1085,7 +1085,8 @@ export async function fetchStudentGradesFromSupabase(
   students: Student[],
   classes: ClassEntity[],
   allCourses?: CourseSession[],
-  transferRecords?: TransferClassRecord[]
+  transferRecords?: TransferClassRecord[],
+  customWeightsMap?: Record<string, StudentGradeWeight>
 ): Promise<Record<string, StudentGrade>> {
   if (!supabase) return {};
 
@@ -1126,7 +1127,10 @@ export async function fetchStudentGradesFromSupabase(
         const hw = Number(r.homework_score ?? 90);
         const attid = Number(r.attitude_score ?? 90);
 
-        const total = calculateTotalGrade(att, quiz, mid, fin, hw, attid);
+        const customWeight = customWeightsMap ? customWeightsMap[studentId] : undefined;
+        const computedTotal = calculateTotalGrade(att, quiz, mid, fin, hw, attid, customWeight);
+        const total = r.total_score !== undefined && r.total_score !== null ? Number(r.total_score) : computedTotal;
+        const isPassed = r.is_passed !== undefined && r.is_passed !== null ? Boolean(r.is_passed) : (total >= 60.0);
 
         gradeMap[studentId] = {
           studentId: studentId,
@@ -1140,14 +1144,15 @@ export async function fetchStudentGradesFromSupabase(
           homeworkScore: hw,
           attitudeScore: attid,
           totalScore: total,
+          isPassed,
           updatedAt: r.updated_at ? r.updated_at.substring(0, 16).replace('T', ' ') : undefined,
         };
 
-        // If stored attendance or total score in DB is out-of-sync with real attendance, silently update DB
-        if (Number(r.attendance_score) !== att || Number(r.total_score) !== total) {
+        // Only sync attendance_score if changed in attendance history (trigger re-evaluates total_score automatically)
+        if (Number(r.attendance_score) !== att) {
           supabase
             .from('student_grades')
-            .update({ attendance_score: att, total_score: total })
+            .update({ attendance_score: att })
             .eq('id', r.id)
             .then(() => {});
         }
@@ -1174,7 +1179,8 @@ export async function fetchStudentGradesFromSupabase(
         const fin = 85;
         const hw = 90;
         const attid = 90;
-        const total = calculateTotalGrade(att, quiz, mid, fin, hw, attid);
+        const customWeight = customWeightsMap ? customWeightsMap[s.id] : undefined;
+        const total = calculateTotalGrade(att, quiz, mid, fin, hw, attid, customWeight);
 
         const initialGrade: StudentGrade = {
           studentId: s.id,
@@ -1188,6 +1194,7 @@ export async function fetchStudentGradesFromSupabase(
           homeworkScore: hw,
           attitudeScore: attid,
           totalScore: total,
+          isPassed: total >= 60.0,
           updatedAt: new Date().toISOString().substring(0, 16).replace('T', ' '),
         };
 
@@ -1263,7 +1270,6 @@ export async function saveStudentGradeToSupabase(
         homework_score: grade.homeworkScore,
         attitude_score: grade.attitudeScore,
         total_score: grade.totalScore,
-        grade_letter: getLetterGrade(grade.totalScore).letter,
         updated_at: new Date().toISOString(),
       };
 
@@ -1306,7 +1312,6 @@ export async function saveStudentGradeToSupabase(
       homework_score: grade.homeworkScore,
       attitude_score: grade.attitudeScore,
       total_score: grade.totalScore,
-      grade_letter: getLetterGrade(grade.totalScore).letter,
       updated_at: new Date().toISOString(),
     };
 

@@ -1,0 +1,269 @@
+import { supabase } from './supabase';
+import { StudentGradeWeight, GradeWeightAuditLog } from '../types';
+
+/**
+ * Maps DB row in public.student_grade_weights to StudentGradeWeight
+ */
+export function mapDbToGradeWeight(row: any): StudentGradeWeight {
+  return {
+    id: row.id,
+    studentId: String(row.student_id),
+    termId: String(row.term_id),
+    attendanceWeight: Number(row.attendance_weight),
+    quizWeight: Number(row.quiz_weight),
+    midtermWeight: Number(row.midterm_weight),
+    finalWeight: Number(row.final_weight),
+    homeworkWeight: Number(row.homework_weight),
+    attitudeWeight: Number(row.attitude_weight),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * Fetch all custom weights for a specific term from Supabase public.student_grade_weights.
+ * Returns a map of studentId -> StudentGradeWeight
+ */
+export async function fetchGradeWeightsForTerm(
+  termId: string
+): Promise<{ data: Record<string, StudentGradeWeight>; error: any }> {
+  if (!supabase || !termId) {
+    return { data: {}, error: null };
+  }
+
+  try {
+    const { data: rows, error } = await supabase
+      .from('student_grade_weights')
+      .select('*')
+      .eq('term_id', termId);
+
+    if (error) {
+      console.warn('[GradeWeightService] Notice: fetching student_grade_weights:', error);
+      return { data: {}, error };
+    }
+
+    const map: Record<string, StudentGradeWeight> = {};
+    (rows || []).forEach((row: any) => {
+      const mapped = mapDbToGradeWeight(row);
+      map[mapped.studentId] = mapped;
+    });
+
+    return { data: map, error: null };
+  } catch (err: any) {
+    console.error('[GradeWeightService] Exception fetching grade weights:', err);
+    return { data: {}, error: err };
+  }
+}
+
+/**
+ * Set custom weights for a single student via RPC set_student_grade_weights
+ */
+export async function setSingleStudentWeight(params: {
+  studentId: string;
+  termId: string;
+  attendanceWeight: number;
+  quizWeight: number;
+  midtermWeight: number;
+  finalWeight: number;
+  homeworkWeight: number;
+  attitudeWeight: number;
+  changeReason: string;
+}): Promise<{ success: boolean; data?: any; error?: string }> {
+  if (!supabase) {
+    return { success: false, error: '資料庫連線尚未初始化' };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('set_student_grade_weights', {
+      p_student_id: params.studentId,
+      p_term_id: params.termId,
+      p_attendance_weight: params.attendanceWeight,
+      p_quiz_weight: params.quizWeight,
+      p_midterm_weight: params.midtermWeight,
+      p_final_weight: params.finalWeight,
+      p_homework_weight: params.homeworkWeight,
+      p_attitude_weight: params.attitudeWeight,
+      p_change_reason: params.changeReason.trim(),
+    });
+
+    if (error) {
+      console.error('[GradeWeightService] Error calling set_student_grade_weights:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, data };
+  } catch (err: any) {
+    console.error('[GradeWeightService] Exception setting single student weight:', err);
+    return { success: false, error: err.message || '設定權重時發生錯誤' };
+  }
+}
+
+/**
+ * Apply custom weights to a batch of students (up to 500) via RPC apply_batch_grade_weights
+ */
+export async function applyBatchStudentWeights(params: {
+  studentIds: string[];
+  termId: string;
+  attendanceWeight: number;
+  quizWeight: number;
+  midtermWeight: number;
+  finalWeight: number;
+  homeworkWeight: number;
+  attitudeWeight: number;
+  changeReason: string;
+}): Promise<{ success: boolean; data?: any; error?: string }> {
+  if (!supabase) {
+    return { success: false, error: '資料庫連線尚未初始化' };
+  }
+
+  if (params.studentIds.length === 0) {
+    return { success: false, error: '選取學生命單不能為空' };
+  }
+
+  if (params.studentIds.length > 500) {
+    return { success: false, error: `批量設定單次最多 500 人 (目前選取: ${params.studentIds.length} 人)` };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('apply_batch_grade_weights', {
+      p_student_ids: params.studentIds,
+      p_term_id: params.termId,
+      p_attendance_weight: params.attendanceWeight,
+      p_quiz_weight: params.quizWeight,
+      p_midterm_weight: params.midtermWeight,
+      p_final_weight: params.finalWeight,
+      p_homework_weight: params.homeworkWeight,
+      p_attitude_weight: params.attitudeWeight,
+      p_change_reason: params.changeReason.trim(),
+    });
+
+    if (error) {
+      console.error('[GradeWeightService] Error calling apply_batch_grade_weights:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, data };
+  } catch (err: any) {
+    console.error('[GradeWeightService] Exception applying batch weights:', err);
+    return { success: false, error: err.message || '批量設定權重時發生錯誤' };
+  }
+}
+
+/**
+ * Reset a single student's weights to default via RPC reset_student_grade_weights
+ */
+export async function resetSingleStudentWeight(params: {
+  studentId: string;
+  termId: string;
+  changeReason: string;
+}): Promise<{ success: boolean; data?: any; error?: string }> {
+  if (!supabase) {
+    return { success: false, error: '資料庫連線尚未初始化' };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('reset_student_grade_weights', {
+      p_student_id: params.studentId,
+      p_term_id: params.termId,
+      p_change_reason: params.changeReason.trim(),
+    });
+
+    if (error) {
+      console.error('[GradeWeightService] Error calling reset_student_grade_weights:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, data };
+  } catch (err: any) {
+    console.error('[GradeWeightService] Exception resetting single student weight:', err);
+    return { success: false, error: err.message || '重置權重時發生錯誤' };
+  }
+}
+
+/**
+ * Reset a batch of students' weights to default via RPC reset_batch_grade_weights
+ */
+export async function resetBatchStudentWeights(params: {
+  studentIds: string[];
+  termId: string;
+  changeReason: string;
+}): Promise<{ success: boolean; data?: any; error?: string }> {
+  if (!supabase) {
+    return { success: false, error: '資料庫連線尚未初始化' };
+  }
+
+  if (params.studentIds.length === 0) {
+    return { success: false, error: '選取學生命單不能為空' };
+  }
+
+  if (params.studentIds.length > 500) {
+    return { success: false, error: `批量重置單次最多 500 人 (目前選取: ${params.studentIds.length} 人)` };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('reset_batch_grade_weights', {
+      p_student_ids: params.studentIds,
+      p_term_id: params.termId,
+      p_change_reason: params.changeReason.trim(),
+    });
+
+    if (error) {
+      console.error('[GradeWeightService] Error calling reset_batch_grade_weights:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, data };
+  } catch (err: any) {
+    console.error('[GradeWeightService] Exception resetting batch weights:', err);
+    return { success: false, error: err.message || '批量重置權重時發生錯誤' };
+  }
+}
+
+/**
+ * Fetch audit logs for student weight changes
+ */
+export async function fetchWeightAuditLogs(
+  termId: string,
+  studentId?: string
+): Promise<{ data: GradeWeightAuditLog[]; error: any }> {
+  if (!supabase) {
+    return { data: [], error: null };
+  }
+
+  try {
+    let query = supabase
+      .from('student_grade_weight_audit_logs')
+      .select('*')
+      .eq('term_id', termId)
+      .order('created_at', { ascending: false });
+
+    if (studentId) {
+      query = query.eq('student_id', studentId);
+    }
+
+    const { data: rows, error } = await query;
+    if (error) {
+      console.warn('[GradeWeightService] Error fetching audit logs:', error);
+      return { data: [], error };
+    }
+
+    const logs: GradeWeightAuditLog[] = (rows || []).map((r: any) => ({
+      id: r.id,
+      weightId: r.weight_id,
+      studentId: String(r.student_id),
+      termId: String(r.term_id),
+      changedBy: r.changed_by,
+      operatorId: r.changed_by || r.operator_id,
+      action: r.action_type || r.action,
+      oldWeights: r.old_weights,
+      newWeights: r.new_weights,
+      changeReason: r.change_reason || '',
+      createdAt: r.created_at,
+    }));
+
+    return { data: logs, error: null };
+  } catch (err: any) {
+    console.error('[GradeWeightService] Exception fetching audit logs:', err);
+    return { data: [], error: err };
+  }
+}

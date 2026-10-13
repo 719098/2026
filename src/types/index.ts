@@ -295,7 +295,35 @@ export interface StudentGrade {
   homeworkScore: number;   // 0-100 (15%) 作業
   attitudeScore: number;   // 0-100 (10%) 學習態度
   totalScore: number;      // auto-calculated
+  isPassed?: boolean;      // >= 60 passing status
   updatedAt?: string;
+}
+export interface StudentGradeWeight {
+  id?: string;
+  studentId: string;
+  termId: string;
+  attendanceWeight: number; // 0-100
+  quizWeight: number;       // 0-100
+  midtermWeight: number;    // 0-100
+  finalWeight: number;      // 0-100
+  homeworkWeight: number;   // 0-100
+  attitudeWeight: number;   // 0-100
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface GradeWeightAuditLog {
+  id: string;
+  weightId?: string;
+  studentId: string;
+  termId: string;
+  changedBy?: string;
+  operatorId?: string;
+  action: 'INSERT' | 'UPDATE' | 'DELETE';
+  oldWeights?: Record<string, any> | null;
+  newWeights?: Record<string, any> | null;
+  changeReason: string;
+  createdAt: string;
 }
 
 export interface StudentPeriodAttendance {

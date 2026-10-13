@@ -14,14 +14,15 @@ import {
   BarChart3,
   UserX
 } from 'lucide-react';
-import { Student, StudentGrade, CourseSession, TransferClassRecord } from '../types';
-import { GRADE_WEIGHTS, calculateTotalGrade, getLetterGrade, calculateStudentAttendanceScore } from '../utils/gradeUtils';
+import { Student, StudentGrade, CourseSession, TransferClassRecord, StudentGradeWeight } from '../types';
+import { GRADE_WEIGHTS, calculateTotalGrade, calculateStudentAttendanceScore } from '../utils/gradeUtils';
 import { StudentAvatar } from './StudentAvatar';
 
 interface GradeManagementViewProps {
   students: Student[];
   allCourses: CourseSession[];
   allGrades: Record<string, StudentGrade>;
+  gradeWeightsMap?: Record<string, StudentGradeWeight>;
   onUpdateGrades: (updatedGrades: Record<string, StudentGrade>) => void;
   onSelectStudentForDetail: (student: Student) => void;
   onShowToast: (message: string, type?: 'success' | 'info' | 'warning') => void;
@@ -35,6 +36,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
   students,
   allCourses,
   allGrades,
+  gradeWeightsMap = {},
   onUpdateGrades,
   onSelectStudentForDetail,
   onShowToast,
@@ -132,14 +134,16 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
         [field]: val,
       };
 
-      // Recalculate total immediately
+      // Recalculate total immediately with student's custom weights if set
+      const customWeight = gradeWeightsMap[studentId];
       updated.totalScore = calculateTotalGrade(
         updated.attendanceScore,
         updated.quizScore,
         updated.midtermScore,
         updated.finalScore,
         updated.homeworkScore,
-        updated.attitudeScore
+        updated.attitudeScore,
+        customWeight
       );
 
       return {
@@ -162,7 +166,8 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
       const fin = existing ? existing.finalScore : 85;
       const hw = existing ? existing.homeworkScore : 90;
       const attid = existing ? existing.attitudeScore : 90;
-      const total = calculateTotalGrade(attendanceScore, quiz, mid, fin, hw, attid);
+      const customWeight = gradeWeightsMap[s.id];
+      const total = calculateTotalGrade(attendanceScore, quiz, mid, fin, hw, attid, customWeight);
 
       syncedGrades[s.id] = {
         studentId: s.id,
@@ -217,7 +222,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
 
   // Export CSV using dynamic attendance score
   const handleExportCSV = () => {
-    const headers = ['學號', '姓名', '英文姓名', '班級', '出席成績(20%)', '平時考(15%)', '期中考(20%)', '期末考(20%)', '作業(15%)', '學習態度(10%)', '總成績', '等第'];
+    const headers = ['學號', '姓名', '英文姓名', '班級', '出席成績(20%)', '平時考(15%)', '期中考(20%)', '期末考(20%)', '作業(15%)', '學習態度(10%)', '總成績'];
     const rows = classStudents.map((s) => {
       const { attendanceScore } = getStudentAttendanceData(s.id, currentClassName);
       const g = localGrades[s.id] || {
@@ -237,7 +242,6 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
         g.homeworkScore,
         g.attitudeScore
       );
-      const letter = getLetterGrade(total).letter;
       return [
         s.studentNumber,
         s.name,
@@ -250,7 +254,6 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
         g.homeworkScore,
         g.attitudeScore,
         total,
-        letter,
       ];
     });
 
@@ -346,7 +349,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
               華語中心官方成績計算比例 (總和 100%)
             </span>
             <div className="text-sm font-semibold text-slate-300 mt-1">
-              總成績 = 出席 × 20% + 平時考 × 15% + 期中考 × 20% + 期末考 × 20% + 作業 × 15% + 態度 × 10%
+              標準比例：出席 20% + 平時 15% + 期中 20% + 期末 20% + 作業 15% + 態度 10%（若個別學生有自訂權重，依其專屬比例計算）
             </div>
           </div>
 
@@ -458,7 +461,8 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                 const final = existing ? existing.finalScore : 85;
                 const homework = existing ? existing.homeworkScore : 90;
                 const attitude = existing ? existing.attitudeScore : 90;
-                const computedTotal = calculateTotalGrade(attendanceScore, quiz, midterm, final, homework, attitude);
+                const customWeight = gradeWeightsMap[student.id];
+                const computedTotal = calculateTotalGrade(attendanceScore, quiz, midterm, final, homework, attitude, customWeight);
 
                 const grade: StudentGrade = {
                   studentId: student.id,
@@ -474,8 +478,6 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                   totalScore: computedTotal,
                   updatedAt: existing?.updatedAt,
                 };
-
-                const letter = getLetterGrade(grade.totalScore);
 
                 return (
                   <tr
@@ -512,6 +514,16 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                             <span>•</span>
                             <span className="text-slate-600">{student.nationality}</span>
                           </div>
+                          {customWeight && (
+                            <div className="mt-1">
+                              <span
+                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200"
+                                title={`個別自訂比例：出席 ${customWeight.attendanceWeight}%、平時 ${customWeight.quizWeight}%、期中 ${customWeight.midtermWeight}%、期末 ${customWeight.finalWeight}%、作業 ${customWeight.homeworkWeight}%、態度 ${customWeight.attitudeWeight}%`}
+                              >
+                                個別權重 ({customWeight.attendanceWeight}/{customWeight.quizWeight}/{customWeight.midtermWeight}/{customWeight.finalWeight}/{customWeight.homeworkWeight}/{customWeight.attitudeWeight}%)
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -535,7 +547,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                             ? 'text-amber-700'
                             : 'text-rose-700'
                         }`}>
-                          佔 {Math.round(grade.attendanceScore * 0.2 * 10) / 10} 分
+                          佔 {Math.round(grade.attendanceScore * (customWeight ? customWeight.attendanceWeight / 100 : 0.2) * 10) / 10} 分
                         </span>
                         {attResult.hasRecords && (
                           <span className="text-[9px] text-slate-500 mt-0.5 whitespace-nowrap">
@@ -625,9 +637,6 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                       <div className="flex flex-col items-center justify-center">
                         <span className="font-mono font-black text-base text-slate-900">
                           {grade.totalScore}
-                        </span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded border mt-0.5 ${letter.color}`}>
-                          {letter.letter} ({letter.label})
                         </span>
                       </div>
                     </td>

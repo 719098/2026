@@ -1,5 +1,21 @@
-import { Student, StudentGrade, CourseSession, TransferClassRecord } from '../types';
+import { Student, StudentGrade, CourseSession, TransferClassRecord, StudentGradeWeight } from '../types';
 import { calculateStudentAttendanceHistory, isSessionCancelledOrSuspended } from './attendanceUtils';
+
+export const DEFAULT_GRADE_WEIGHTS: {
+  attendanceWeight: number;
+  quizWeight: number;
+  midtermWeight: number;
+  finalWeight: number;
+  homeworkWeight: number;
+  attitudeWeight: number;
+} = {
+  attendanceWeight: 20,
+  quizWeight: 15,
+  midtermWeight: 20,
+  finalWeight: 20,
+  homeworkWeight: 15,
+  attitudeWeight: 10,
+};
 
 export const GRADE_WEIGHTS = {
   attendance: 0.20, // 20% 出席
@@ -134,22 +150,30 @@ export function calculateStudentAttendanceScore(
   };
 }
 
-// Calculate total score using exact percentage formula
+// Calculate total score using customizable percentage formula (default 20/15/20/20/15/10)
 export function calculateTotalGrade(
   attendanceScore: number,
   quizScore: number,
   midtermScore: number,
   finalScore: number,
   homeworkScore: number,
-  attitudeScore: number
+  attitudeScore: number,
+  weights?: StudentGradeWeight | { attendanceWeight: number; quizWeight: number; midtermWeight: number; finalWeight: number; homeworkWeight: number; attitudeWeight: number }
 ): number {
+  const wAtt = weights?.attendanceWeight ?? 20;
+  const wQuiz = weights?.quizWeight ?? 15;
+  const wMid = weights?.midtermWeight ?? 20;
+  const wFin = weights?.finalWeight ?? 20;
+  const wHw = weights?.homeworkWeight ?? 15;
+  const wAttid = weights?.attitudeWeight ?? 10;
+
   const total =
-    attendanceScore * GRADE_WEIGHTS.attendance +
-    quizScore * GRADE_WEIGHTS.quiz +
-    midtermScore * GRADE_WEIGHTS.midterm +
-    finalScore * GRADE_WEIGHTS.final +
-    homeworkScore * GRADE_WEIGHTS.homework +
-    attitudeScore * GRADE_WEIGHTS.attitude;
+    (attendanceScore * wAtt +
+     quizScore * wQuiz +
+     midtermScore * wMid +
+     finalScore * wFin +
+     homeworkScore * wHw +
+     attitudeScore * wAttid) / 100.0;
 
   return Math.round(total * 100) / 100;
 }
@@ -158,14 +182,17 @@ export function calculateTotalGrade(
  * Unified getter for student's effective grade:
  * Guarantees that ADMIN, TEACHER, reports, detail modal, and CSV exports
  * all evaluate the exact same 6 categories, dynamic attendance, and total score.
+ * If student has customized weights in customWeightsMap, applies them; otherwise uses default 20/15/20/20/15/10.
  */
 export function getStudentEffectiveGrade(
   student: Student,
   allGrades?: Record<string, StudentGrade>,
   allCourses?: CourseSession[],
-  transferRecords?: TransferClassRecord[]
+  transferRecords?: TransferClassRecord[],
+  customWeightsMap?: Record<string, StudentGradeWeight>
 ): StudentGrade {
   const existing = allGrades ? allGrades[student.id] : undefined;
+  const customWeight = customWeightsMap ? customWeightsMap[student.id] : undefined;
   const quizScore = existing?.quizScore ?? 85;
   const midtermScore = existing?.midtermScore ?? 80;
   const finalScore = existing?.finalScore ?? 85;
@@ -194,7 +221,8 @@ export function getStudentEffectiveGrade(
     midtermScore,
     finalScore,
     homeworkScore,
-    attitudeScore
+    attitudeScore,
+    customWeight
   );
 
   return {
@@ -209,6 +237,7 @@ export function getStudentEffectiveGrade(
     homeworkScore,
     attitudeScore,
     totalScore,
+    isPassed: totalScore >= 60.00,
     updatedAt: existing?.updatedAt,
   };
 }
@@ -253,17 +282,6 @@ export function getStudentScores(student?: Student | null): {
     readingWriting: reading,
     dailyPerformance: daily,
   };
-}
-
-// Convert numeric total score to letter grade
-export function getLetterGrade(score: number): { letter: string; color: string; label: string } {
-  if (score >= 90) return { letter: 'A+', color: 'text-emerald-700 bg-emerald-50 border-emerald-300', label: '極優異' };
-  if (score >= 85) return { letter: 'A', color: 'text-emerald-600 bg-emerald-50 border-emerald-200', label: '優異' };
-  if (score >= 80) return { letter: 'B+', color: 'text-teal-700 bg-teal-50 border-teal-200', label: '良好' };
-  if (score >= 75) return { letter: 'B', color: 'text-blue-700 bg-blue-50 border-blue-200', label: '尚可' };
-  if (score >= 70) return { letter: 'C+', color: 'text-amber-700 bg-amber-50 border-amber-200', label: '及格' };
-  if (score >= 60) return { letter: 'C', color: 'text-orange-700 bg-orange-50 border-orange-200', label: '勉強及格' };
-  return { letter: 'F', color: 'text-rose-700 bg-rose-50 border-rose-300', label: '不及格' };
 }
 
 // Generate initial mock grades for a student list

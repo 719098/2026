@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Sidebar, NavigationTab } from './components/Sidebar';
 import { Header } from './components/Header';
 import { TeacherTodayAttendanceView } from './components/TeacherTodayAttendanceView';
@@ -63,6 +63,7 @@ import {
   createLeaveInSupabase,
   updateLeaveStatusInSupabase
 } from './lib/attendanceService';
+import { fetchGradeWeightsForTerm } from './lib/gradeWeightService';
 
 // Admin Components
 import { AdminDashboardView } from './components/admin/AdminDashboardView';
@@ -89,7 +90,8 @@ import {
   ClassEntity,
   Term,
   TransferClassRecord,
-  LeaveRecord
+  LeaveRecord,
+  StudentGradeWeight
 } from './types';
 const DEFAULT_TEACHER: Teacher = {
   id: 'T-001',
@@ -183,6 +185,9 @@ export default function App() {
 
   // Persistent Grades state
   const [allGrades, setAllGrades] = useState<Record<string, StudentGrade>>({});
+
+  // Student customized grade weights state (studentId -> StudentGradeWeight)
+  const [gradeWeightsMap, setGradeWeightsMap] = useState<Record<string, StudentGradeWeight>>({});
 
   // Toasts
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -429,7 +434,21 @@ export default function App() {
       if (termErr) {
         console.error('Failed to load terms from Supabase:', termErr);
       }
-      setAdminTerms(dbTerms || []);
+      const fetchedTerms = dbTerms || [];
+      setAdminTerms(fetchedTerms);
+
+      // Load custom grade weights for the active term
+      const activeOrFirstTerm = fetchedTerms.find((t) => t.isActive && !t.isLocked) || fetchedTerms[0];
+      if (activeOrFirstTerm?.id) {
+        try {
+          const { data: weightsData } = await fetchGradeWeightsForTerm(activeOrFirstTerm.id);
+          if (weightsData) {
+            setGradeWeightsMap(weightsData);
+          }
+        } catch (wErr) {
+          console.warn('Could not load initial grade weights:', wErr);
+        }
+      }
 
       // 2. Fetch classes directly from Supabase classes table
       const { data: dbClasses, error: classErr } = await fetchClassesFromSupabase();
@@ -490,7 +509,8 @@ export default function App() {
         syncedStudents,
         currentClasses,
         activeSessions,
-        fetchedTransfers
+        fetchedTransfers,
+        weightsData || undefined
       );
       setAllGrades(fetchedGrades);
 
@@ -505,6 +525,36 @@ export default function App() {
       setIsTermsLoading(false);
     }
   };
+
+  // Reload custom grade weights callback
+  const loadGradeWeights = useCallback(async (termId?: string) => {
+    const targetTermId =
+      termId ||
+      adminTerms.find((t) => t.isActive && !t.isLocked)?.id ||
+      adminTerms[0]?.id;
+    if (!targetTermId) return;
+    try {
+      const { data: weightsData } = await fetchGradeWeightsForTerm(targetTermId);
+      if (weightsData) {
+        setGradeWeightsMap(weightsData);
+      }
+      // Re-fetch student grades to sync with DB trigger recalculation
+      if (dbStudents.length > 0 && adminClasses.length > 0) {
+        const freshGrades = await fetchStudentGradesFromSupabase(
+          dbStudents,
+          adminClasses,
+          courses,
+          adminTransferRecords,
+          weightsData || undefined
+        );
+        if (freshGrades && Object.keys(freshGrades).length > 0) {
+          setAllGrades(freshGrades);
+        }
+      }
+    } catch (err) {
+      console.warn('Error loading grade weights:', err);
+    }
+  }, [adminTerms, dbStudents, adminClasses, courses, adminTransferRecords]);
 
   // Fetch Supabase data whenever user logs in or switches role
   useEffect(() => {
@@ -1193,7 +1243,7 @@ export default function App() {
         admin_teachers: '全校專兼任教師師資管理',
         admin_schedule: '全校排課、調課與目標時數進度管理',
         admin_attendance: '全校班級點名即時監控與歷史存檔',
-        admin_grades: '全校學員期末成績結算與等第總評',
+        admin_grades: '全校學員期末成績結算總表',
         admin_reports: '全校校務報表統計與官方證明書生成',
       };
       return map[adminActiveTab] || '靜宜大學華語中心 行政管理系統';
@@ -1251,6 +1301,7 @@ export default function App() {
           student={selectedStudentForDetail}
           allCourses={courses}
           grade={allGrades[selectedStudentForDetail.id]}
+          customWeight={gradeWeightsMap[selectedStudentForDetail.id]}
           teacherName={currentRole === 'ADMIN' ? '教務行政組' : `${currentTeacher?.name || ''}老師`}
           transferRecords={adminTransferRecords}
           onClose={() => setSelectedStudentForDetail(null)}
@@ -1440,10 +1491,14 @@ export default function App() {
                 <AdminGradesManagementView
                   students={dbStudents}
                   classes={adminClasses}
+                  terms={adminTerms}
                   allCourses={courses}
                   allGrades={allGrades}
                   transferRecords={adminTransferRecords}
+                  gradeWeightsMap={gradeWeightsMap}
+                  onReloadGradeWeights={loadGradeWeights}
                   onSelectStudentDetail={(student) => setSelectedStudentForDetail(student)}
+                  onShowToast={showToast}
                 />
               )}
 
@@ -1454,6 +1509,7 @@ export default function App() {
                   allCourses={courses}
                   allGrades={allGrades}
                   transferRecords={adminTransferRecords}
+                  gradeWeightsMap={gradeWeightsMap}
                 />
               )}
             </div>
@@ -1487,11 +1543,12 @@ export default function App() {
                   }}
                 />
               ) : activeTab === 'grades' ? (
-                /* 2. Grade Management View */
+                /* 2. Grade Management View (Teacher - Read Only Weights) */
                 <GradeManagementView
                   students={currentTeacherStudents}
                   allCourses={courses}
                   allGrades={allGrades}
+                  gradeWeightsMap={gradeWeightsMap}
                   onUpdateGrades={handleUpdateGrades}
                   onSelectStudentForDetail={(student) => setSelectedStudentForDetail(student)}
                   onShowToast={showToast}
