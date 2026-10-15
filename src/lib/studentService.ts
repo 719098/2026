@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { Student, ClassEntity, StudentGrade, TransferClassRecord, CourseSession, StudentGradeWeight } from '../types';
 import { calculateTotalGrade, calculateStudentAttendanceScore } from '../utils/gradeUtils';
+import { resolveStudentGradeWeight } from './gradeWeightService';
 import { batchResolveStudentAvatars, extractStoragePath, deleteStudentStorageFiles } from './storageService';
 import { mapDbToClass, fetchClassesFromSupabase } from './classService';
 import { getTodayDateStr } from '../utils/quarterScheduler';
@@ -1106,7 +1107,8 @@ export async function fetchStudentGradesFromSupabase(
       rows.forEach((r: any) => {
         const studentId = String(r.student_id);
         const student = studentMap.get(studentId);
-        const classObj = r.class_id ? classMap.get(String(r.class_id)) : null;
+        const classObj = (r.class_id ? classMap.get(String(r.class_id)) : null) || 
+          classes.find((c) => c.id === student?.classId || c.name === student?.className);
 
         // Dynamic Attendance Score based on real attendance records & exclusion of cancelled sessions
         let att = student?.overallAttendanceRate !== undefined ? student.overallAttendanceRate : Number(r.attendance_score ?? 100);
@@ -1127,7 +1129,9 @@ export async function fetchStudentGradesFromSupabase(
         const hw = Number(r.homework_score ?? 90);
         const attid = Number(r.attitude_score ?? 90);
 
-        const customWeight = customWeightsMap ? customWeightsMap[studentId] : undefined;
+        const classTermId = classObj?.termId || (classObj as any)?.term_id;
+        const weightRes = resolveStudentGradeWeight(studentId, classTermId, customWeightsMap);
+        const customWeight = weightRes.isCustom ? weightRes.weights : undefined;
         const computedTotal = calculateTotalGrade(att, quiz, mid, fin, hw, attid, customWeight);
         const total = r.total_score !== undefined && r.total_score !== null ? Number(r.total_score) : computedTotal;
         const isPassed = r.is_passed !== undefined && r.is_passed !== null ? Boolean(r.is_passed) : (total >= 60.0);
@@ -1179,7 +1183,10 @@ export async function fetchStudentGradesFromSupabase(
         const fin = 85;
         const hw = 90;
         const attid = 90;
-        const customWeight = customWeightsMap ? customWeightsMap[s.id] : undefined;
+        const sClass = classes.find((c) => c.id === s.classId || c.name === s.className);
+        const sTermId = sClass?.termId;
+        const weightRes = resolveStudentGradeWeight(s.id, sTermId, customWeightsMap);
+        const customWeight = weightRes.isCustom ? weightRes.weights : undefined;
         const total = calculateTotalGrade(att, quiz, mid, fin, hw, attid, customWeight);
 
         const initialGrade: StudentGrade = {

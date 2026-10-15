@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { 
   Award, 
   Search, 
@@ -13,7 +13,14 @@ import {
   Settings,
   Users,
   Calendar,
-  Lock
+  Lock,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  MoveHorizontal,
+  Minimize2,
+  Maximize2
 } from 'lucide-react';
 import { 
   Student, 
@@ -33,7 +40,8 @@ import {
   setSingleStudentWeight, 
   applyBatchStudentWeights, 
   resetSingleStudentWeight, 
-  resetBatchStudentWeights 
+  resetBatchStudentWeights,
+  resolveStudentGradeWeight
 } from '../../lib/gradeWeightService';
 
 interface AdminGradesManagementViewProps {
@@ -144,7 +152,10 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
           allGrades[s.id].classId &&
           termClassIds.has(allGrades[s.id].classId!)
         );
-        const inWeights = Boolean(gradeWeightsMap[s.id]);
+        const inWeights = Boolean(
+          (selectedTermId && gradeWeightsMap[`${s.id}_${selectedTermId}`]) ||
+          gradeWeightsMap[s.id]
+        );
 
         if (!inTermClass && !inTransfer && !inGrades && !inWeights) {
           return false;
@@ -157,15 +168,15 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
         s.studentNumber.includes(searchTerm);
       const matchClass = selectedClassFilter === 'ALL' || s.className === selectedClassFilter;
 
-      // Custom weight check
-      const customWeight = gradeWeightsMap[s.id];
-      const isCustom = Boolean(customWeight);
+      // Custom weight check using strict term resolution
+      const weightRes = resolveStudentGradeWeight(s.id, selectedTermId, gradeWeightsMap);
+      const isCustom = weightRes.isCustom;
       let matchWeightType = true;
       if (selectedWeightTypeFilter === 'CUSTOM') matchWeightType = isCustom;
       if (selectedWeightTypeFilter === 'DEFAULT') matchWeightType = !isCustom;
 
       // Unified effective grade calculation with custom weight
-      const grade = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords, gradeWeightsMap);
+      const grade = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords, gradeWeightsMap, selectedTermId);
       const finalScore = grade.totalScore;
 
       let matchBand = true;
@@ -227,13 +238,15 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
   };
 
   const handleExportAllCSV = () => {
-    exportGradesToCsv(filteredStudents, '全校學員期末成績冊', allGrades, allCourses, transferRecords, gradeWeightsMap);
+    const termId = selectedTermId || currentTermObj?.id || '';
+    exportGradesToCsv(filteredStudents, '全校學員期末成績冊', allGrades, allCourses, transferRecords, gradeWeightsMap, termId);
   };
 
   const handleBatchExportCSV = () => {
     const targets = filteredStudents.filter((s) => selectedStudentIds.has(s.id));
     if (targets.length === 0) return;
-    exportGradesToCsv(targets, `學員成績冊_選取_${targets.length}人`, allGrades, allCourses, transferRecords, gradeWeightsMap);
+    const termId = selectedTermId || currentTermObj?.id || '';
+    exportGradesToCsv(targets, `學員成績冊_選取_${targets.length}人`, allGrades, allCourses, transferRecords, gradeWeightsMap, termId);
   };
 
   // Open single student modal
@@ -423,8 +436,165 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
     },
   ];
 
+  // Floating horizontal scrollbar synchronization refs and state
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const floatingScrollRef = useRef<HTMLDivElement>(null);
+  const isSyncingRef = useRef<boolean>(false);
+
+  const [showFloatingScrollbar, setShowFloatingScrollbar] = useState<boolean>(false);
+  const [isFloatingMinimized, setIsFloatingMinimized] = useState<boolean>(false);
+  const [scrollMetrics, setScrollMetrics] = useState({
+    scrollWidth: 0,
+    clientWidth: 0,
+    scrollLeft: 0,
+    maxScrollLeft: 0,
+  });
+  const [floatingBarLayout, setFloatingBarLayout] = useState({
+    left: 0,
+    width: 0,
+  });
+
+  // Helper to re-evaluate scroll metrics and floating bar visibility
+  const updateScrollState = useCallback(() => {
+    const tableEl = tableContainerRef.current;
+    if (!tableEl) return;
+
+    const scrollWidth = tableEl.scrollWidth;
+    const clientWidth = tableEl.clientWidth;
+    const scrollLeft = tableEl.scrollLeft;
+    const maxScrollLeft = Math.max(0, scrollWidth - clientWidth);
+    const needsScroll = scrollWidth > clientWidth + 4;
+
+    if (!needsScroll) {
+      setShowFloatingScrollbar(false);
+      setScrollMetrics({ scrollWidth, clientWidth, scrollLeft, maxScrollLeft });
+      return;
+    }
+
+    const tableRect = tableEl.getBoundingClientRect();
+    const scrollParent = tableEl.closest('.overflow-y-auto') as HTMLElement | null;
+    const parentRect = scrollParent ? scrollParent.getBoundingClientRect() : null;
+
+    const viewportBottom = parentRect
+      ? Math.min(parentRect.bottom, window.innerHeight)
+      : window.innerHeight;
+    const viewportTop = parentRect
+      ? Math.max(parentRect.top, 0)
+      : 0;
+
+    // Show floating scrollbar when:
+    // 1. Table has horizontal overflow that requires scrolling
+    // 2. Table is at least partially in the viewport (scrolled into view)
+    // 3. The table's native bottom scrollbar is below the viewport bottom (hidden from view)
+    // 4. The bottom of the table hasn't scrolled completely above the viewport
+    const isTableTopVisible = tableRect.top < viewportBottom - 40;
+    const isNativeScrollbarOffScreen = tableRect.bottom > viewportBottom + 16;
+    const isTableBottomAboveTop = tableRect.bottom > viewportTop + 80;
+
+    const shouldShow = needsScroll && isTableTopVisible && isNativeScrollbarOffScreen && isTableBottomAboveTop;
+
+    setShowFloatingScrollbar(shouldShow);
+
+    // Calculate layout aligned to the visible table area
+    const viewportWidth = window.innerWidth;
+    const barLeft = Math.max(16, tableRect.left);
+    const maxAvailableWidth = Math.max(260, viewportWidth - barLeft - 16);
+    const barWidth = Math.min(tableRect.width, maxAvailableWidth);
+
+    setFloatingBarLayout({
+      left: barLeft,
+      width: barWidth,
+    });
+    setScrollMetrics({ scrollWidth, clientWidth, scrollLeft, maxScrollLeft });
+
+    // Synchronize scrollLeft on the floating track
+    if (floatingScrollRef.current && !isSyncingRef.current) {
+      floatingScrollRef.current.scrollLeft = scrollLeft;
+    }
+  }, []);
+
+  // Sync scroll from table to floating scrollbar
+  const handleTableScroll = () => {
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
+    const left = tableContainerRef.current?.scrollLeft || 0;
+    if (floatingScrollRef.current) {
+      floatingScrollRef.current.scrollLeft = left;
+    }
+    setScrollMetrics((prev) => ({ ...prev, scrollLeft: left }));
+    requestAnimationFrame(() => {
+      isSyncingRef.current = false;
+    });
+  };
+
+  // Sync scroll from floating scrollbar to table
+  const handleFloatingScroll = () => {
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
+    const left = floatingScrollRef.current?.scrollLeft || 0;
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollLeft = left;
+    }
+    setScrollMetrics((prev) => ({ ...prev, scrollLeft: left }));
+    requestAnimationFrame(() => {
+      isSyncingRef.current = false;
+    });
+  };
+
+  // Smooth wheel support: Shift + Wheel scrolls horizontally anywhere in the table
+  const handleTableWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.shiftKey && e.deltaY !== 0 && tableContainerRef.current) {
+      tableContainerRef.current.scrollLeft += e.deltaY;
+    }
+  };
+
+  // Step scroll left/right by a comfortable column distance (~260px)
+  const handleScrollStep = (direction: 'left' | 'right') => {
+    if (!tableContainerRef.current) return;
+    const offset = direction === 'left' ? -260 : 260;
+    tableContainerRef.current.scrollBy({ left: offset, behavior: 'smooth' });
+  };
+
+  const handleScrollToEdge = (edge: 'start' | 'end') => {
+    if (!tableContainerRef.current) return;
+    const left = edge === 'start' ? 0 : tableContainerRef.current.scrollWidth;
+    tableContainerRef.current.scrollTo({ left, behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    const tableEl = tableContainerRef.current;
+    if (!tableEl) return;
+
+    updateScrollState();
+
+    const scrollParent = tableEl.closest('.overflow-y-auto');
+    const handleScrollOrResize = () => {
+      updateScrollState();
+    };
+
+    window.addEventListener('resize', handleScrollOrResize);
+    window.addEventListener('scroll', handleScrollOrResize, { passive: true });
+    if (scrollParent) {
+      scrollParent.addEventListener('scroll', handleScrollOrResize, { passive: true });
+    }
+
+    const ro = new ResizeObserver(() => {
+      updateScrollState();
+    });
+    ro.observe(tableEl);
+
+    return () => {
+      window.removeEventListener('resize', handleScrollOrResize);
+      window.removeEventListener('scroll', handleScrollOrResize);
+      if (scrollParent) {
+        scrollParent.removeEventListener('scroll', handleScrollOrResize);
+      }
+      ro.disconnect();
+    };
+  }, [updateScrollState, filteredStudents.length]);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-14">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-5 rounded-xl border border-[#DCE2E6] shadow-2xs">
         <div>
@@ -566,7 +736,66 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
 
       {/* Grades Table */}
       <div className="bg-white rounded-xl border border-[#DCE2E6] shadow-2xs overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* Table Sub-header with horizontal scroll controls */}
+        <div className="px-4 py-2.5 bg-[#F8FAFC] border-b border-[#DCE2E6] flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center space-x-2 text-[#536B7A]">
+            <span className="font-semibold text-[#26313B]">學員成績清單</span>
+            <span className="text-[11px] bg-white px-2 py-0.5 rounded border border-[#DCE2E6] text-slate-600 font-mono">
+              共 {filteredStudents.length} 人
+            </span>
+          </div>
+
+          {/* Quick horizontal navigation buttons visible at top of table */}
+          {scrollMetrics.scrollWidth > scrollMetrics.clientWidth && (
+            <div className="flex items-center space-x-1.5 text-[11px]">
+              <span className="text-slate-400 hidden sm:inline">橫向導航：</span>
+              <button
+                type="button"
+                onClick={() => handleScrollToEdge('start')}
+                disabled={scrollMetrics.scrollLeft <= 5}
+                className="px-2 py-0.5 rounded bg-white hover:bg-slate-100 border border-[#DCE2E6] text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="移至首欄 (學生姓名與學號)"
+              >
+                首欄
+              </button>
+              <button
+                type="button"
+                onClick={() => handleScrollStep('left')}
+                disabled={scrollMetrics.scrollLeft <= 5}
+                className="p-1 rounded bg-white hover:bg-slate-100 border border-[#DCE2E6] text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="向左移動一個欄位區段"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleScrollStep('right')}
+                disabled={scrollMetrics.scrollLeft >= scrollMetrics.maxScrollLeft - 5}
+                className="p-1 rounded bg-white hover:bg-slate-100 border border-[#DCE2E6] text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="向右移動一個欄位區段"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleScrollToEdge('end')}
+                disabled={scrollMetrics.scrollLeft >= scrollMetrics.maxScrollLeft - 5}
+                className="px-2 py-0.5 rounded bg-white hover:bg-slate-100 border border-[#DCE2E6] text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="移至尾欄 (學期總分與權重操作)"
+              >
+                總分 / 操作
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div
+          ref={tableContainerRef}
+          onScroll={handleTableScroll}
+          onWheel={handleTableWheel}
+          className="overflow-x-auto focus:outline-none select-auto"
+          style={{ WebkitOverflowScrolling: 'touch' }}
+        >
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-[#F8FAFC] text-[#66717C] font-semibold border-b border-[#DCE2E6]">
@@ -601,17 +830,19 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
                 </tr>
               ) : (
                 filteredStudents.map((student) => {
-                  const customWeight = gradeWeightsMap[student.id];
-                  const hasCustom = Boolean(customWeight);
-                  const grade = getStudentEffectiveGrade(student, allGrades, allCourses, transferRecords, gradeWeightsMap);
+                  const termId = selectedTermId || currentTermObj?.id || '';
+                  const weightRes = resolveStudentGradeWeight(student.id, termId, gradeWeightsMap);
+                  const customWeight = weightRes.customWeight;
+                  const hasCustom = weightRes.isCustom;
+                  const grade = getStudentEffectiveGrade(student, allGrades, allCourses, transferRecords, gradeWeightsMap, termId);
                   const isSelected = selectedStudentIds.has(student.id);
 
-                  const wAtt = customWeight ? customWeight.attendanceWeight : DEFAULT_GRADE_WEIGHTS.attendanceWeight;
-                  const wQuiz = customWeight ? customWeight.quizWeight : DEFAULT_GRADE_WEIGHTS.quizWeight;
-                  const wMid = customWeight ? customWeight.midtermWeight : DEFAULT_GRADE_WEIGHTS.midtermWeight;
-                  const wFin = customWeight ? customWeight.finalWeight : DEFAULT_GRADE_WEIGHTS.finalWeight;
-                  const wHw = customWeight ? customWeight.homeworkWeight : DEFAULT_GRADE_WEIGHTS.homeworkWeight;
-                  const wAttid = customWeight ? customWeight.attitudeWeight : DEFAULT_GRADE_WEIGHTS.attitudeWeight;
+                  const wAtt = weightRes.weights.attendanceWeight;
+                  const wQuiz = weightRes.weights.quizWeight;
+                  const wMid = weightRes.weights.midtermWeight;
+                  const wFin = weightRes.weights.finalWeight;
+                  const wHw = weightRes.weights.homeworkWeight;
+                  const wAttid = weightRes.weights.attitudeWeight;
 
                   return (
                     <tr
@@ -642,7 +873,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
                         {student.className}
                       </td>
 
-                      {/* Weight status badge */}
+                      {/* Weight status badge: only show 個別自訂 for non-default weights; blank otherwise */}
                       <td className="py-3 px-3 text-center">
                         {hasCustom ? (
                           <span
@@ -651,14 +882,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
                           >
                             個別自訂
                           </span>
-                        ) : (
-                          <span
-                            className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200"
-                            title="套用全校標準預設比例：20/15/20/20/15/10"
-                          >
-                            標準預設
-                          </span>
-                        )}
+                        ) : null}
                       </td>
 
                       <td className="py-3 px-3 text-right font-mono">
@@ -722,6 +946,106 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
           </table>
         </div>
       </div>
+
+      {/* Floating Horizontal Scrollbar Dock */}
+      {showFloatingScrollbar && (
+        <aside
+          aria-label="成績表格橫向捲動導航"
+          className="fixed z-30 transition-all duration-200 ease-out pointer-events-none"
+          style={{
+            bottom: '16px',
+            left: `${floatingBarLayout.left}px`,
+            width: `${floatingBarLayout.width}px`,
+            maxWidth: 'calc(100vw - 32px)',
+          }}
+        >
+          <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-[#C5D0D8] shadow-xl rounded-xl p-2.5 flex flex-col gap-1.5 ring-1 ring-black/5">
+            <div className="flex items-center justify-between text-xs text-[#536B7A] px-1 font-medium select-none">
+              <div className="flex items-center space-x-2">
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500"></span>
+                </span>
+                <span className="font-semibold text-[#26313B]">橫向捲動導航</span>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  {scrollMetrics.maxScrollLeft > 0
+                    ? `${Math.round((scrollMetrics.scrollLeft / scrollMetrics.maxScrollLeft) * 100)}%`
+                    : '0%'}
+                </span>
+              </div>
+
+              <div className="flex items-center space-x-1">
+                <button
+                  type="button"
+                  onClick={() => handleScrollToEdge('start')}
+                  disabled={scrollMetrics.scrollLeft <= 5}
+                  className="px-2 py-1 rounded text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title="移至最左側：學號與學生姓名"
+                >
+                  首欄
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleScrollStep('left')}
+                  disabled={scrollMetrics.scrollLeft <= 5}
+                  className="flex items-center space-x-0.5 px-2 py-1 rounded text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title="向左移動一個欄位區段"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">向左</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleScrollStep('right')}
+                  disabled={scrollMetrics.scrollLeft >= scrollMetrics.maxScrollLeft - 5}
+                  className="flex items-center space-x-0.5 px-2 py-1 rounded text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title="向右移動一個欄位區段"
+                >
+                  <span className="hidden sm:inline">向右</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleScrollToEdge('end')}
+                  disabled={scrollMetrics.scrollLeft >= scrollMetrics.maxScrollLeft - 5}
+                  className="px-2 py-1 rounded text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title="移至最右側：學期總分與權重操作"
+                >
+                  總分 / 操作
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsFloatingMinimized((prev) => !prev)}
+                  className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 ml-1 transition-colors"
+                  title={isFloatingMinimized ? '展開捲軸軌道' : '收合捲軸'}
+                >
+                  {isFloatingMinimized ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Synchronized Native Scroll Track */}
+            {!isFloatingMinimized && (
+              <div
+                ref={floatingScrollRef}
+                onScroll={handleFloatingScroll}
+                className="overflow-x-auto overflow-y-hidden h-4 bg-slate-100/90 hover:bg-slate-200/80 rounded-md cursor-ew-resize border border-slate-200/80 transition-colors"
+                style={{
+                  WebkitOverflowScrolling: 'touch',
+                }}
+                title="拖曳橫向捲軸以左右移動表格"
+              >
+                <div
+                  style={{
+                    width: `${scrollMetrics.scrollWidth}px`,
+                    height: '1px',
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        </aside>
+      )}
 
       {/* Grade Weight Config Modal */}
       <GradeWeightConfigModal

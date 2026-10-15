@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { StudentGradeWeight, GradeWeightAuditLog } from '../types';
+import { DEFAULT_GRADE_WEIGHTS } from '../utils/gradeUtils';
 
 /**
  * Maps DB row in public.student_grade_weights to StudentGradeWeight
@@ -21,8 +22,139 @@ export function mapDbToGradeWeight(row: any): StudentGradeWeight {
 }
 
 /**
+ * Checks whether the given weights actually differ from the center's standard default (20/15/20/20/15/10).
+ */
+export function isNonDefaultWeight(weights?: {
+  attendanceWeight: number;
+  quizWeight: number;
+  midtermWeight: number;
+  finalWeight: number;
+  homeworkWeight: number;
+  attitudeWeight: number;
+}): boolean {
+  if (!weights) return false;
+  return !(
+    Number(weights.attendanceWeight) === 20 &&
+    Number(weights.quizWeight) === 15 &&
+    Number(weights.midtermWeight) === 20 &&
+    Number(weights.finalWeight) === 20 &&
+    Number(weights.homeworkWeight) === 15 &&
+    Number(weights.attitudeWeight) === 10
+  );
+}
+
+/**
+ * Resolves the effective grade weights for a given student and term.
+ * Rule:
+ * 1. Prioritizes student_grade_weights strictly matching student_id + term_id.
+ * 2. If student has a custom weight in gradeWeightsMap, only uses it if candidate term matches or termId is unspecified.
+ * 3. If weights equal standard default (20/15/20/20/15/10), isCustom is false.
+ * 4. Otherwise returns DEFAULT_GRADE_WEIGHTS with isCustom = false.
+ */
+export function resolveStudentGradeWeight(
+  studentId: string,
+  termId?: string,
+  gradeWeightsMap?: Record<string, StudentGradeWeight>
+): {
+  isCustom: boolean;
+  weights: {
+    attendanceWeight: number;
+    quizWeight: number;
+    midtermWeight: number;
+    finalWeight: number;
+    homeworkWeight: number;
+    attitudeWeight: number;
+  };
+  customWeight?: StudentGradeWeight;
+} {
+  if (!gradeWeightsMap || Object.keys(gradeWeightsMap).length === 0) {
+    return {
+      isCustom: false,
+      weights: DEFAULT_GRADE_WEIGHTS,
+    };
+  }
+
+  // 1. Strict match by studentId + termId
+  let found: StudentGradeWeight | undefined = undefined;
+  if (termId) {
+    found = gradeWeightsMap[`${studentId}_${termId}`];
+  }
+
+  // 2. Direct studentId lookup fallback (strictly check termId match if provided)
+  if (!found && gradeWeightsMap[studentId]) {
+    const candidate = gradeWeightsMap[studentId];
+    if (!termId || !candidate.termId || candidate.termId === termId) {
+      found = candidate;
+    }
+  }
+
+  if (found) {
+    const weights = {
+      attendanceWeight: Number(found.attendanceWeight ?? (found as any).attendance_weight ?? 20),
+      quizWeight: Number(found.quizWeight ?? (found as any).quiz_weight ?? 15),
+      midtermWeight: Number(found.midtermWeight ?? (found as any).midterm_weight ?? 20),
+      finalWeight: Number(found.finalWeight ?? (found as any).final_weight ?? 20),
+      homeworkWeight: Number(found.homeworkWeight ?? (found as any).homework_weight ?? 15),
+      attitudeWeight: Number(found.attitudeWeight ?? (found as any).attitude_weight ?? 10),
+    };
+    const isCustom = isNonDefaultWeight(weights);
+    return {
+      isCustom,
+      weights: isCustom ? weights : DEFAULT_GRADE_WEIGHTS,
+      customWeight: isCustom ? found : undefined,
+    };
+  }
+
+  return {
+    isCustom: false,
+    weights: DEFAULT_GRADE_WEIGHTS,
+  };
+}
+
+/**
+ * Fetch all custom weights for all terms from Supabase public.student_grade_weights.
+ * Returns a map with both studentId and studentId_termId keys for fast and reliable lookup.
+ */
+export async function fetchAllGradeWeights(): Promise<{
+  data: Record<string, StudentGradeWeight>;
+  list: StudentGradeWeight[];
+  error: any;
+}> {
+  if (!supabase) {
+    return { data: {}, list: [], error: null };
+  }
+
+  try {
+    const { data: rows, error } = await supabase
+      .from('student_grade_weights')
+      .select('*');
+
+    if (error) {
+      console.warn('[GradeWeightService] Notice: fetching all student_grade_weights:', error);
+      return { data: {}, list: [], error };
+    }
+
+    const map: Record<string, StudentGradeWeight> = {};
+    const list: StudentGradeWeight[] = [];
+    (rows || []).forEach((row: any) => {
+      const mapped = mapDbToGradeWeight(row);
+      list.push(mapped);
+      // Key by studentId
+      map[mapped.studentId] = mapped;
+      // Key by compound studentId_termId for strict multi-term isolation
+      map[`${mapped.studentId}_${mapped.termId}`] = mapped;
+    });
+
+    return { data: map, list, error: null };
+  } catch (err: any) {
+    console.error('[GradeWeightService] Exception fetching all grade weights:', err);
+    return { data: {}, list: [], error: err };
+  }
+}
+
+/**
  * Fetch all custom weights for a specific term from Supabase public.student_grade_weights.
- * Returns a map of studentId -> StudentGradeWeight
+ * Returns a map of studentId -> StudentGradeWeight, and also studentId_termId.
  */
 export async function fetchGradeWeightsForTerm(
   termId: string
@@ -46,6 +178,7 @@ export async function fetchGradeWeightsForTerm(
     (rows || []).forEach((row: any) => {
       const mapped = mapDbToGradeWeight(row);
       map[mapped.studentId] = mapped;
+      map[`${mapped.studentId}_${mapped.termId}`] = mapped;
     });
 
     return { data: map, error: null };

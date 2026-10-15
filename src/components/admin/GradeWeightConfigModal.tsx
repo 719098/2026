@@ -160,19 +160,29 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
     setErrorMsg(null);
     setIsSubmitting(true);
 
+    const isStandardDefault =
+      attNum === 20 &&
+      quizNum === 15 &&
+      midNum === 20 &&
+      finNum === 20 &&
+      hwNum === 15 &&
+      attdNum === 10;
+
     try {
-      const res = await onSave({
-        attendanceWeight: attNum!,
-        quizWeight: quizNum!,
-        midtermWeight: midNum!,
-        finalWeight: finNum!,
-        homeworkWeight: hwNum!,
-        attitudeWeight: attdNum!,
-        changeReason: changeReason.trim() || '教務處個別學生成績權重調整',
-      });
+      const res = isStandardDefault
+        ? await onResetToDefault(changeReason.trim() || '恢復全校標準比例')
+        : await onSave({
+            attendanceWeight: attNum!,
+            quizWeight: quizNum!,
+            midtermWeight: midNum!,
+            finalWeight: finNum!,
+            homeworkWeight: hwNum!,
+            attitudeWeight: attdNum!,
+            changeReason: changeReason.trim() || '教務處個別學生成績權重調整',
+          });
 
       if (!res.success) {
-        setErrorMsg(res.error || '儲存自訂權重失敗');
+        setErrorMsg(res.error || (isStandardDefault ? '恢復預設失敗' : '儲存自訂權重失敗'));
       } else {
         onClose();
       }

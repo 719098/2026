@@ -189,7 +189,8 @@ export function exportGradesToCsv(
   allGrades?: Record<string, StudentGrade>,
   allCourses?: CourseSession[],
   transferRecords?: TransferClassRecord[],
-  gradeWeightsMap?: Record<string, StudentGradeWeight>
+  gradeWeightsMap?: Record<string, StudentGradeWeight>,
+  termId?: string
 ) {
   const headers = [
     '學號',
@@ -209,12 +210,22 @@ export function exportGradesToCsv(
   ];
 
   const rows = students.map((s) => {
-    const customWeight = gradeWeightsMap ? gradeWeightsMap[s.id] : undefined;
-    const grade = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords, gradeWeightsMap);
+    const customWeight = gradeWeightsMap
+      ? ((termId ? gradeWeightsMap[`${s.id}_${termId}`] : undefined) || gradeWeightsMap[s.id])
+      : undefined;
+    const grade = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords, gradeWeightsMap, termId);
+    const isCustom = customWeight && !(
+      Number(customWeight.attendanceWeight) === 20 &&
+      Number(customWeight.quizWeight) === 15 &&
+      Number(customWeight.midtermWeight) === 20 &&
+      Number(customWeight.finalWeight) === 20 &&
+      Number(customWeight.homeworkWeight) === 15 &&
+      Number(customWeight.attitudeWeight) === 10
+    );
+    const weightDesc = isCustom
+      ? `個別自訂 (${customWeight!.attendanceWeight}/${customWeight!.quizWeight}/${customWeight!.midtermWeight}/${customWeight!.finalWeight}/${customWeight!.homeworkWeight}/${customWeight!.attitudeWeight}%)`
+      : '';
     const isPass = grade.totalScore >= 60 ? '及格' : '不及格';
-    const weightDesc = customWeight
-      ? `個別自訂 (${customWeight.attendanceWeight}/${customWeight.quizWeight}/${customWeight.midtermWeight}/${customWeight.finalWeight}/${customWeight.homeworkWeight}/${customWeight.attitudeWeight}%)`
-      : '標準預設 (20/15/20/20/15/10%)';
 
     return [
       s.studentNumber,

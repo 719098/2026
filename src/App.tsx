@@ -63,7 +63,7 @@ import {
   createLeaveInSupabase,
   updateLeaveStatusInSupabase
 } from './lib/attendanceService';
-import { fetchGradeWeightsForTerm } from './lib/gradeWeightService';
+import { fetchGradeWeightsForTerm, fetchAllGradeWeights, resolveStudentGradeWeight } from './lib/gradeWeightService';
 
 // Admin Components
 import { AdminDashboardView } from './components/admin/AdminDashboardView';
@@ -437,19 +437,25 @@ export default function App() {
       const fetchedTerms = dbTerms || [];
       setAdminTerms(fetchedTerms);
 
-      // Load custom grade weights for the active term
+      // Load custom grade weights across all terms (indexing both studentId and studentId_termId)
       let initialWeightsData: Record<string, StudentGradeWeight> | undefined = undefined;
-      const activeOrFirstTerm = fetchedTerms.find((t) => t.isActive && !t.isLocked) || fetchedTerms[0];
-      if (activeOrFirstTerm?.id) {
-        try {
-          const { data: weightsData } = await fetchGradeWeightsForTerm(activeOrFirstTerm.id);
-          if (weightsData) {
-            initialWeightsData = weightsData;
-            setGradeWeightsMap(weightsData);
+      try {
+        const { data: allWeights } = await fetchAllGradeWeights();
+        if (allWeights && Object.keys(allWeights).length > 0) {
+          initialWeightsData = allWeights;
+          setGradeWeightsMap(allWeights);
+        } else {
+          const activeOrFirstTerm = fetchedTerms.find((t) => t.isActive && !t.isLocked) || fetchedTerms[0];
+          if (activeOrFirstTerm?.id) {
+            const { data: weightsData } = await fetchGradeWeightsForTerm(activeOrFirstTerm.id);
+            if (weightsData) {
+              initialWeightsData = weightsData;
+              setGradeWeightsMap(weightsData);
+            }
           }
-        } catch (wErr) {
-          console.warn('Could not load initial grade weights:', wErr);
         }
+      } catch (wErr) {
+        console.warn('Could not load initial grade weights:', wErr);
       }
 
       // 2. Fetch classes directly from Supabase classes table
@@ -530,24 +536,29 @@ export default function App() {
 
   // Reload custom grade weights callback
   const loadGradeWeights = useCallback(async (termId?: string) => {
-    const targetTermId =
-      termId ||
-      adminTerms.find((t) => t.isActive && !t.isLocked)?.id ||
-      adminTerms[0]?.id;
-    if (!targetTermId) return;
     try {
-      const { data: weightsData } = await fetchGradeWeightsForTerm(targetTermId);
-      if (weightsData) {
-        setGradeWeightsMap(weightsData);
+      // 1. Fetch all weights to ensure studentId and studentId_termId mappings are comprehensive
+      const { data: allWeights } = await fetchAllGradeWeights();
+      let mergedWeights = { ...allWeights };
+
+      // 2. If a specific termId is provided, also fetch for that term specifically and overlay
+      if (termId) {
+        const { data: termWeights } = await fetchGradeWeightsForTerm(termId);
+        if (termWeights) {
+          mergedWeights = { ...mergedWeights, ...termWeights };
+        }
       }
-      // Re-fetch student grades to sync with DB trigger recalculation
+
+      setGradeWeightsMap(mergedWeights);
+
+      // 3. Re-fetch student grades to sync with DB trigger recalculation
       if (dbStudents.length > 0 && adminClasses.length > 0) {
         const freshGrades = await fetchStudentGradesFromSupabase(
           dbStudents,
           adminClasses,
           courses,
           adminTransferRecords,
-          weightsData || undefined
+          mergedWeights
         );
         if (freshGrades && Object.keys(freshGrades).length > 0) {
           setAllGrades(freshGrades);
@@ -556,7 +567,7 @@ export default function App() {
     } catch (err) {
       console.warn('Error loading grade weights:', err);
     }
-  }, [adminTerms, dbStudents, adminClasses, courses, adminTransferRecords]);
+  }, [dbStudents, adminClasses, courses, adminTransferRecords]);
 
   // Fetch Supabase data whenever user logs in or switches role
   useEffect(() => {
@@ -1045,6 +1056,18 @@ export default function App() {
         await saveStudentGradeToSupabase(grade, student?.classId);
       }
       showToast('✅ 成績已儲存成功！', 'success');
+
+      // Re-fetch fresh grades from Supabase to ensure DB trigger calculated total_score is synchronized
+      const freshGrades = await fetchStudentGradesFromSupabase(
+        dbStudents,
+        adminClasses,
+        courses,
+        adminTransferRecords,
+        gradeWeightsMap
+      );
+      if (freshGrades && Object.keys(freshGrades).length > 0) {
+        setAllGrades(freshGrades);
+      }
     } catch (err) {
       console.error('Failed to save grades to Supabase:', err);
       showToast('⚠️ 成績儲存至資料庫時發生部分錯誤', 'warning');
@@ -1303,7 +1326,17 @@ export default function App() {
           student={selectedStudentForDetail}
           allCourses={courses}
           grade={allGrades[selectedStudentForDetail.id]}
-          customWeight={gradeWeightsMap[selectedStudentForDetail.id]}
+          customWeight={(() => {
+            const studentClass = adminClasses.find(
+              (c) => c.id === selectedStudentForDetail.classId || c.name === selectedStudentForDetail.className
+            );
+            const res = resolveStudentGradeWeight(
+              selectedStudentForDetail.id,
+              studentClass?.termId,
+              gradeWeightsMap
+            );
+            return res.customWeight || null;
+          })()}
           teacherName={currentRole === 'ADMIN' ? '教務行政組' : `${currentTeacher?.name || ''}老師`}
           transferRecords={adminTransferRecords}
           onClose={() => setSelectedStudentForDetail(null)}
@@ -1558,6 +1591,9 @@ export default function App() {
                   onSelectClass={(cls) => setGradeSelectedClass(cls)}
                   availableClasses={currentTeacher?.assignedClasses || []}
                   transferRecords={adminTransferRecords}
+                  allClasses={adminClasses}
+                  allTerms={adminTerms}
+                  onReloadGradeWeights={loadGradeWeights}
                 />
               ) : activeTab === 'classes' ? (
                 /* 3. Individual Student Attendance Stats & Roster */

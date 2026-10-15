@@ -14,8 +14,10 @@ import {
   BarChart3,
   UserX
 } from 'lucide-react';
-import { Student, StudentGrade, CourseSession, TransferClassRecord, StudentGradeWeight } from '../types';
+import { Student, StudentGrade, CourseSession, TransferClassRecord, StudentGradeWeight, ClassEntity, Term } from '../types';
 import { GRADE_WEIGHTS, calculateTotalGrade, calculateStudentAttendanceScore } from '../utils/gradeUtils';
+import { resolveStudentGradeWeight } from '../lib/gradeWeightService';
+import { exportGradesToCsv } from '../utils/csvExport';
 import { StudentAvatar } from './StudentAvatar';
 
 interface GradeManagementViewProps {
@@ -30,6 +32,9 @@ interface GradeManagementViewProps {
   onSelectClass: (className: string) => void;
   availableClasses: string[];
   transferRecords?: TransferClassRecord[];
+  allClasses?: ClassEntity[];
+  allTerms?: Term[];
+  onReloadGradeWeights?: (termId?: string) => Promise<void>;
 }
 
 export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
@@ -44,10 +49,34 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
   onSelectClass,
   availableClasses,
   transferRecords,
+  allClasses = [],
+  allTerms = [],
+  onReloadGradeWeights,
 }) => {
   const [localGrades, setLocalGrades] = useState<Record<string, StudentGrade>>(allGrades);
   const [searchQuery, setSearchQuery] = useState('');
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+
+  // Identify current class entity and current term entity
+  const currentClassObj = useMemo(() => {
+    return allClasses.find((c) => c.name === currentClassName || c.id === currentClassName);
+  }, [allClasses, currentClassName]);
+
+  const currentTermObj = useMemo(() => {
+    if (currentClassObj?.termId && allTerms.length > 0) {
+      const match = allTerms.find((t) => t.id === currentClassObj.termId);
+      if (match) return match;
+    }
+    return allTerms.find((t) => t.isActive && !t.isLocked) || allTerms[0];
+  }, [allTerms, currentClassObj]);
+
+  // When class switches or component loads, ensure weights for the class's term are loaded
+  useEffect(() => {
+    const targetTermId = currentClassObj?.termId || currentTermObj?.id;
+    if (targetTermId && onReloadGradeWeights) {
+      onReloadGradeWeights(targetTermId);
+    }
+  }, [currentClassObj?.termId, currentTermObj?.id, onReloadGradeWeights]);
 
   // Sync if allGrades changes from parent
   useEffect(() => {
@@ -113,6 +142,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
     if (val < 0) val = 0;
 
     const { attendanceScore } = getStudentAttendanceData(studentId, currentClassName);
+    const weightRes = resolveStudentGradeWeight(studentId, currentClassObj?.termId, gradeWeightsMap);
 
     setLocalGrades((prev) => {
       const existing = prev[studentId] || {
@@ -134,8 +164,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
         [field]: val,
       };
 
-      // Recalculate total immediately with student's custom weights if set
-      const customWeight = gradeWeightsMap[studentId];
+      // Recalculate total immediately with student's resolved weights (custom or default)
       updated.totalScore = calculateTotalGrade(
         updated.attendanceScore,
         updated.quizScore,
@@ -143,7 +172,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
         updated.finalScore,
         updated.homeworkScore,
         updated.attitudeScore,
-        customWeight
+        weightRes.weights
       );
 
       return {
@@ -166,8 +195,8 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
       const fin = existing ? existing.finalScore : 85;
       const hw = existing ? existing.homeworkScore : 90;
       const attid = existing ? existing.attitudeScore : 90;
-      const customWeight = gradeWeightsMap[s.id];
-      const total = calculateTotalGrade(attendanceScore, quiz, mid, fin, hw, attid, customWeight);
+      const weightRes = resolveStudentGradeWeight(s.id, currentClassObj?.termId, gradeWeightsMap);
+      const total = calculateTotalGrade(attendanceScore, quiz, mid, fin, hw, attid, weightRes.weights);
 
       syncedGrades[s.id] = {
         studentId: s.id,
@@ -188,10 +217,10 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
     setLocalGrades(syncedGrades);
     onUpdateGrades(syncedGrades);
     setHasUnsavedChanges(false);
-    onShowToast(`🎉 已成功儲存【${currentClassName}】全班成績資料（已自動同步實際出缺席成績）！`, 'success');
+    onShowToast(`🎉 已成功儲存【${currentClassName}】全班成績資料（已同步實際出缺席與個別權重）！`, 'success');
   };
 
-  // Class Stats Summary using dynamic attendance score
+  // Class Stats Summary using dynamic attendance score and individual weights
   const classStats = useMemo(() => {
     if (classStudents.length === 0) return { avgTotal: 0, passCount: 0, failCount: 0 };
     let sum = 0;
@@ -206,7 +235,10 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
       const fin = g ? g.finalScore : 85;
       const hw = g ? g.homeworkScore : 90;
       const attid = g ? g.attitudeScore : 90;
-      const total = calculateTotalGrade(attendanceScore, quiz, mid, fin, hw, attid);
+      const weightRes = resolveStudentGradeWeight(s.id, currentClassObj?.termId, gradeWeightsMap);
+      const total = (g && g.totalScore !== undefined)
+        ? g.totalScore
+        : calculateTotalGrade(attendanceScore, quiz, mid, fin, hw, attid, weightRes.weights);
 
       sum += total;
       if (total >= 60) pass++;
@@ -218,54 +250,18 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
       passCount: pass,
       failCount: fail,
     };
-  }, [classStudents, localGrades, getStudentAttendanceData, currentClassName]);
+  }, [classStudents, localGrades, getStudentAttendanceData, currentClassName, currentClassObj?.termId, gradeWeightsMap]);
 
-  // Export CSV using dynamic attendance score
+  // Export CSV using unified export helper
   const handleExportCSV = () => {
-    const headers = ['學號', '姓名', '英文姓名', '班級', '出席成績(20%)', '平時考(15%)', '期中考(20%)', '期末考(20%)', '作業(15%)', '學習態度(10%)', '總成績'];
-    const rows = classStudents.map((s) => {
-      const { attendanceScore } = getStudentAttendanceData(s.id, currentClassName);
-      const g = localGrades[s.id] || {
-        attendanceScore,
-        quizScore: 85,
-        midtermScore: 80,
-        finalScore: 85,
-        homeworkScore: 90,
-        attitudeScore: 90,
-        totalScore: 0,
-      };
-      const total = calculateTotalGrade(
-        attendanceScore,
-        g.quizScore,
-        g.midtermScore,
-        g.finalScore,
-        g.homeworkScore,
-        g.attitudeScore
-      );
-      return [
-        s.studentNumber,
-        s.name,
-        s.englishName,
-        s.className,
-        attendanceScore,
-        g.quizScore,
-        g.midtermScore,
-        g.finalScore,
-        g.homeworkScore,
-        g.attitudeScore,
-        total,
-      ];
-    });
-
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `${currentClassName}_2026夏季班成績單.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
+    exportGradesToCsv(
+      classStudents,
+      `${currentClassName}_${currentTermObj?.name || '學期'}_成績單`,
+      localGrades,
+      allCourses,
+      transferRecords,
+      gradeWeightsMap
+    );
     onShowToast(`已匯出 ${currentClassName} 成績報表 (CSV)`, 'success');
   };
 
@@ -279,7 +275,9 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
               <span className="text-xs font-bold text-teal-600 bg-teal-50 px-2 py-0.5 rounded border border-teal-200 uppercase tracking-wider">
                 成績管理系統
               </span>
-              <span className="text-xs font-semibold text-slate-500">2026 夏季班 (Summer Quarter)</span>
+              <span className="text-xs font-semibold text-slate-500">
+                {currentTermObj?.name || '2026 夏季班'}
+              </span>
             </div>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight mt-1 flex items-center space-x-3">
               <span>學生成績管理與評量</span>
@@ -288,7 +286,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
               </span>
             </h1>
             <p className="text-xs text-slate-500 mt-1">
-              出席成績由系統依學生實際出缺席自動產生；輸入各項成績後，總成績將依教育部華語中心標準比例即時更新。
+              出席成績由系統依學生實際出缺席自動產生；總成績優先依行政端核定之個別權重計算（無個別自訂者依中心標準比例即時更新）。
             </p>
           </div>
 
@@ -345,12 +343,20 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
       <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl p-5 shadow-md">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-700/80 pb-4">
           <div>
-            <span className="text-xs font-bold text-teal-400 uppercase tracking-wider">
-              華語中心官方成績計算比例 (總和 100%)
-            </span>
-            <div className="text-sm font-semibold text-slate-300 mt-1">
-              標準比例：出席 20% + 平時 15% + 期中 20% + 期末 20% + 作業 15% + 態度 10%（若個別學生有自訂權重，依其專屬比例計算）
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-teal-400 uppercase tracking-wider">
+                中心成績計算比例規範 (總和 100%)
+              </span>
+              <span className="text-[11px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700 font-medium">
+                學期：{currentTermObj?.name || '當前學期'}
+              </span>
             </div>
+            <div className="text-sm font-semibold text-slate-200 mt-1">
+              中心標準比例：出席 20% + 平時 15% + 期中 20% + 期末 20% + 作業 15% + 態度 10%
+            </div>
+            <p className="text-xs text-amber-300/90 mt-1.5 flex items-center gap-1.5">
+              <span>⚠️ 規範說明：個別學生若經行政端核定自訂比例，成績列將明確標註【個別自訂】並依其專屬比例計算；未設定者依【標準預設】計算。教師端提供即時檢視，無修改權重權限。</span>
+            </p>
           </div>
 
           <div className="flex items-center space-x-4 text-xs font-mono">
@@ -368,28 +374,28 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
         {/* 6 Metric Weights Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-4 text-xs">
           <div className="bg-slate-800/80 p-2.5 rounded-xl border border-teal-500/30">
-            <div className="text-teal-400 font-bold">1. 出席成績 (20%)</div>
+            <div className="text-teal-400 font-bold">1. 出席成績 (標準 20%)</div>
             <div className="text-[11px] text-slate-300 mt-0.5">系統依出缺席自動計分</div>
           </div>
           <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
-            <div className="text-slate-200 font-bold">2. 平時測驗 (15%)</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">聽寫/單元小考 (0~100)</div>
+            <div className="text-slate-200 font-bold">2. 平時測驗 (標準 15%)</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">聽寫/小考 (個別依自訂)</div>
           </div>
           <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
-            <div className="text-slate-200 font-bold">3. 期中考試 (20%)</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">筆試與口試 (0~100)</div>
+            <div className="text-slate-200 font-bold">3. 期中考試 (標準 20%)</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">筆試口試 (個別依自訂)</div>
           </div>
           <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
-            <div className="text-slate-200 font-bold">4. 期末考試 (20%)</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">學季總結評量 (0~100)</div>
+            <div className="text-slate-200 font-bold">4. 期末考試 (標準 20%)</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">學季總結 (個別依自訂)</div>
           </div>
           <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
-            <div className="text-slate-200 font-bold">5. 作業習作 (15%)</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">課後作業/錄音 (0~100)</div>
+            <div className="text-slate-200 font-bold">5. 作業習作 (標準 15%)</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">作業錄音 (個別依自訂)</div>
           </div>
           <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
-            <div className="text-slate-200 font-bold">6. 學習態度 (10%)</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">課堂參與/發言 (0~100)</div>
+            <div className="text-slate-200 font-bold">6. 學習態度 (標準 10%)</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">課堂參與 (個別依自訂)</div>
           </div>
         </div>
       </div>
@@ -419,32 +425,32 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
             <thead>
               <tr className="bg-slate-50 text-slate-700 text-xs font-bold border-b border-slate-200">
                 <th className="py-3.5 px-3 w-10 text-center">#</th>
-                <th className="py-3.5 px-4 min-w-[180px]">學生姓名 / 學號</th>
-                <th className="py-3.5 px-3 text-center min-w-[120px]">
-                  <div className="text-teal-700">出席 (20%)</div>
-                  <div className="text-[10px] font-normal text-slate-500">系統自動計算</div>
+                <th className="py-3.5 px-4 min-w-[200px]">學生姓名 / 權重類型</th>
+                <th className="py-3.5 px-3 text-center min-w-[130px]">
+                  <div className="text-teal-700">出席 (標準 20%)</div>
+                  <div className="text-[10px] font-normal text-slate-500">系統依紀錄計分</div>
                 </th>
                 <th className="py-3.5 px-3 text-center min-w-[110px]">
-                  <div>平時考 (15%)</div>
+                  <div>平時考 (標準 15%)</div>
                   <div className="text-[10px] font-normal text-slate-500">0~100 分</div>
                 </th>
                 <th className="py-3.5 px-3 text-center min-w-[110px]">
-                  <div>期中考 (20%)</div>
+                  <div>期中考 (標準 20%)</div>
                   <div className="text-[10px] font-normal text-slate-500">0~100 分</div>
                 </th>
                 <th className="py-3.5 px-3 text-center min-w-[110px]">
-                  <div>期末考 (20%)</div>
+                  <div>期末考 (標準 20%)</div>
                   <div className="text-[10px] font-normal text-slate-500">0~100 分</div>
                 </th>
                 <th className="py-3.5 px-3 text-center min-w-[110px]">
-                  <div>作業 (15%)</div>
+                  <div>作業 (標準 15%)</div>
                   <div className="text-[10px] font-normal text-slate-500">0~100 分</div>
                 </th>
                 <th className="py-3.5 px-3 text-center min-w-[110px]">
-                  <div>學習態度 (10%)</div>
+                  <div>學習態度 (標準 10%)</div>
                   <div className="text-[10px] font-normal text-slate-500">0~100 分</div>
                 </th>
-                <th className="py-3.5 px-4 text-center min-w-[120px] bg-slate-100/70">
+                <th className="py-3.5 px-4 text-center min-w-[130px] bg-slate-100/70">
                   <div className="text-slate-900">總成績 (100%)</div>
                   <div className="text-[10px] font-normal text-slate-600">即時加權總分</div>
                 </th>
@@ -461,8 +467,31 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                 const final = existing ? existing.finalScore : 85;
                 const homework = existing ? existing.homeworkScore : 90;
                 const attitude = existing ? existing.attitudeScore : 90;
-                const customWeight = gradeWeightsMap[student.id];
-                const computedTotal = calculateTotalGrade(attendanceScore, quiz, midterm, final, homework, attitude, customWeight);
+
+                // Resolve student's exact weights matching termId, studentId, or fallback to default
+                const studentTermId = currentClassObj?.termId || currentTermObj?.id;
+                const weightRes = resolveStudentGradeWeight(
+                  student.id,
+                  studentTermId,
+                  gradeWeightsMap
+                );
+                const studentW = weightRes.weights;
+                const isCustom = weightRes.isCustom;
+
+                const calculatedTotal = calculateTotalGrade(
+                  attendanceScore,
+                  quiz,
+                  midterm,
+                  final,
+                  homework,
+                  attitude,
+                  studentW
+                );
+
+                // Strictly prioritize database persisted totalScore if available and unedited
+                const totalScore = (existing && existing.totalScore !== undefined && !hasUnsavedChanges)
+                  ? Number(existing.totalScore)
+                  : calculatedTotal;
 
                 const grade: StudentGrade = {
                   studentId: student.id,
@@ -475,7 +504,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                   finalScore: final,
                   homeworkScore: homework,
                   attitudeScore: attitude,
-                  totalScore: computedTotal,
+                  totalScore,
                   updatedAt: existing?.updatedAt,
                 };
 
@@ -490,7 +519,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                       {index + 1}
                     </td>
 
-                    {/* Student Profile */}
+                    {/* Student Profile & Weight Type */}
                     <td className="py-3 px-4">
                       <div 
                         onClick={() => onSelectStudentForDetail(student)}
@@ -500,9 +529,9 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                           avatarUrl={student.avatarUrl} 
                           name={student.name} 
                           sizeClassName="w-9 h-9" 
-                          className="group-hover:ring-2 group-hover:ring-teal-500 transition-all"
+                          className="group-hover:ring-2 group-hover:ring-teal-500 transition-all shrink-0"
                         />
-                        <div>
+                        <div className="min-w-0">
                           <div className="flex items-center space-x-1.5">
                             <span className="font-extrabold text-slate-900 text-sm group-hover:text-teal-700 transition-colors">
                               {student.name}
@@ -514,13 +543,16 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                             <span>•</span>
                             <span className="text-slate-600">{student.nationality}</span>
                           </div>
-                          {customWeight && (
-                            <div className="mt-1">
+
+                          {/* Individual Weight Indicator Tag: only display for students with non-default weights; blank otherwise */}
+                          {isCustom && (
+                            <div className="mt-1.5">
                               <span
-                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200"
-                                title={`個別自訂比例：出席 ${customWeight.attendanceWeight}%、平時 ${customWeight.quizWeight}%、期中 ${customWeight.midtermWeight}%、期末 ${customWeight.finalWeight}%、作業 ${customWeight.homeworkWeight}%、態度 ${customWeight.attitudeWeight}%`}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs"
+                                title={`行政端個別自訂權重：出席 ${studentW.attendanceWeight}%、平時 ${studentW.quizWeight}%、期中 ${studentW.midtermWeight}%、期末 ${studentW.finalWeight}%、作業 ${studentW.homeworkWeight}%、態度 ${studentW.attitudeWeight}%`}
                               >
-                                個別權重 ({customWeight.attendanceWeight}/{customWeight.quizWeight}/{customWeight.midtermWeight}/{customWeight.finalWeight}/{customWeight.homeworkWeight}/{customWeight.attitudeWeight}%)
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-600 animate-pulse" />
+                                個別自訂 ({studentW.attendanceWeight}/{studentW.quizWeight}/{studentW.midtermWeight}/{studentW.finalWeight}/{studentW.homeworkWeight}/{studentW.attitudeWeight}%)
                               </span>
                             </div>
                           )}
@@ -540,14 +572,14 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                         <span className="font-mono font-black text-sm">
                           {grade.attendanceScore}%
                         </span>
-                        <span className={`text-[10px] font-medium ${
+                        <span className={`text-[10px] font-bold mt-0.5 ${
                           grade.attendanceScore >= 80
                             ? 'text-teal-700'
                             : grade.attendanceScore >= 60
                             ? 'text-amber-700'
                             : 'text-rose-700'
                         }`}>
-                          佔 {Math.round(grade.attendanceScore * (customWeight ? customWeight.attendanceWeight / 100 : 0.2) * 10) / 10} 分
+                          權重 {studentW.attendanceWeight}% (佔 {Math.round(grade.attendanceScore * (studentW.attendanceWeight / 100) * 10) / 10} 分)
                         </span>
                         {attResult.hasRecords && (
                           <span className="text-[9px] text-slate-500 mt-0.5 whitespace-nowrap">
@@ -562,82 +594,118 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                       </div>
                     </td>
 
-                    {/* 2. 平時考 (15%) */}
+                    {/* 2. 平時考 (顯示個別權重) */}
                     <td className="py-3 px-3 text-center">
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        step="0.5"
-                        id={`input-quiz-${student.id}`}
-                        value={grade.quizScore}
-                        onChange={(e) => handleScoreChange(student.id, student.name, 'quizScore', e.target.value)}
-                        className="w-20 px-2.5 py-1.5 text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
-                      />
+                      <div className="flex flex-col items-center">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          id={`input-quiz-${student.id}`}
+                          value={grade.quizScore}
+                          onChange={(e) => handleScoreChange(student.id, student.name, 'quizScore', e.target.value)}
+                          className="w-20 px-2.5 py-1.5 text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+                        />
+                        <div className="text-[10px] font-semibold text-slate-500 mt-1">
+                          權重 {studentW.quizWeight}%
+                        </div>
+                      </div>
                     </td>
 
-                    {/* 3. 期中考 (20%) */}
+                    {/* 3. 期中考 (顯示個別權重，0%特別標註) */}
                     <td className="py-3 px-3 text-center">
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        step="0.5"
-                        id={`input-midterm-${student.id}`}
-                        value={grade.midtermScore}
-                        onChange={(e) => handleScoreChange(student.id, student.name, 'midtermScore', e.target.value)}
-                        className="w-20 px-2.5 py-1.5 text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
-                      />
+                      <div className="flex flex-col items-center">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          id={`input-midterm-${student.id}`}
+                          value={grade.midtermScore}
+                          onChange={(e) => handleScoreChange(student.id, student.name, 'midtermScore', e.target.value)}
+                          className={`w-20 px-2.5 py-1.5 text-center font-mono font-bold bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs ${
+                            studentW.midtermWeight === 0
+                              ? 'border-amber-300 bg-amber-50/40 text-slate-600'
+                              : 'border-slate-300 text-slate-800'
+                          }`}
+                        />
+                        <div className={`text-[10px] font-semibold mt-1 ${
+                          studentW.midtermWeight === 0 ? 'text-amber-700 font-bold' : 'text-slate-500'
+                        }`}>
+                          權重 {studentW.midtermWeight}%{studentW.midtermWeight === 0 ? ' (免計)' : ''}
+                        </div>
+                      </div>
                     </td>
 
-                    {/* 4. 期末考 (20%) */}
+                    {/* 4. 期末考 (顯示個別權重) */}
                     <td className="py-3 px-3 text-center">
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        step="0.5"
-                        id={`input-final-${student.id}`}
-                        value={grade.finalScore}
-                        onChange={(e) => handleScoreChange(student.id, student.name, 'finalScore', e.target.value)}
-                        className="w-20 px-2.5 py-1.5 text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
-                      />
+                      <div className="flex flex-col items-center">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          id={`input-final-${student.id}`}
+                          value={grade.finalScore}
+                          onChange={(e) => handleScoreChange(student.id, student.name, 'finalScore', e.target.value)}
+                          className="w-20 px-2.5 py-1.5 text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+                        />
+                        <div className="text-[10px] font-semibold text-slate-500 mt-1">
+                          權重 {studentW.finalWeight}%
+                        </div>
+                      </div>
                     </td>
 
-                    {/* 5. 作業 (15%) */}
+                    {/* 5. 作業 (顯示個別權重) */}
                     <td className="py-3 px-3 text-center">
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        step="0.5"
-                        id={`input-homework-${student.id}`}
-                        value={grade.homeworkScore}
-                        onChange={(e) => handleScoreChange(student.id, student.name, 'homeworkScore', e.target.value)}
-                        className="w-20 px-2.5 py-1.5 text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
-                      />
+                      <div className="flex flex-col items-center">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          id={`input-homework-${student.id}`}
+                          value={grade.homeworkScore}
+                          onChange={(e) => handleScoreChange(student.id, student.name, 'homeworkScore', e.target.value)}
+                          className="w-20 px-2.5 py-1.5 text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+                        />
+                        <div className="text-[10px] font-semibold text-slate-500 mt-1">
+                          權重 {studentW.homeworkWeight}%
+                        </div>
+                      </div>
                     </td>
 
-                    {/* 6. 學習態度 (10%) */}
+                    {/* 6. 學習態度 (顯示個別權重) */}
                     <td className="py-3 px-3 text-center">
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        step="0.5"
-                        id={`input-attitude-${student.id}`}
-                        value={grade.attitudeScore}
-                        onChange={(e) => handleScoreChange(student.id, student.name, 'attitudeScore', e.target.value)}
-                        className="w-20 px-2.5 py-1.5 text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
-                      />
+                      <div className="flex flex-col items-center">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          id={`input-attitude-${student.id}`}
+                          value={grade.attitudeScore}
+                          onChange={(e) => handleScoreChange(student.id, student.name, 'attitudeScore', e.target.value)}
+                          className="w-20 px-2.5 py-1.5 text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+                        />
+                        <div className="text-[10px] font-semibold text-slate-500 mt-1">
+                          權重 {studentW.attitudeWeight}%
+                        </div>
+                      </div>
                     </td>
 
-                    {/* 總成績 (即時更新) */}
+                    {/* 總成績 (與資料庫完全一致) */}
                     <td className="py-3 px-4 text-center bg-slate-50/70">
                       <div className="flex flex-col items-center justify-center">
                         <span className="font-mono font-black text-base text-slate-900">
                           {grade.totalScore}
                         </span>
+                        {isCustom && (
+                          <span className="text-[10px] font-bold mt-0.5 text-amber-700">
+                            依個別權重
+                          </span>
+                        )}
                       </div>
                     </td>
 

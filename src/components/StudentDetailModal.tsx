@@ -223,11 +223,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                       <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
                         個別自訂權重
                       </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
-                        全校標準預設
-                      </span>
-                    )}
+                    ) : null}
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
                     出席成績由系統依實際出缺席自動產生；總成績依比例加權即時計算。

@@ -189,10 +189,29 @@ export function getStudentEffectiveGrade(
   allGrades?: Record<string, StudentGrade>,
   allCourses?: CourseSession[],
   transferRecords?: TransferClassRecord[],
-  customWeightsMap?: Record<string, StudentGradeWeight>
+  customWeightsMap?: Record<string, StudentGradeWeight>,
+  termId?: string
 ): StudentGrade {
   const existing = allGrades ? allGrades[student.id] : undefined;
-  const customWeight = customWeightsMap ? customWeightsMap[student.id] : undefined;
+  // Prioritize student_id + term_id compound key; only fallback to direct student_id if termId matches or is absent
+  const candidate = customWeightsMap
+    ? ((termId ? customWeightsMap[`${student.id}_${termId}`] : undefined) || (
+        customWeightsMap[student.id] && (!termId || !customWeightsMap[student.id].termId || customWeightsMap[student.id].termId === termId)
+          ? customWeightsMap[student.id]
+          : undefined
+      ))
+    : undefined;
+
+  const isCustom = candidate && !(
+    Number(candidate.attendanceWeight) === 20 &&
+    Number(candidate.quizWeight) === 15 &&
+    Number(candidate.midtermWeight) === 20 &&
+    Number(candidate.finalWeight) === 20 &&
+    Number(candidate.homeworkWeight) === 15 &&
+    Number(candidate.attitudeWeight) === 10
+  );
+  const customWeight = isCustom ? candidate : undefined;
+
   const quizScore = existing?.quizScore ?? 85;
   const midtermScore = existing?.midtermScore ?? 80;
   const finalScore = existing?.finalScore ?? 85;
@@ -215,7 +234,7 @@ export function getStudentEffectiveGrade(
     attendanceScore = student.overallAttendanceRate;
   }
 
-  const totalScore = calculateTotalGrade(
+  const calculatedTotal = calculateTotalGrade(
     attendanceScore,
     quizScore,
     midtermScore,
@@ -224,6 +243,11 @@ export function getStudentEffectiveGrade(
     attitudeScore,
     customWeight
   );
+
+  // Prioritize database stored totalScore if available to ensure total scores strictly match DB
+  const totalScore = (existing?.totalScore !== undefined && existing?.totalScore !== null)
+    ? Number(existing.totalScore)
+    : calculatedTotal;
 
   return {
     studentId: student.id,
