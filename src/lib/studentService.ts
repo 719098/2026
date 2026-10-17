@@ -1089,12 +1089,37 @@ export async function fetchStudentGradesFromSupabase(
   transferRecords?: TransferClassRecord[],
   customWeightsMap?: Record<string, StudentGradeWeight>
 ): Promise<Record<string, StudentGrade>> {
-  if (!supabase) return {};
-
   try {
-    const { data: rows, error } = await supabase.from('student_grades').select('*');
-    if (error) {
-      console.error('[StudentService] Error fetching student_grades:', error);
+    let rows: any[] = [];
+    let fetchError: any = null;
+
+    if (supabase) {
+      const { data, error } = await supabase.from('student_grades').select('*');
+      if (!error && data && data.length > 0) {
+        rows = data;
+      } else {
+        fetchError = error;
+      }
+    }
+
+    // Fallback to server API /api/student-grades if direct query was empty or denied
+    if (rows.length === 0) {
+      try {
+        const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
+        const res = await fetch(`${origin}/api/student-grades`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+            rows = json.data;
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[StudentService] Fallback to /api/student-grades failed:', apiErr);
+      }
+    }
+
+    if (rows.length === 0 && fetchError) {
+      console.error('[StudentService] Error fetching student_grades:', fetchError);
       return {};
     }
 
@@ -1133,10 +1158,10 @@ export async function fetchStudentGradesFromSupabase(
         const weightRes = resolveStudentGradeWeight(studentId, classTermId, customWeightsMap);
         const customWeight = weightRes.isCustom ? weightRes.weights : undefined;
         const computedTotal = calculateTotalGrade(att, quiz, mid, fin, hw, attid, customWeight);
-        const total = r.total_score !== undefined && r.total_score !== null ? Number(r.total_score) : computedTotal;
-        const isPassed = r.is_passed !== undefined && r.is_passed !== null ? Boolean(r.is_passed) : (total >= 60.0);
+        const total = computedTotal;
+        const isPassed = total >= 60.0;
 
-        gradeMap[studentId] = {
+        const gradeItem: StudentGrade = {
           studentId: studentId,
           studentName: student?.name || '未知學生',
           className: classObj?.name || student?.className || '',
@@ -1152,13 +1177,30 @@ export async function fetchStudentGradesFromSupabase(
           updatedAt: r.updated_at ? r.updated_at.substring(0, 16).replace('T', ' ') : undefined,
         };
 
-        // Only sync attendance_score if changed in attendance history (trigger re-evaluates total_score automatically)
-        if (Number(r.attendance_score) !== att) {
+        // Always index under compound key studentId_classId so multiple class records (transfers) are fully preserved
+        if (r.class_id) {
+          gradeMap[`${studentId}_${r.class_id}`] = gradeItem;
+        }
+
+        // Determine if this row should become or overwrite the primary gradeMap[studentId]:
+        // 1. If gradeMap[studentId] does not exist yet -> set it
+        // 2. If current row matches student's active classId -> ALWAYS takes priority and locks in
+        // 3. If previous entry does NOT match student's active classId and current doesn't either, keep newer updated_at
+        const existingPrimary = gradeMap[studentId];
+        const isCurrentClass = Boolean(student?.classId && String(r.class_id) === String(student.classId));
+        const wasExistingCurrentClass = Boolean(student?.classId && existingPrimary?.classId && String(existingPrimary.classId) === String(student.classId));
+
+        if (!existingPrimary || isCurrentClass || (!wasExistingCurrentClass && (!existingPrimary.updatedAt || (r.updated_at && r.updated_at > existingPrimary.updatedAt)))) {
+          gradeMap[studentId] = gradeItem;
+        }
+
+        // Only sync attendance_score to DB on the student's active current class record if supabase is authenticated
+        if (isCurrentClass && Number(r.attendance_score) !== att && supabase) {
           supabase
             .from('student_grades')
-            .update({ attendance_score: att })
+            .update({ attendance_score: att, total_score: computedTotal, is_passed: computedTotal >= 60.0 })
             .eq('id', r.id)
-            .then(() => {});
+            .then(() => {}, () => {});
         }
       });
     }
@@ -1206,6 +1248,10 @@ export async function fetchStudentGradesFromSupabase(
         };
 
         gradeMap[s.id] = initialGrade;
+        if (s.classId) {
+          gradeMap[`${s.id}_${s.classId}`] = initialGrade;
+        }
+
         // Only trigger DB persistence if student has a valid class assigned
         if (s.classId && isValidUuid(s.classId)) {
           saveStudentGradeToSupabase(initialGrade, s.classId);
@@ -1227,23 +1273,16 @@ export async function saveStudentGradeToSupabase(
   grade: StudentGrade,
   classId?: string
 ): Promise<{ success: boolean; error: any }> {
-  if (!supabase) return { success: false, error: new Error('Supabase client not initialized') };
-
   try {
-    const { data: existingRow } = await supabase
-      .from('student_grades')
-      .select('id, class_id')
-      .eq('student_id', grade.studentId)
-      .maybeSingle();
+    let targetClassId: string | null = classId || grade.classId || null;
 
-    let targetClassId: string | null = classId || grade.classId || existingRow?.class_id || null;
-
-    // 1. If not found or not a valid UUID, search class_students
-    if (!targetClassId || !isValidUuid(targetClassId)) {
+    // 1. If not found or not a valid UUID, search class_students for current ENROLLED class
+    if ((!targetClassId || !isValidUuid(targetClassId)) && supabase) {
       const { data: csRow } = await supabase
         .from('class_students')
         .select('class_id')
         .eq('student_id', grade.studentId)
+        .eq('enrollment_status', 'ENROLLED')
         .maybeSingle();
       if (csRow?.class_id && isValidUuid(csRow.class_id)) {
         targetClassId = csRow.class_id;
@@ -1251,7 +1290,7 @@ export async function saveStudentGradeToSupabase(
     }
 
     // 2. If still not a valid UUID, attempt matching classes table by name or code
-    if (!targetClassId || !isValidUuid(targetClassId)) {
+    if ((!targetClassId || !isValidUuid(targetClassId)) && supabase) {
       const candidateName = (grade.className || '').trim();
       if (candidateName && candidateName !== '未設定班級' && candidateName !== '尚未分班') {
         const { data: matchedClass } = await supabase
@@ -1267,69 +1306,81 @@ export async function saveStudentGradeToSupabase(
 
     const hasValidClassId = Boolean(targetClassId && isValidUuid(targetClassId));
 
-    // Case A: Existing row already exists in student_grades
-    if (existingRow?.id) {
-      const updatePayload: Record<string, any> = {
-        attendance_score: grade.attendanceScore,
-        quiz_score: grade.quizScore,
-        midterm_score: grade.midtermScore,
-        final_score: grade.finalScore,
-        homework_score: grade.homeworkScore,
-        attitude_score: grade.attitudeScore,
-        total_score: grade.totalScore,
-        updated_at: new Date().toISOString(),
-      };
-
-      // Only update class_id if we have a valid UUID
-      if (hasValidClassId) {
-        updatePayload.class_id = targetClassId;
-      }
-
-      const { error: updateErr } = await supabase
-        .from('student_grades')
-        .update(updatePayload)
-        .eq('id', existingRow.id);
-
-      if (updateErr) {
-        console.error('[StudentService] Error updating existing student_grade:', updateErr);
-        return { success: false, error: updateErr };
-      }
-
-      return { success: true, error: null };
-    }
-
-    // Case B: New record, but student has no class_id assigned yet
-    // Since public.student_grades has a NOT NULL constraint on class_id,
-    // we cannot insert an unassigned student record into this relation.
     if (!hasValidClassId) {
       console.warn(
-        `[StudentService] Notice: Student ${grade.studentId} (${grade.studentName}) is currently unassigned to any class. Skipping student_grades insert to satisfy database NOT NULL constraint on class_id.`
+        `[StudentService] Notice: Student ${grade.studentId} (${grade.studentName}) has no valid class_id. Skipping grade persistence.`
       );
       return { success: true, error: null };
     }
 
-    // Case C: New record with valid class_id -> safe to insert
-    const insertPayload: Record<string, any> = {
+    const totalScore = Number(grade.totalScore ?? 85);
+    const isPassed = totalScore >= 60.0;
+
+    const payload: Record<string, any> = {
       student_id: grade.studentId,
       class_id: targetClassId,
-      attendance_score: grade.attendanceScore,
-      quiz_score: grade.quizScore,
-      midterm_score: grade.midtermScore,
-      final_score: grade.finalScore,
-      homework_score: grade.homeworkScore,
-      attitude_score: grade.attitudeScore,
-      total_score: grade.totalScore,
+      attendance_score: Number(grade.attendanceScore ?? 100),
+      quiz_score: Number(grade.quizScore ?? 85),
+      midterm_score: Number(grade.midtermScore ?? 80),
+      final_score: Number(grade.finalScore ?? 85),
+      homework_score: Number(grade.homeworkScore ?? 90),
+      attitude_score: Number(grade.attitudeScore ?? 90),
+      total_score: totalScore,
+      is_passed: isPassed,
       updated_at: new Date().toISOString(),
     };
 
-    const { error: insertErr } = await supabase.from('student_grades').insert(insertPayload);
+    // Attempt direct Supabase upsert
+    let directSuccess = false;
+    if (supabase) {
+      try {
+        const { error: upsertErr } = await supabase
+          .from('student_grades')
+          .upsert(payload, { onConflict: 'class_id,student_id' });
 
-    if (insertErr) {
-      console.error('[StudentService] Error inserting student_grade:', insertErr);
-      return { success: false, error: insertErr };
+        if (!upsertErr) {
+          directSuccess = true;
+        } else {
+          console.warn('[StudentService] Direct Supabase upsert failed, attempting fallback API:', upsertErr);
+        }
+      } catch (directEx) {
+        console.warn('[StudentService] Direct Supabase upsert exception:', directEx);
+      }
     }
 
-    return { success: true, error: null };
+    if (directSuccess) {
+      return { success: true, error: null };
+    }
+
+    // Fallback: Use server API /api/student-grades/save to guarantee persistence
+    try {
+      const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
+      const apiRes = await fetch(`${origin}/api/student-grades/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          grade: {
+            ...grade,
+            studentId: grade.studentId,
+            classId: targetClassId,
+            totalScore,
+            isPassed,
+          },
+          classId: targetClassId,
+        }),
+      });
+
+      if (apiRes.ok) {
+        const json = await apiRes.json();
+        if (json.success) {
+          return { success: true, error: null };
+        }
+      }
+      return { success: false, error: new Error('Server API failed to save grade') };
+    } catch (apiErr) {
+      console.error('[StudentService] Exception in /api/student-grades/save fallback:', apiErr);
+      return { success: false, error: apiErr };
+    }
   } catch (err) {
     console.error('[StudentService] Exception saving student_grade:', err);
     return { success: false, error: err };

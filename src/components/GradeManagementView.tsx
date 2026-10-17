@@ -141,14 +141,18 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
     if (val > 100) val = 100;
     if (val < 0) val = 0;
 
+    const targetClassId = currentClassObj?.id || students.find((s) => s.id === studentId)?.classId;
+    const gradeKey = targetClassId ? `${studentId}_${targetClassId}` : studentId;
+
     const { attendanceScore } = getStudentAttendanceData(studentId, currentClassName);
     const weightRes = resolveStudentGradeWeight(studentId, currentClassObj?.termId, gradeWeightsMap);
 
     setLocalGrades((prev) => {
-      const existing = prev[studentId] || {
+      const existing = prev[gradeKey] || prev[studentId] || {
         studentId,
         studentName,
         className: currentClassName,
+        classId: targetClassId,
         attendanceScore,
         quizScore: 80,
         midtermScore: 80,
@@ -160,6 +164,8 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
 
       const updated = {
         ...existing,
+        classId: targetClassId || existing.classId,
+        className: currentClassName,
         attendanceScore, // Always enforce dynamic attendance score from records
         [field]: val,
       };
@@ -177,6 +183,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
 
       return {
         ...prev,
+        [gradeKey]: updated,
         [studentId]: updated,
       };
     });
@@ -188,8 +195,10 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
   const handleSave = () => {
     const syncedGrades: Record<string, StudentGrade> = { ...localGrades };
     classStudents.forEach((s) => {
+      const targetClassId = currentClassObj?.id || s.classId;
+      const gradeKey = targetClassId ? `${s.id}_${targetClassId}` : s.id;
       const { attendanceScore } = getStudentAttendanceData(s.id, currentClassName);
-      const existing = syncedGrades[s.id];
+      const existing = syncedGrades[gradeKey] || syncedGrades[s.id];
       const quiz = existing ? existing.quizScore : 85;
       const mid = existing ? existing.midtermScore : 80;
       const fin = existing ? existing.finalScore : 85;
@@ -198,11 +207,11 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
       const weightRes = resolveStudentGradeWeight(s.id, currentClassObj?.termId, gradeWeightsMap);
       const total = calculateTotalGrade(attendanceScore, quiz, mid, fin, hw, attid, weightRes.weights);
 
-      syncedGrades[s.id] = {
+      const gradeItem: StudentGrade = {
         studentId: s.id,
         studentName: s.name,
         className: currentClassName,
-        classId: s.classId,
+        classId: targetClassId,
         attendanceScore,
         quizScore: quiz,
         midtermScore: mid,
@@ -210,8 +219,12 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
         homeworkScore: hw,
         attitudeScore: attid,
         totalScore: total,
+        isPassed: total >= 60.0,
         updatedAt: new Date().toISOString().substring(0, 16).replace('T', ' '),
       };
+
+      syncedGrades[gradeKey] = gradeItem;
+      syncedGrades[s.id] = gradeItem;
     });
 
     setLocalGrades(syncedGrades);
@@ -228,17 +241,17 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
     let fail = 0;
 
     classStudents.forEach((s) => {
+      const targetClassId = currentClassObj?.id || s.classId;
+      const gradeKey = targetClassId ? `${s.id}_${targetClassId}` : s.id;
       const { attendanceScore } = getStudentAttendanceData(s.id, currentClassName);
-      const g = localGrades[s.id];
+      const g = localGrades[gradeKey] || localGrades[s.id];
       const quiz = g ? g.quizScore : 85;
       const mid = g ? g.midtermScore : 80;
       const fin = g ? g.finalScore : 85;
       const hw = g ? g.homeworkScore : 90;
       const attid = g ? g.attitudeScore : 90;
       const weightRes = resolveStudentGradeWeight(s.id, currentClassObj?.termId, gradeWeightsMap);
-      const total = (g && g.totalScore !== undefined)
-        ? g.totalScore
-        : calculateTotalGrade(attendanceScore, quiz, mid, fin, hw, attid, weightRes.weights);
+      const total = calculateTotalGrade(attendanceScore, quiz, mid, fin, hw, attid, weightRes.weights);
 
       sum += total;
       if (total >= 60) pass++;
@@ -250,7 +263,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
       passCount: pass,
       failCount: fail,
     };
-  }, [classStudents, localGrades, getStudentAttendanceData, currentClassName, currentClassObj?.termId, gradeWeightsMap]);
+  }, [classStudents, localGrades, getStudentAttendanceData, currentClassName, currentClassObj?.id, currentClassObj?.termId, gradeWeightsMap]);
 
   // Export CSV using unified export helper
   const handleExportCSV = () => {
@@ -460,8 +473,10 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
 
             <tbody className="divide-y divide-slate-100 text-xs">
               {filteredStudents.map((student, index) => {
+                const targetClassId = currentClassObj?.id || student.classId;
+                const gradeKey = targetClassId ? `${student.id}_${targetClassId}` : student.id;
                 const { attResult, attendanceScore } = getStudentAttendanceData(student.id, currentClassName);
-                const existing = localGrades[student.id];
+                const existing = localGrades[gradeKey] || localGrades[student.id];
                 const quiz = existing ? existing.quizScore : 85;
                 const midterm = existing ? existing.midtermScore : 80;
                 const final = existing ? existing.finalScore : 85;
@@ -488,16 +503,13 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                   studentW
                 );
 
-                // Strictly prioritize database persisted totalScore if available and unedited
-                const totalScore = (existing && existing.totalScore !== undefined && !hasUnsavedChanges)
-                  ? Number(existing.totalScore)
-                  : calculatedTotal;
+                const totalScore = calculatedTotal;
 
                 const grade: StudentGrade = {
                   studentId: student.id,
                   studentName: student.name,
                   className: currentClassName,
-                  classId: student.classId,
+                  classId: targetClassId,
                   attendanceScore,
                   quizScore: quiz,
                   midtermScore: midterm,

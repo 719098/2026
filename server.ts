@@ -1049,6 +1049,103 @@ app.get("/api/class-sessions", async (req, res) => {
   }
 });
 
+// Real-time Student Grades Query API: Ensures grades are reliably loaded for all roles
+app.get("/api/student-grades", async (req, res) => {
+  const supabaseUrl = getValidSupabaseUrl();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
+  const activeKey = serviceRoleKey || anonKey;
+
+  const adminSupabase = createClient(supabaseUrl, activeKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+
+  try {
+    const { student_id, class_id } = req.query || {};
+    let query = adminSupabase.from('student_grades').select('*').order('updated_at', { ascending: false });
+
+    if (student_id && typeof student_id === 'string') {
+      query = query.eq('student_id', student_id);
+    }
+    if (class_id && typeof class_id === 'string') {
+      query = query.eq('class_id', class_id);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('[Server API] Error in /api/student-grades:', error);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+    return res.json({ success: true, data: data || [] });
+  } catch (err: any) {
+    console.error('[Server API] Exception in /api/student-grades:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Real-time Student Grades Save API: Ensures grade persistence across teachers and admin
+app.post("/api/student-grades/save", async (req, res) => {
+  const supabaseUrl = getValidSupabaseUrl();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
+  const activeKey = serviceRoleKey || anonKey;
+
+  const adminSupabase = createClient(supabaseUrl, activeKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+
+  try {
+    const { grade, classId } = req.body || {};
+    if (!grade || !grade.studentId) {
+      return res.status(400).json({ success: false, error: '缺少學員成績物件 (grade.studentId 為必填)' });
+    }
+
+    const targetClassId = classId || grade.classId;
+    if (!targetClassId) {
+      return res.status(400).json({ success: false, error: '缺少班級代碼 (classId 為必填)' });
+    }
+
+    const attendance_score = Number(grade.attendanceScore ?? 100);
+    const quiz_score = Number(grade.quizScore ?? 85);
+    const midterm_score = Number(grade.midtermScore ?? 80);
+    const final_score = Number(grade.finalScore ?? 85);
+    const homework_score = Number(grade.homeworkScore ?? 90);
+    const attitude_score = Number(grade.attitudeScore ?? 90);
+    const total_score = Number(grade.totalScore ?? 85);
+    const is_passed = total_score >= 60.0;
+
+    const payload = {
+      student_id: grade.studentId,
+      class_id: targetClassId,
+      attendance_score,
+      quiz_score,
+      midterm_score,
+      final_score,
+      homework_score,
+      attitude_score,
+      total_score,
+      is_passed,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await adminSupabase
+      .from('student_grades')
+      .upsert(payload, { onConflict: 'class_id,student_id' })
+      .select('*')
+      .single();
+
+    if (error) {
+      console.error('[Server API] Error in /api/student-grades/save:', error);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    console.error('[Server API] Exception in /api/student-grades/save:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

@@ -190,9 +190,17 @@ export function getStudentEffectiveGrade(
   allCourses?: CourseSession[],
   transferRecords?: TransferClassRecord[],
   customWeightsMap?: Record<string, StudentGradeWeight>,
-  termId?: string
+  termId?: string,
+  targetClassId?: string
 ): StudentGrade {
-  const existing = allGrades ? allGrades[student.id] : undefined;
+  const classIdToUse = targetClassId || student.classId;
+  const existing = allGrades
+    ? (
+        (classIdToUse ? allGrades[`${student.id}_${classIdToUse}`] : undefined) ||
+        (student.classId ? allGrades[`${student.id}_${student.classId}`] : undefined) ||
+        allGrades[student.id]
+      )
+    : undefined;
   // Prioritize student_id + term_id compound key; only fallback to direct student_id if termId matches or is absent
   const candidate = customWeightsMap
     ? ((termId ? customWeightsMap[`${student.id}_${termId}`] : undefined) || (
@@ -244,16 +252,13 @@ export function getStudentEffectiveGrade(
     customWeight
   );
 
-  // Prioritize database stored totalScore if available to ensure total scores strictly match DB
-  const totalScore = (existing?.totalScore !== undefined && existing?.totalScore !== null)
-    ? Number(existing.totalScore)
-    : calculatedTotal;
+  const totalScore = calculatedTotal;
 
   return {
     studentId: student.id,
     studentName: student.name,
     className: student.className || '',
-    classId: student.classId,
+    classId: classIdToUse || student.classId,
     attendanceScore,
     quizScore,
     midtermScore,

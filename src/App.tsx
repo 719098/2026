@@ -1051,13 +1051,20 @@ export default function App() {
 
     try {
       const gradeArray = Object.values(updatedGrades);
+      const uniqueGrades = new Map<string, StudentGrade>();
       for (const grade of gradeArray) {
+        if (!grade?.studentId) continue;
+        const key = `${grade.studentId}_${grade.classId || ''}`;
+        uniqueGrades.set(key, grade);
+      }
+
+      for (const grade of uniqueGrades.values()) {
         const student = dbStudents.find((s) => String(s.id) === String(grade.studentId));
-        await saveStudentGradeToSupabase(grade, student?.classId);
+        await saveStudentGradeToSupabase(grade, grade.classId || student?.classId);
       }
       showToast('✅ 成績已儲存成功！', 'success');
 
-      // Re-fetch fresh grades from Supabase to ensure DB trigger calculated total_score is synchronized
+      // Re-fetch fresh grades from Supabase to ensure all views have latest DB state
       const freshGrades = await fetchStudentGradesFromSupabase(
         dbStudents,
         adminClasses,
