@@ -162,8 +162,10 @@ export function buildAdminReportsWorkbook(params: AdminReportsExportParams): XLS
     班級名稱: row.cls.name,
     學期: row.termName,
     授課教師: row.teacherName,
-    學生人數: row.studentCount,
+    目前在班人數: row.currentStudentCount,
+    期間曾在班人數: row.periodStudentCount,
     已納入出席評估人數: row.evaluatedStudentCount,
+    '出席評估樣本 (已納入／期間曾在班)': `已納入 ${row.evaluatedStudentCount}／${row.periodStudentCount} 人`,
     平均出席率: formatAttendanceRate(row.averageAttendanceRate, row.evaluatedStudentCount > 0),
     '已排定時數 (H)': row.progress.scheduledHours,
     '已授課時數 (H)': row.progress.deliveredHours,
@@ -178,6 +180,7 @@ export function buildAdminReportsWorkbook(params: AdminReportsExportParams): XLS
     姓名: row.student.name,
     英文姓名: row.student.englishName,
     班級: row.scopedClassName,
+    期間在班狀態: row.enrollmentScopeLabel,
     '應到時數 (H)': row.expectedHours,
     '出席時數 (H)': row.presentHours,
     '請假時數 (H)': row.leaveHours,
@@ -194,8 +197,10 @@ export function buildAdminReportsWorkbook(params: AdminReportsExportParams): XLS
     { 統計項目: '篩選條件－班級', 數值: filterSummary?.classLabel || '全部班級' },
     { 統計項目: '篩選條件－日期區間', 數值: `${filterSummary?.startDate || '不限'} ~ ${filterSummary?.endDate || '不限'}` },
     { 統計項目: '篩選班級數', 數值: schoolSummary.classCount },
+    { 統計項目: '目前在班人數 (去重)', 數值: `${schoolSummary.currentStudents} 人` },
+    { 統計項目: '期間曾在班人數 (去重)', 數值: `${schoolSummary.periodStudents} 人` },
     { 統計項目: '全校平均出席率', 數值: formatAttendanceRate(schoolSummary.averageAttendanceRate, schoolSummary.evaluatedStudents > 0) },
-    { 統計項目: '出席樣本涵蓋人數', 數值: `${schoolSummary.evaluatedStudents} / ${schoolSummary.totalStudents} 人` },
+    { 統計項目: '出席評估樣本 (已納入／期間曾在班)', 數值: `已納入 ${schoolSummary.evaluatedStudents}／${schoolSummary.periodStudents} 人` },
     { 統計項目: '未評估人數 (尚無出席資料)', 數值: `${schoolSummary.unevaluatedStudents} 人` },
     { 統計項目: '缺勤預警學員數 (<80%)', 數值: `${schoolSummary.nonCompliantStudents} 人` },
     { 統計項目: '總已排定時數', 數值: `${schoolSummary.totalScheduledHours} H` },
@@ -211,8 +216,10 @@ export function buildAdminReportsWorkbook(params: AdminReportsExportParams): XLS
     { wch: 18 },
     { wch: 16 },
     { wch: 14 },
-    { wch: 10 },
+    { wch: 14 },
+    { wch: 14 },
     { wch: 18 },
+    { wch: 28 },
     { wch: 12 },
     { wch: 16 },
     { wch: 16 },
@@ -230,6 +237,7 @@ export function buildAdminReportsWorkbook(params: AdminReportsExportParams): XLS
     { wch: 12 },
     { wch: 18 },
     { wch: 16 },
+    { wch: 24 },
     { wch: 12 },
     { wch: 12 },
     { wch: 12 },
@@ -242,7 +250,7 @@ export function buildAdminReportsWorkbook(params: AdminReportsExportParams): XLS
   ];
 
   const wsSummary = XLSX.utils.json_to_sheet(summarySheetRows);
-  wsSummary['!cols'] = [{ wch: 28 }, { wch: 32 }];
+  wsSummary['!cols'] = [{ wch: 32 }, { wch: 32 }];
 
   XLSX.utils.book_append_sheet(wb, wsClasses, '各班級進度與出席統計');
   XLSX.utils.book_append_sheet(wb, wsStudents, '學員出缺勤與成績明細');

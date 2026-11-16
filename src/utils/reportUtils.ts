@@ -52,7 +52,10 @@ export interface ClassReportRow {
   cls: ClassEntity;
   termName: string;
   teacherName: string;
-  studentCount: number;
+  currentStudentCount: number;
+  periodStudentCount: number;
+  transferredOutInPeriodCount: number;
+  studentCount: number; // backward-compatible alias of periodStudentCount
   evaluatedStudentCount: number;
   nonCompliantStudentCount: number;
   averageAttendanceRate: number | null;
@@ -66,6 +69,8 @@ export interface StudentReportRow {
   student: Student;
   scopedClassId?: string;
   scopedClassName: string;
+  enrollmentScopeStatus: 'current' | 'transferred_out' | 'historical';
+  enrollmentScopeLabel: string;
   expectedHours: number;
   presentHours: number;
   leaveHours: number;
@@ -79,7 +84,9 @@ export interface StudentReportRow {
 }
 
 export interface SchoolReportSummary {
-  totalStudents: number;
+  currentStudents: number;
+  periodStudents: number;
+  totalStudents: number; // alias of periodStudents (denominator Y)
   evaluatedStudents: number;
   unevaluatedStudents: number;
   nonCompliantStudents: number;
@@ -278,17 +285,88 @@ export function getClassTeachingProgress(
 }
 
 /**
- * Returns students affiliated with cls (current enrollees + transfer-history/recorded enrollees).
+ * Deduplicates students strictly by id and non-empty studentNumber so transferred students are never counted twice.
+ */
+export function deduplicateStudents(students: Student[] = []): Student[] {
+  const result: Student[] = [];
+  const seenIds = new Set<string>();
+  const seenNumbers = new Set<string>();
+
+  for (const s of students || []) {
+    if (!s || !s.id) continue;
+    const idKey = String(s.id).trim();
+    const numKey = s.studentNumber ? s.studentNumber.trim().toLowerCase() : '';
+    if (seenIds.has(idKey) || (numKey && seenNumbers.has(numKey))) {
+      continue;
+    }
+    seenIds.add(idKey);
+    if (numKey) seenNumbers.add(numKey);
+    result.push(s);
+  }
+  return result;
+}
+
+function isStudentCurrentlyInClass(student: Student, cls: ClassEntity): boolean {
+  return Boolean(
+    (student.classId && String(student.classId) === String(cls.id)) ||
+      (student.className && student.className.trim() === cls.name.trim())
+  );
+}
+
+/**
+ * Returns students currently enrolled in cls (matches「學生分班與轉班」roster 1:1).
+ */
+export function getCurrentClassStudents(
+  cls: ClassEntity,
+  students: Student[] = []
+): Student[] {
+  return deduplicateStudents(
+    (students || []).filter((s) => s && s.id && isStudentCurrentlyInClass(s, cls))
+  );
+}
+
+function resolveEffectiveDateBounds(
+  cls: ClassEntity | undefined,
+  terms: Term[] = [],
+  options?: ReportFilterOptions
+): { startDate?: string; endDate?: string } {
+  const activeTerm = options?.termId && options.termId !== 'ALL'
+    ? terms.find((t) => t.id === options.termId)
+    : cls
+    ? terms.find((t) => (cls.termId && t.id === cls.termId) || (cls.term && t.name === cls.term))
+    : undefined;
+
+  let startDate = options?.startDate || undefined;
+  let endDate = options?.endDate || undefined;
+
+  if (activeTerm?.startDate) {
+    if (!startDate || activeTerm.startDate > startDate) {
+      startDate = activeTerm.startDate;
+    }
+  }
+  if (activeTerm?.endDate) {
+    if (!endDate || activeTerm.endDate < endDate) {
+      endDate = activeTerm.endDate;
+    }
+  }
+  return { startDate, endDate };
+}
+
+/**
+ * Returns deduplicated students who were enrolled in cls during the selected term/date window
+ * (currently enrolled in scope + transferred out/historical period + formal class attendance in window).
  */
 export function getStudentsForClassReport(
   cls: ClassEntity,
   students: Student[] = [],
   allCourses: CourseSession[] = [],
   transferRecords: TransferClassRecord[] = [],
-  options?: ReportFilterOptions
+  options?: ReportFilterOptions,
+  terms: Term[] = []
 ): Student[] {
-  const result: Student[] = [];
-  const added = new Set<string>();
+  const candidates: Student[] = [];
+  const { startDate: effStart, endDate: effEnd } = resolveEffectiveDateBounds(cls, terms, options);
+  const explicitDateFiltered = Boolean(options?.startDate || options?.endDate);
 
   const classSessionHasStudent = (studentId: string) =>
     (allCourses || []).some((c) => {
@@ -297,40 +375,110 @@ export function getStudentsForClassReport(
         (c.classId && String(c.classId) === String(cls.id)) ||
         (c.className && c.className.trim() === cls.name.trim());
       if (!matchClass) return false;
-      if (options?.startDate && c.date < options.startDate) return false;
-      if (options?.endDate && c.date > options.endDate) return false;
+      if (effStart && c.date < effStart) return false;
+      if (effEnd && c.date > effEnd) return false;
       return Boolean(c.attendanceData && c.attendanceData[studentId]);
     });
 
-  for (const s of students || []) {
-    if (!s || !s.id) continue;
-    const isCurrentMember =
-      (s.classId && String(s.classId) === String(cls.id)) ||
-      (s.className && s.className.trim() === cls.name.trim());
+  const hasRawTransferOverlap = (s: Student): boolean => {
+    const rawEvents: Array<{
+      date: string;
+      fromClassId?: string;
+      fromClassName?: string;
+      toClassId?: string;
+      toClassName?: string;
+    }> = [];
 
-    let hadTimelinePeriod = false;
-    if (!isCurrentMember) {
-      const timeline = getStudentClassTimeline(s, transferRecords);
-      hadTimelinePeriod = timeline.some((p) => {
-        const matchCls =
-          (p.classId && String(p.classId) === String(cls.id)) ||
-          (p.className && p.className.trim() === cls.name.trim());
-        if (!matchCls) return false;
-        if (options?.endDate && p.startDate && p.startDate > options.endDate) return false;
-        if (options?.startDate && p.endDate && p.endDate <= options.startDate) return false;
-        return true;
+    (transferRecords || []).forEach((tr) => {
+      if (tr && String(tr.studentId) === String(s.id) && tr.transferDate) {
+        rawEvents.push({
+          date: tr.transferDate,
+          fromClassId: tr.fromClassId ? String(tr.fromClassId) : undefined,
+          fromClassName: tr.fromClassName?.trim(),
+          toClassId: tr.toClassId ? String(tr.toClassId) : undefined,
+          toClassName: tr.toClassName?.trim(),
+        });
+      }
+    });
+
+    if (Array.isArray(s.enrollmentHistory)) {
+      s.enrollmentHistory.forEach((eh: any) => {
+        const d = eh.effective_date || eh.actionDate || eh.date;
+        if (!d) return;
+        rawEvents.push({
+          date: d,
+          fromClassId: eh.fromClassId || eh.from_class_id ? String(eh.fromClassId || eh.from_class_id) : undefined,
+          fromClassName: (eh.fromClass || eh.from_class_name || '').trim() || undefined,
+          toClassId: eh.toClassId || eh.to_class_id ? String(eh.toClassId || eh.to_class_id) : undefined,
+          toClassName: (eh.toClass || eh.to_class_name || '').trim() || undefined,
+        });
       });
     }
 
-    if (isCurrentMember || hadTimelinePeriod || classSessionHasStudent(s.id)) {
-      if (!added.has(s.id)) {
-        added.add(s.id);
-        result.push(s);
+    return rawEvents.some((ev) => {
+      const matchesFrom =
+        (ev.fromClassId && ev.fromClassId === String(cls.id)) ||
+        (ev.fromClassName && ev.fromClassName === cls.name.trim());
+      const matchesTo =
+        (ev.toClassId && ev.toClassId === String(cls.id)) ||
+        (ev.toClassName && ev.toClassName === cls.name.trim());
+
+      if (matchesFrom) {
+        // Student was in cls up until ev.date (excluded if they already left on or before effStart)
+        if (effStart && ev.date <= effStart) return false;
+        // If explicit endDate precedes ev.date and student also has a known start after effEnd, skip
+        const knownStart = s.admissionDate || s.registrationStartDate;
+        if (effEnd && knownStart && knownStart > effEnd) return false;
+        return true;
       }
+
+      if (matchesTo) {
+        if (effEnd && ev.date > effEnd) return false;
+        return true;
+      }
+
+      return false;
+    });
+  };
+
+  for (const s of students || []) {
+    if (!s || !s.id) continue;
+    const isCurrentMember = isStudentCurrentlyInClass(s, cls);
+
+    if (isCurrentMember) {
+      let excludedByExplicitDateWindow = false;
+      if (explicitDateFiltered) {
+        const memberStart = s.joinedAt || s.admissionDate || s.registrationStartDate;
+        if (options?.endDate && memberStart && memberStart > options.endDate) {
+          excludedByExplicitDateWindow = true;
+        }
+        if (options?.startDate && s.droppedAt && s.droppedAt <= options.startDate) {
+          excludedByExplicitDateWindow = true;
+        }
+      }
+      if (!excludedByExplicitDateWindow) {
+        candidates.push(s);
+        continue;
+      }
+    }
+
+    const timeline = getStudentClassTimeline(s, transferRecords);
+    const hadTimelinePeriod = timeline.some((p) => {
+      const matchCls =
+        (p.classId && String(p.classId) === String(cls.id)) ||
+        (p.className && p.className.trim() === cls.name.trim());
+      if (!matchCls) return false;
+      if (effEnd && p.startDate && p.startDate > effEnd) return false;
+      if (effStart && p.endDate && p.endDate <= effStart) return false;
+      return true;
+    });
+
+    if (hadTimelinePeriod || hasRawTransferOverlap(s) || classSessionHasStudent(s.id)) {
+      candidates.push(s);
     }
   }
 
-  return result;
+  return deduplicateStudents(candidates);
 }
 
 export function buildAdminReportData(params: {
@@ -375,9 +523,28 @@ export function buildAdminReportData(params: {
     return true;
   });
 
+  const currentClassStudentMap = new Map<string, Student[]>();
+  const periodClassStudentMap = new Map<string, Student[]>();
+
   const classRows: ClassReportRow[] = filteredClasses.map((cls) => {
     const progress = getClassTeachingProgress(cls, allCourses, classes, terms, filters);
-    const clsStudents = getStudentsForClassReport(cls, students, allCourses, transferRecords, filters);
+    const currentStudents = getCurrentClassStudents(cls, students);
+    const periodStudents = getStudentsForClassReport(
+      cls,
+      students,
+      allCourses,
+      transferRecords,
+      filters,
+      terms
+    );
+    currentClassStudentMap.set(String(cls.id), currentStudents);
+    periodClassStudentMap.set(String(cls.id), periodStudents);
+
+    const currentStudentIdSet = new Set(currentStudents.map((s) => String(s.id)));
+    const transferredOutInPeriodCount = periodStudents.filter(
+      (s) => !currentStudentIdSet.has(String(s.id))
+    ).length;
+
     const clsTerm = terms.find((t) => (cls.termId && t.id === cls.termId) || (cls.term && t.name === cls.term));
 
     let evaluatedCount = 0;
@@ -385,7 +552,7 @@ export function buildAdminReportData(params: {
     let rateSum = 0;
     let scoreSum = 0;
 
-    clsStudents.forEach((s) => {
+    periodStudents.forEach((s) => {
       const hist = calculateStudentAttendanceHistory(s, allCourses, transferRecords, {
         classId: cls.id,
         className: cls.name,
@@ -396,7 +563,7 @@ export function buildAdminReportData(params: {
         terms,
         requiredHoursOverride: progress.targetHours > 0 ? progress.targetHours : undefined,
       });
-      if (hist.hasAttendanceData && hist.attendanceRate !== null) {
+      if (hist.hasAttendanceData && hist.completedHours > 0 && hist.attendanceRate !== null) {
         evaluatedCount++;
         rateSum += hist.attendanceRate;
         if (hist.attendanceScore !== null) scoreSum += hist.attendanceScore;
@@ -424,7 +591,10 @@ export function buildAdminReportData(params: {
       cls,
       termName: clsTerm?.name || cls.term || '未設定學期',
       teacherName: cls.teacherName ? `${cls.teacherName}` : '未指派教師',
-      studentCount: clsStudents.length,
+      currentStudentCount: currentStudents.length,
+      periodStudentCount: periodStudents.length,
+      transferredOutInPeriodCount,
+      studentCount: periodStudents.length,
       evaluatedStudentCount: evaluatedCount,
       nonCompliantStudentCount: nonCompliantCount,
       averageAttendanceRate,
@@ -435,26 +605,36 @@ export function buildAdminReportData(params: {
     };
   });
 
-  // Determine student rows scoped identically to active filters
+  // Determine deduplicated school/scoped current & period student lists
   const scopedClass = activeClassId
     ? filteredClasses[0] || classes.find((c) => c.id === activeClassId || c.name === activeClassId)
     : undefined;
 
+  let currentScopedStudents: Student[] = [];
   let targetStudents: Student[] = [];
+
   if (scopedClass) {
-    targetStudents = getStudentsForClassReport(scopedClass, students, allCourses, transferRecords, filters);
-  } else if (activeTermId) {
-    const seen = new Set<string>();
-    filteredClasses.forEach((cls) => {
-      getStudentsForClassReport(cls, students, allCourses, transferRecords, filters).forEach((s) => {
-        if (!seen.has(s.id)) {
-          seen.add(s.id);
-          targetStudents.push(s);
-        }
-      });
-    });
+    currentScopedStudents =
+      currentClassStudentMap.get(String(scopedClass.id)) ||
+      getCurrentClassStudents(scopedClass, students);
+    targetStudents =
+      periodClassStudentMap.get(String(scopedClass.id)) ||
+      getStudentsForClassReport(scopedClass, students, allCourses, transferRecords, filters, terms);
+  } else if (activeTermId || filters.startDate || filters.endDate) {
+    currentScopedStudents = deduplicateStudents(
+      filteredClasses.flatMap((cls) => currentClassStudentMap.get(String(cls.id)) || [])
+    );
+    targetStudents = deduplicateStudents(
+      filteredClasses.flatMap((cls) => periodClassStudentMap.get(String(cls.id)) || [])
+    );
   } else {
-    targetStudents = [...students];
+    currentScopedStudents = deduplicateStudents(
+      filteredClasses.flatMap((cls) => currentClassStudentMap.get(String(cls.id)) || [])
+    );
+    targetStudents = deduplicateStudents([
+      ...filteredClasses.flatMap((cls) => periodClassStudentMap.get(String(cls.id)) || []),
+      ...students,
+    ]);
   }
 
   const studentRows: StudentReportRow[] = targetStudents.map((student) => {
@@ -470,6 +650,24 @@ export function buildAdminReportData(params: {
       classes,
       terms,
     });
+
+    let enrollmentScopeStatus: 'current' | 'transferred_out' | 'historical' = 'current';
+    let enrollmentScopeLabel = '目前在班';
+    if (scopedClass) {
+      const isCurrInScoped = isStudentCurrentlyInClass(student, scopedClass);
+      if (!isCurrInScoped) {
+        if (student.className && student.className !== '尚未分班') {
+          enrollmentScopeStatus = 'transferred_out';
+          enrollmentScopeLabel = `已轉出（現屬 ${student.className}）`;
+        } else {
+          enrollmentScopeStatus = 'historical';
+          enrollmentScopeLabel = '期間曾在班（目前未分班）';
+        }
+      }
+    } else if (!student.classId && !student.className) {
+      enrollmentScopeStatus = 'historical';
+      enrollmentScopeLabel = '尚未分班';
+    }
 
     const termIdForGrade = activeTermId || studentClassObj?.termId;
     const classIdForGrade = scopedClass?.id || student.classId;
@@ -516,11 +714,13 @@ export function buildAdminReportData(params: {
       student,
       scopedClassId: scopedClass?.id || student.classId,
       scopedClassName: scopedClass?.name || student.className || '尚未分班',
+      enrollmentScopeStatus,
+      enrollmentScopeLabel,
       expectedHours: hist.completedHours,
       presentHours: hist.presentHours,
       leaveHours: hist.leaveHours,
       absentHours: hist.absentHours,
-      hasAttendanceData: hist.hasAttendanceData,
+      hasAttendanceData: hist.hasAttendanceData && hist.completedHours > 0,
       attendanceRate: hist.attendanceRate,
       attendanceScore: hist.attendanceScore,
       complianceStatus: hist.complianceStatus,
@@ -529,7 +729,9 @@ export function buildAdminReportData(params: {
     };
   });
 
-  const evaluatedRows = studentRows.filter((r) => r.hasAttendanceData && r.attendanceRate !== null);
+  const evaluatedRows = studentRows.filter(
+    (r) => r.hasAttendanceData && r.expectedHours > 0 && r.attendanceRate !== null
+  );
   const averageAttendanceRate =
     evaluatedRows.length > 0
       ? Math.round(
@@ -538,6 +740,8 @@ export function buildAdminReportData(params: {
       : null;
 
   const schoolSummary: SchoolReportSummary = {
+    currentStudents: currentScopedStudents.length,
+    periodStudents: studentRows.length,
     totalStudents: studentRows.length,
     evaluatedStudents: evaluatedRows.length,
     unevaluatedStudents: studentRows.length - evaluatedRows.length,

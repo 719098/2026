@@ -490,7 +490,7 @@ export default function App() {
         syncedStudents = data.map((s) => {
           const history = calculateStudentAttendanceHistory(s, activeSessions || [], fetchedTransfers || [], {
             classes: currentClasses,
-            terms: adminTerms,
+            terms: fetchedTerms,
           });
           return {
             ...s,

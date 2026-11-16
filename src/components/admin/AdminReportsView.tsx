@@ -297,7 +297,7 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
               <Filter className="w-4 h-4 text-[#536B7A]" />
               <span>報表統計篩選條件</span>
               <span className="text-[11px] font-normal text-[#66717C]">
-                （共 {filteredClasses.length} 班 / {studentRows.length} 位學員）
+                （共 {filteredClasses.length} 班 / 目前在班 {schoolSummary.currentStudents} 人・期間曾在班 {schoolSummary.periodStudents} 人）
               </span>
             </div>
 
@@ -427,10 +427,19 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
               >
                 {formatAttendanceRate(schoolSummary.averageAttendanceRate, schoolSummary.evaluatedStudents > 0)}
               </div>
-              <div className="text-[11px] text-slate-500 mt-1">
-                {schoolSummary.evaluatedStudents > 0
-                  ? `已納入 ${schoolSummary.evaluatedStudents}／${schoolSummary.totalStudents} 人（排除 ${schoolSummary.unevaluatedStudents} 位尚無出席資料者）`
-                  : `尚無正式出席資料（共 ${schoolSummary.totalStudents} 人未評估）`}
+              <div className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                {schoolSummary.evaluatedStudents > 0 ? (
+                  <>
+                    出席評估樣本：<strong className="font-mono text-[#26313B]">已納入 {schoolSummary.evaluatedStudents}／{schoolSummary.periodStudents} 人</strong>
+                    <span className="block text-[10px] text-slate-400 mt-0.5">
+                      母數為「期間曾在班人數」（目前在班 {schoolSummary.currentStudents} 人・依學生 ID／學號去重；排除 {schoolSummary.unevaluatedStudents} 位尚無出席資料者）
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    尚無正式出席資料（期間曾在班 {schoolSummary.periodStudents} 人／目前在班 {schoolSummary.currentStudents} 人皆未評估）
+                  </>
+                )}
               </div>
             </div>
 
@@ -466,18 +475,20 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
               <div>
                 <h3 className="text-sm font-bold text-[#26313B]">各班級授課進度與出席統計表</h3>
                 <p className="text-[11px] text-[#66717C] mt-0.5">
-                  已排除停課／取消與已調出原堂次；補課／調入堂次不重複計入。平均出席率自動排除尚未有出席紀錄之學員。
+                  「目前在班人數」與「學生分班與轉班」名冊一致；「期間曾在班人數」依選定學期、日期區間與轉班歷史去重計算；「出席評估樣本」母數 Y 為期間曾在班人數。已排除停課／取消與已調出原堂次。
                 </p>
               </div>
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[920px] text-left text-xs border-collapse">
+              <table className="w-full min-w-[1060px] text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-[#F8FAFC] text-[#66717C] font-semibold border-b border-[#DCE2E6]">
                     <th className="py-2.5 px-3">班級名稱</th>
                     <th className="py-2.5 px-3">授課教師</th>
-                    <th className="py-2.5 px-3 text-right">學生人數 / 評估樣本</th>
+                    <th className="py-2.5 px-3 text-right">目前在班人數</th>
+                    <th className="py-2.5 px-3 text-right">期間曾在班人數</th>
+                    <th className="py-2.5 px-3 text-right">出席評估樣本</th>
                     <th className="py-2.5 px-3 text-right">平均出席率</th>
                     <th className="py-2.5 px-3 text-right">已排定時數</th>
                     <th className="py-2.5 px-3 text-right">已授課時數</th>
@@ -489,7 +500,7 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
                 <tbody className="divide-y divide-[#F0F4F7]">
                   {classRows.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="py-8 text-center text-slate-400">
+                      <td colSpan={11} className="py-8 text-center text-slate-400">
                         查無符合條件的班級資料
                       </td>
                     </tr>
@@ -502,9 +513,22 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
                         </td>
                         <td className="py-2.5 px-3 text-slate-600">{row.teacherName}</td>
                         <td className="py-2.5 px-3 text-right font-mono">
-                          <span className="font-bold text-[#26313B]">{row.studentCount} 人</span>
-                          <div className="text-[10px] text-slate-500">
-                            已納入 {row.evaluatedStudentCount}／{row.studentCount} 人
+                          <span className="font-bold text-[#26313B]">{row.currentStudentCount} 人</span>
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono">
+                          <span className="font-bold text-[#26313B]">{row.periodStudentCount} 人</span>
+                          {row.transferredOutInPeriodCount > 0 && (
+                            <div className="text-[10px] text-amber-700 font-sans">
+                              含轉出／異動 {row.transferredOutInPeriodCount} 人
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono">
+                          <span className="font-semibold text-[#26313B]">
+                            已納入 {row.evaluatedStudentCount}／{row.periodStudentCount} 人
+                          </span>
+                          <div className="text-[10px] text-slate-400 font-sans">
+                            母數：期間曾在班人數
                           </div>
                         </td>
                         <td
@@ -609,7 +633,18 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
                             {row.student.studentNumber} • {row.student.englishName}
                           </div>
                         </td>
-                        <td className="py-2.5 px-3 text-slate-700 font-medium">{row.scopedClassName}</td>
+                        <td className="py-2.5 px-3">
+                          <div className="text-slate-700 font-medium">{row.scopedClassName}</div>
+                          <div
+                            className={`text-[10px] mt-0.5 ${
+                              row.enrollmentScopeStatus === 'current'
+                                ? 'text-slate-400'
+                                : 'text-amber-700 font-semibold'
+                            }`}
+                          >
+                            {row.enrollmentScopeLabel}
+                          </div>
+                        </td>
                         <td className="py-2.5 px-3 text-right font-mono text-slate-700">{row.expectedHours}H</td>
                         <td className="py-2.5 px-3 text-right font-mono text-emerald-700 font-semibold">
                           {row.presentHours}H

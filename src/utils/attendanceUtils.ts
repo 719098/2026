@@ -436,6 +436,91 @@ export function calculateStudentAttendanceHistory(
     '預設班級',
   ];
 
+  const studentTransfers = (Array.isArray(transferRecords) ? transferRecords : [])
+    .filter((tr) => tr && String(tr.studentId) === String(student.id) && tr.transferDate)
+    .map((tr) => ({
+      date: tr.transferDate,
+      fromClassId: tr.fromClassId ? String(tr.fromClassId) : undefined,
+      fromClassName: tr.fromClassName ? tr.fromClassName.trim() : undefined,
+      toClassId: tr.toClassId ? String(tr.toClassId) : undefined,
+      toClassName: tr.toClassName ? tr.toClassName.trim() : undefined,
+    }));
+
+  if (Array.isArray(student.enrollmentHistory)) {
+    student.enrollmentHistory.forEach((eh: any) => {
+      const d = eh.effective_date || eh.actionDate || eh.date;
+      const fromId = eh.fromClassId || eh.from_class_id;
+      const fromName = eh.fromClass || eh.from_class_name;
+      const toId = eh.toClassId || eh.to_class_id;
+      const toName = eh.toClass || eh.to_class_name;
+      if (d && (fromId || fromName || toId || toName)) {
+        const exists = studentTransfers.some(
+          (t) =>
+            t.date === d &&
+            t.fromClassId === (fromId ? String(fromId) : undefined) &&
+            t.toClassId === (toId ? String(toId) : undefined)
+        );
+        if (!exists) {
+          studentTransfers.push({
+            date: d,
+            fromClassId: fromId ? String(fromId) : undefined,
+            fromClassName: fromName ? String(fromName).trim() : undefined,
+            toClassId: toId ? String(toId) : undefined,
+            toClassName: toName ? String(toName).trim() : undefined,
+          });
+        }
+      }
+    });
+  }
+  studentTransfers.sort((a, b) => a.date.localeCompare(b.date));
+
+  const isSessionAllowedForTransferScope = (
+    sessionDate: string,
+    sessionClassId?: string,
+    sessionClassName?: string
+  ): boolean => {
+    const cleanClsName = (sessionClassName || '').trim();
+    const sCid = sessionClassId ? String(sessionClassId) : undefined;
+
+    if (student.droppedAt && sessionDate >= student.droppedAt) {
+      return false;
+    }
+
+    const matchingPeriods = timeline.filter((p) => {
+      if (sCid && p.classId) return String(p.classId) === sCid;
+      if (cleanClsName && p.className) return p.className.trim() === cleanClsName;
+      return false;
+    });
+
+    if (matchingPeriods.length > 0) {
+      // If student has transfer boundaries, strictly enforce period [startDate, endDate)
+      if (studentTransfers.length > 0) {
+        return isStudentInSessionClass(sessionDate, sCid, cleanClsName, timeline);
+      }
+      // Non-transferred student: enforce endDate if any, allow genuine pre-joinedAt explicit records
+      return matchingPeriods.some((p) => !p.endDate || sessionDate < p.endDate);
+    }
+
+    // No matching period in timeline: if student transferred out of this class before earliest transfer
+    // (when fromStart was absent), allow strictly < first transferDate out of this class
+    if (studentTransfers.length > 0) {
+      const firstFromThisClass = studentTransfers.find((t) => {
+        if (sCid && t.fromClassId) return t.fromClassId === sCid;
+        if (cleanClsName && t.fromClassName) return t.fromClassName === cleanClsName;
+        return false;
+      });
+      if (firstFromThisClass) {
+        return sessionDate < firstFromThisClass.date;
+      }
+      // If timeline covers another class on this date, reject foreign class record
+      if (timeline.some((p) => (!p.startDate || sessionDate >= p.startDate) && (!p.endDate || sessionDate < p.endDate))) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   safeCourses.forEach((c) => {
     if (!c || !c.date) return;
     if (!doesSessionMatchOptions(c, options)) return;
@@ -492,6 +577,11 @@ export function calculateStudentAttendanceHistory(
     if (c.status === 'in_progress') return;
     const rec = c.attendanceData ? c.attendanceData[student.id] : undefined;
     if (!rec || !(rec.period1 || rec.period2 || rec.period3 || rec.period4)) {
+      return;
+    }
+
+    // Strictly ensure transferred student attendance in a class only counts during actual enrollment in that class
+    if (!isSessionAllowedForTransferScope(c.date, c.classId, cleanClassName)) {
       return;
     }
 
