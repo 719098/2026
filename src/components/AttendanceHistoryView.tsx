@@ -149,16 +149,9 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
       <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-teal-50 text-teal-800 border border-teal-200 mb-2">
-              <ClipboardList className="w-3.5 h-3.5 shrink-0" />
-              <span>點名紀錄存檔中心 {currentTeacher ? `• ${currentTeacher.name} 老師` : ''}</span>
-            </div>
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              學期點名日誌與紀錄查閱
+              點名紀錄與補點名
             </h1>
-            <p className="text-xs text-slate-500 mt-1">
-              查閱各授課班級點名歷史紀錄、分節出席明細，並支援匯出教育部與中心評鑑格式報表。
-            </p>
           </div>
 
           <button
@@ -255,28 +248,28 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
 
                   <div className="flex flex-col items-end gap-1 shrink-0">
                     {course.isCancelled || course.status === 'holiday' ? (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
-                        ❌ 已停課
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                        停課
                       </span>
                     ) : isCompleted ? (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                        🟢 已完成
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        已完成
                       </span>
                     ) : isRescheduledOut ? (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                        ⚠️ 已調課
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                        已調出
                       </span>
                     ) : isRescheduledIn ? (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
-                        🔵 補課堂次
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
+                        補課堂次
                       </span>
                     ) : isLocked ? (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-200 text-slate-700 border border-slate-300">
-                        🔒 已鎖定
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-200 text-slate-700 border border-slate-300">
+                        已鎖定
                       </span>
                     ) : (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                        🟠 待補點名
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                        待補點名
                       </span>
                     )}
 
@@ -426,28 +419,28 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
                     <td className="py-3.5 px-3 text-center">
                       <div className="flex flex-col items-center gap-1">
                         {course.isCancelled || course.status === 'holiday' ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
-                            ❌ 已停課
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                            停課
                           </span>
                         ) : isCompleted ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                            🟢 已完成
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            已完成
                           </span>
                         ) : isRescheduledOut ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                            ⚠️ 已調課
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                            已調出
                           </span>
                         ) : isRescheduledIn ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
-                            🔵 補課堂次
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
+                            補課堂次
                           </span>
                         ) : isLocked ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-200 text-slate-700 border border-slate-300">
-                            🔒 已鎖定
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-200 text-slate-700 border border-slate-300">
+                            已鎖定
                           </span>
                         ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                            🟠 待補點名
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                            待補點名
                           </span>
                         )}
                         {activeReq && activeReq.status === 'PENDING' && (

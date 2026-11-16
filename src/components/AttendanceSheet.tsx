@@ -463,7 +463,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
               </span>
               {course.rescheduleInfo && (
                 <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-100 text-blue-800 border border-blue-200 max-w-full break-words">
-                  🔵 補課／調課堂次（原定 {course.rescheduleInfo.originalDate}）
+                  補課堂次（原定 {course.rescheduleInfo.originalDate}）
                 </span>
               )}
             </div>
@@ -490,24 +490,25 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
           <div className="flex flex-col items-start md:items-end justify-center max-w-full">
             {isUnlockedByMakeup ? (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 max-w-full text-center sm:text-left">
-                ✓ 補點名已核准（單次修改開放中）
+                補點名已核准（單次有效）
               </span>
             ) : isOverdue ? (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-slate-200 text-slate-700 border border-slate-300 max-w-full">
                 <Lock className="w-3.5 h-3.5 mr-1 shrink-0" />
-                <span>🔒 已超過補點名期限 (逾七天鎖定)</span>
+                <span>逾 7 天已鎖定</span>
               </span>
             ) : isReadOnly ? (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-slate-200 text-slate-700 max-w-full">
-                🔒 僅供檢視紀錄
+                <Lock className="w-3.5 h-3.5 mr-1 shrink-0" />
+                <span>僅供檢視</span>
               </span>
             ) : course.status === 'completed' ? (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 max-w-full">
-                🟢 已完成狀態 (可再次修改更新)
+                已完成點名（可修改）
               </span>
             ) : (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300 max-w-full">
-                🟠 待點名 / 點名編輯中
+                {course.status === 'in_progress' ? '草稿暫存（未送出）' : '待點名'}
               </span>
             )}
           </div>
@@ -515,68 +516,60 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
 
         {/* Invalid schedule or hard-lock banner */}
         {!hasValidSchedule && !isHardLocked && (
-          <div className="mt-4 p-3.5 rounded-xl border bg-rose-50 border-rose-200 text-rose-900 flex items-start space-x-2.5 text-xs">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
-            <div>
-              <div className="font-bold">此堂課排課節數或上課時間設定不完整</div>
-              <div className="text-[11px] text-rose-800 mt-0.5">
-                僅支援排定明確上課起訖時間與 2 / 3 / 4 小時制之課堂進行點名或補點名申請，請聯繫中心行政人員確認課表。
-              </div>
-            </div>
+          <div className="mt-3 p-3 rounded-xl border bg-rose-50 border-rose-200 text-rose-900 flex items-center space-x-2 text-xs font-semibold">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+            <span>
+              排課節數（僅支援 2/3/4 小時制）或起訖時間設定不完整，請聯繫行政端確認。
+            </span>
           </div>
         )}
 
         {/* Over-7-Day Lock / Makeup Request Banner */}
         {isOverdue && !isHardLocked && !explicitReadOnly && hasValidSchedule && (
           <div
-            className={`mt-4 p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+            className={`mt-3 p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${
               isUnlockedByMakeup
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                 : 'bg-amber-50 border-amber-200 text-amber-950'
             }`}
           >
-            <div className="flex items-start space-x-2.5 text-xs">
+            <div className="flex items-start space-x-2 text-xs min-w-0">
               <AlertCircle
                 className={`w-4 h-4 shrink-0 mt-0.5 ${
                   isUnlockedByMakeup ? 'text-emerald-600' : 'text-amber-600'
                 }`}
               />
-              <div className="space-y-1">
+              <div className="space-y-0.5 min-w-0">
                 {isUnlockedByMakeup ? (
-                  <>
-                    <div className="font-bold">
-                      管理員已核准您的補點名申請（單次有效）
-                    </div>
-                    <div className="text-[11px] text-emerald-800">
-                      本次修改儲存成功後，系統將自動重新鎖定本堂點名紀錄並留下異動稽核紀錄。
-                      {activeApprovedRequest?.reviewNotes
-                        ? ` 審核備註：${activeApprovedRequest.reviewNotes}`
-                        : ''}
-                    </div>
-                  </>
+                  <div className="font-bold break-words">
+                    已核准單次補點名，送出後自動鎖定並留存稽核。
+                    {activeApprovedRequest?.reviewNotes
+                      ? `（審核備註：${activeApprovedRequest.reviewNotes}）`
+                      : ''}
+                  </div>
                 ) : (
                   <>
                     <div className="font-bold">
-                      此課堂已超過可直接修改期限，如需補點名或修改紀錄，請提出申請。
+                      已逾 7 天補點期限，需提出補點名申請。
                     </div>
                     {isApprovedByOtherRequester && (
                       <div className="text-[11px] font-semibold text-amber-800">
-                        此課堂已有其他申請人取得單次補點名核准，僅原申請人或管理員可送出。
+                        已由其他申請人取得單次核准，僅原申請人或管理員可送出。
                       </div>
                     )}
                     {pendingMakeupRequest && (
                       <div className="text-[11px] font-semibold text-amber-800">
-                        審核狀態：待管理員審核中（申請類型：{pendingMakeupRequest.requestType === 'EDIT' ? '修改既有點名' : '補點名'}）
+                        審核中（{pendingMakeupRequest.requestType === 'EDIT' ? '修改既有點名' : '補點名'}）
                       </div>
                     )}
                     {!pendingMakeupRequest && latestRejectedRequest && (
-                      <div className="text-[11px] font-semibold text-rose-700">
-                        前次申請已駁回{latestRejectedRequest.reviewNotes ? `（原因：${latestRejectedRequest.reviewNotes}）` : ''}，您可重新提出申請。
+                      <div className="text-[11px] font-semibold text-rose-700 break-words">
+                        前次申請已駁回{latestRejectedRequest.reviewNotes ? `（原因：${latestRejectedRequest.reviewNotes}）` : ''}，可重新申請。
                       </div>
                     )}
                     {!pendingMakeupRequest && latestCompletedRequest && (
                       <div className="text-[11px] font-semibold text-slate-600">
-                        前次核准補點名已於 {latestCompletedRequest.usedAt ? latestCompletedRequest.usedAt.slice(0, 16).replace('T', ' ') : ''} 使用完畢並重新鎖定。
+                        前次核准已於 {latestCompletedRequest.usedAt ? latestCompletedRequest.usedAt.slice(0, 16).replace('T', ' ') : ''} 核銷鎖定。
                       </div>
                     )}
                   </>
@@ -596,7 +589,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                 }}
                 className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold shrink-0 transition-colors cursor-pointer bg-amber-600 hover:bg-amber-700 text-white disabled:bg-slate-300 disabled:text-slate-600 disabled:cursor-not-allowed text-center"
               >
-                {pendingMakeupRequest ? '審核中（不可重複申請）' : '申請補點名'}
+                {pendingMakeupRequest ? '審核中' : '申請補點名'}
               </button>
             )}
           </div>
@@ -623,19 +616,10 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                 id="btn-apply-leaves"
                 onClick={handleApplyApprovedLeaves}
                 className="flex-1 sm:flex-none flex items-center justify-center space-x-1.5 px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-xl font-bold text-xs transition-colors shadow-2xs"
-                title="自動將今日已核准之請假單套用至學生節次"
+                title="套用已核准請假"
               >
                 <FileText className="w-4 h-4 text-blue-600 shrink-0" />
-                <span>依請假名單一鍵套用 ({applicableLeaves.length} 筆)</span>
-              </button>
-
-              <button
-                onClick={handleSetAllPresent}
-                className="flex items-center justify-center space-x-1 px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-xl font-medium text-xs transition-colors"
-                title="重設所有狀態為預設值"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>重設</span>
+                <span>套用核准請假 ({applicableLeaves.length})</span>
               </button>
             </>
           )}
@@ -657,7 +641,6 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
       {selectedStudentIds.size > 0 && !isReadOnly && (
         <div className="bg-teal-50 border border-teal-200 rounded-2xl p-3 sm:p-3.5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3 shadow-2xs animate-in fade-in duration-200">
           <div className="flex items-center space-x-2 text-teal-900 font-bold text-xs">
-            <span className="w-2.5 h-2.5 rounded-full bg-teal-500 animate-pulse shrink-0" />
             <span>已選取 {selectedStudentIds.size} 位學生（共 {filteredStudents.length} 位）</span>
           </div>
           <div className="flex items-center flex-wrap gap-2 text-xs">

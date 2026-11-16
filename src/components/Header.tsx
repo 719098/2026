@@ -27,6 +27,12 @@ interface HeaderProps {
   selectedDate: string;
   onJumpToDate: (date: string) => void;
   pendingAttendanceCount: number;
+  teacherTodayTotalCount?: number;
+  teacherTodayActiveCount?: number;
+  isTeacherDataLoading?: boolean;
+  hasTeacherDataLoaded?: boolean;
+  teacherDataError?: string | null;
+  isViewingToday?: boolean;
   currentTeacher?: Teacher | null;
   teachers?: Teacher[];
   onSelectTeacher?: (teacher: Teacher) => void;
@@ -40,12 +46,64 @@ export const Header: React.FC<HeaderProps> = ({
   title,
   subtitle,
   pendingAttendanceCount,
+  teacherTodayTotalCount = 0,
+  teacherTodayActiveCount = 0,
+  isTeacherDataLoading = false,
+  hasTeacherDataLoaded = true,
+  teacherDataError = null,
+  isViewingToday = true,
   currentTeacher,
   onOpenMobileMenu,
   adminProfile,
   onLogout,
 }) => {
   const isRoleAdmin = currentRole === 'ADMIN';
+
+  const renderTeacherStatusBadge = () => {
+    if (isRoleAdmin) return null;
+    if (teacherDataError && !isTeacherDataLoading) {
+      return (
+        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200 shrink-0">
+          載入失敗
+        </span>
+      );
+    }
+    if (!hasTeacherDataLoaded || (isTeacherDataLoading && teacherTodayTotalCount === 0)) {
+      return (
+        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-medium bg-slate-100 text-slate-600 border border-slate-200 shrink-0">
+          課程載入中…
+        </span>
+      );
+    }
+    if (teacherTodayTotalCount === 0) {
+      return (
+        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-medium bg-slate-100 text-slate-600 border border-slate-200 shrink-0">
+          {isViewingToday ? '今日未安排課程' : '該日未安排課程'}
+        </span>
+      );
+    }
+    if (teacherTodayActiveCount === 0) {
+      return (
+        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-medium bg-slate-100 text-slate-600 border border-slate-200 shrink-0">
+          今日無需點名
+        </span>
+      );
+    }
+    if (pendingAttendanceCount > 0) {
+      return (
+        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-medium bg-[#E8EEF2] text-[#26313B] border border-[#C9D1D7] shrink-0">
+          <Clock className="w-3 h-3 mr-1 text-[#536B7A]" />
+          待點名 {pendingAttendanceCount} 堂
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200 shrink-0">
+        <CheckCircle2 className="w-3 h-3 mr-1 text-emerald-600" />
+        全部完成 ✓
+      </span>
+    );
+  };
 
   return (
     <header className="min-h-16 py-1.5 sm:py-0 sm:h-16 bg-white border-b border-[#DCE2E6] px-3 sm:px-6 flex items-center justify-between gap-2 shrink-0 z-20 relative">
@@ -79,19 +137,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
           <h2 className="text-xs sm:text-base font-bold text-[#26313B] flex items-center flex-wrap gap-1 sm:gap-2 mt-0.5 min-w-0">
             <span className="truncate max-w-[140px] sm:max-w-none">{title}</span>
-            {!isRoleAdmin && (
-              pendingAttendanceCount > 0 ? (
-                <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-medium bg-[#E8EEF2] text-[#26313B] border border-[#C9D1D7] shrink-0">
-                  <Clock className="w-3 h-3 mr-1 text-[#536B7A]" />
-                  {pendingAttendanceCount} 堂待點名
-                </span>
-              ) : (
-                <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200 shrink-0">
-                  <CheckCircle2 className="w-3 h-3 mr-1 text-emerald-600" />
-                  今日已完成
-                </span>
-              )
-            )}
+            {renderTeacherStatusBadge()}
           </h2>
           {subtitle && (
             <p className="text-[11px] text-[#66717C] truncate hidden sm:block mt-0.5">

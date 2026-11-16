@@ -1216,24 +1216,28 @@ export default function App() {
       (c) =>
         c.date < today &&
         c.date >= sevenDaysAgo &&
-        c.status === 'unmarked' &&
+        (c.status === 'unmarked' || c.status === 'in_progress' || c.status === 'rescheduled_in') &&
         !c.isLocked &&
         !c.isCancelled &&
         !c.isSuspended &&
-        c.status !== 'holiday'
+        c.status !== 'holiday' &&
+        c.status !== 'rescheduled_out'
     );
   }, [teacherCourses]);
 
-  const pendingCountForHeader = useMemo(() => {
+  const activeDayCourses = useMemo(() => {
     return currentDayCourses.filter(
       (c) =>
-        (c.status === 'unmarked' || c.status === 'in_progress') &&
-        !c.isLocked &&
         !c.isCancelled &&
         !c.isSuspended &&
-        c.status !== 'holiday'
-    ).length;
+        c.status !== 'holiday' &&
+        c.status !== 'rescheduled_out'
+    );
   }, [currentDayCourses]);
+
+  const pendingCountForHeader = useMemo(() => {
+    return activeDayCourses.filter((c) => c.status !== 'completed').length;
+  }, [activeDayCourses]);
 
   const pendingLeaveCount = useMemo(() => {
     return adminLeaves.filter((l) => l.status === 'pending').length;
@@ -1284,8 +1288,13 @@ export default function App() {
       showToast('⚠️ 無權限存取非本人授課之課堂點名！', 'warning');
       return;
     }
-    if (course.isCancelled || course.isSuspended || course.status === 'holiday') {
-      showToast('⚠️ 該堂課已由行政端設定為停課，無需點名！', 'info');
+    if (course.isCancelled || course.isSuspended || course.status === 'holiday' || course.status === 'rescheduled_out') {
+      showToast(
+        course.status === 'rescheduled_out'
+          ? '⚠️ 該堂課已調出至其他日期，無需點名！'
+          : '⚠️ 該堂課已由行政端設定為停課，無需點名！',
+        'info'
+      );
       return;
     }
     setIsReadOnlyAttendance(false);
@@ -1608,6 +1617,12 @@ export default function App() {
             setActiveAttendanceCourse(null);
           }}
           pendingAttendanceCount={pendingCountForHeader}
+          teacherTodayTotalCount={currentDayCourses.length}
+          teacherTodayActiveCount={activeDayCourses.length}
+          isTeacherDataLoading={isReportDataLoading}
+          hasTeacherDataLoaded={isSupabaseConfigured() ? hasLoadedAdminData : true}
+          teacherDataError={reportDataError}
+          isViewingToday={selectedDate === getTodayDateStr()}
           currentTeacher={currentTeacher}
           teachers={adminTeachers}
           onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
@@ -1820,6 +1835,10 @@ export default function App() {
                   }}
                   makeupRequests={makeupRequests}
                   teacherCourses={teacherCourses}
+                  isLoading={isReportDataLoading}
+                  hasLoaded={isSupabaseConfigured() ? hasLoadedAdminData : true}
+                  errorMessage={reportDataError}
+                  onRetry={loadSupabaseStudents}
                 />
               ) : activeTab === 'grades' ? (
                 /* 2. Grade Management View (Teacher - Read Only Weights) */

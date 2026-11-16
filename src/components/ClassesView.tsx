@@ -148,23 +148,16 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
   return (
     <div className="space-y-6 pb-20">
       {/* Header Banner */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-teal-50 text-teal-800 border border-teal-200 mb-2">
-              <Users className="w-3.5 h-3.5" />
-              <span>個別學生出席統計 • {currentTeacher?.name || ''} 老師</span>
-            </div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-              班級學生名冊與個人出缺席統計
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+              班級學生名冊與出席統計
             </h1>
-            <p className="text-xs text-slate-500 mt-1">
-              可依班級查看個別學生【應到 / 出席 / 請假 / 缺席 / 出席率】統計，點擊任一學生即可進入個人出席紀錄與成績詳細頁。
-            </p>
           </div>
 
           {/* Class Switcher Tabs */}
-          <div className="flex items-center space-x-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200 overflow-x-auto">
+          <div className="flex items-center space-x-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200 overflow-x-auto max-w-full">
             {activeClasses.map((cls) => {
               const clsStudentsCount = allStudentsList.filter(s => s.classId === cls.id || s.className === cls.className || s.className === cls.name).length;
               return (
@@ -186,7 +179,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
         </div>
 
         {/* Current Class Info Card */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-slate-100">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-5 pt-5 border-t border-slate-100">
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
             <span className="text-xs font-semibold text-slate-500">班級教材與教室</span>
             <div className="text-sm font-extrabold text-slate-900 mt-1 flex items-center">
@@ -268,7 +261,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
                 placeholder="搜尋學生姓名 / 學號 / 國籍..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 text-xs border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+                className="w-full pl-9 pr-3 py-1.5 text-base sm:text-xs border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
               />
             </div>
           </div>
@@ -392,7 +385,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
                         </span>
                       ) : isDanger ? (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
-                          ⚠️ 出席危險
+                          出席危險
                         </span>
                       ) : isWarning ? (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
@@ -400,7 +393,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
                         </span>
                       ) : (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                          🟢 正常
+                          正常
                         </span>
                       )}
                     </td>

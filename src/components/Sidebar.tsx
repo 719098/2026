@@ -99,8 +99,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'grades',
       label: '學生成績管理',
       icon: Calculator,
-      badge: '100%',
-      badgeColor: 'bg-zinc-800 text-zinc-300 border-zinc-700',
     },
   ];
 
@@ -120,8 +118,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'schedule',
       label: '全季排程與調課',
       icon: CalendarDays,
-      badge: '課表',
-      badgeColor: 'bg-zinc-800 text-zinc-300 border-zinc-700',
     },
     {
       id: 'history',

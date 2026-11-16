@@ -438,7 +438,7 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
                 : 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100'
             }`}
           >
-            ⚠️ 有調課紀錄 ({stats.rescheduled})
+            已調課 ({stats.rescheduled})
           </button>
           <button
             onClick={() => setFilterType('makeup')}
@@ -448,7 +448,7 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
                 : 'bg-blue-50 text-blue-800 border border-blue-200 hover:bg-blue-100'
             }`}
           >
-            🔵 補課／調課堂次 ({stats.makeup})
+            補課堂次 ({stats.makeup})
           </button>
           <button
             onClick={() => setFilterType('cancelled')}
@@ -458,7 +458,7 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
                 : 'bg-rose-50 text-rose-800 border border-rose-200 hover:bg-rose-100'
             }`}
           >
-            🚫 停課紀錄 ({stats.cancelled})
+            停課 ({stats.cancelled})
           </button>
           <button
             onClick={() => setFilterType('holiday')}
@@ -468,40 +468,8 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
                 : 'bg-purple-50 text-purple-800 border border-purple-200 hover:bg-purple-100'
             }`}
           >
-            🏖️ 國定假日與校務停課 ({dbHolidays.length})
+            假日停課 ({dbHolidays.length})
           </button>
-        </div>
-      </div>
-
-      {/* Special Callout for Reschedule Logic Explanation */}
-      <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white rounded-2xl p-5 shadow-md">
-        <div className="flex items-start space-x-3">
-          <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-blue-300 shrink-0">
-            <Sparkles className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="text-sm font-bold text-white">
-              華語中心「調課不遺失、點名跟著課程走」核心機制
-            </h3>
-            <div className="mt-2 text-xs text-blue-100 grid grid-cols-1 md:grid-cols-2 gap-3 leading-relaxed">
-              <div className="bg-white/10 p-3 rounded-xl">
-                <div className="font-bold text-amber-300 mb-1 flex items-center">
-                  <span>原定日期 (例：07/30 週四)</span>
-                </div>
-                <p className="text-[11px]">
-                  原定課程卡片<strong>不會憑空消失</strong>，而是標記為「RESCHEDULED (已調課)」，清楚標示調往新日期，避免老師撲空或誤以為漏課。
-                </p>
-              </div>
-              <div className="bg-white/10 p-3 rounded-xl">
-                <div className="font-bold text-teal-300 mb-1 flex items-center">
-                  <span>新補課日 (例：07/31 週五)</span>
-                </div>
-                <p className="text-[11px]">
-                  新日期卡片自動建立「MAKEUP (補課堂次)」，關聯原堂次 ID。學生名單與 3 節分節設定完整繼承，點名完成後即計入排課進度。
-                </p>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -513,9 +481,6 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
               <CalendarDays className="w-4 h-4 text-blue-600" />
               <span>排課日程列表 ({filteredDbSessions.length} 堂)</span>
             </h2>
-            <span className="text-xs text-slate-500">
-              點擊「調課」或「停課」可即時更新日程規劃
-            </span>
           </div>
 
           {filteredDbSessions.length === 0 ? (
@@ -696,12 +661,12 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
       ) : (
         /* Fallback Daily Schedule List (When Supabase table is not populated yet) */
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-base font-bold text-slate-800">
-              全季預設日程與調課總覽 ({daySummaries.length} 天)
+              排課日程總覽 ({daySummaries.length} 天)
             </h2>
             <span className="text-xs text-amber-700 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200 font-medium">
-              提示：目前為展示日程，請至管理端產生正式課表
+              尚未產生正式課表
             </span>
           </div>
 
@@ -848,11 +813,11 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
 
       {/* Modal 1: Reschedule Session (調課作業) */}
       {rescheduleTargetSession && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-md w-full max-h-[90dvh] overflow-y-auto p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4 my-auto">
             <div className="flex items-start justify-between">
               <div className="flex items-center space-x-2">
-                <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center font-bold">
+                <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center font-bold shrink-0">
                   <ArrowRightLeft className="w-5 h-5" />
                 </div>
                 <div>
@@ -879,25 +844,25 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
             <div className="space-y-3 text-xs">
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  調課目標日期 (Target Date) <span className="text-rose-500">*</span>
+                  調課目標日期 <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="date"
                   value={rescheduleDate}
                   onChange={(e) => setRescheduleDate(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-amber-500 text-xs font-mono"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-amber-500 text-base sm:text-xs font-mono"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <TimeSelectPicker
-                  label="開始時間 (時 : 分)"
+                  label="開始時間"
                   value={rescheduleStartTime}
                   onChange={setRescheduleStartTime}
                   accentColor="amber"
                 />
                 <TimeSelectPicker
-                  label="結束時間 (時 : 分)"
+                  label="結束時間"
                   value={rescheduleEndTime}
                   onChange={setRescheduleEndTime}
                   accentColor="amber"
@@ -910,23 +875,23 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
                   rows={2}
                   value={rescheduleReason}
                   onChange={(e) => setRescheduleReason(e.target.value)}
-                  placeholder="例：教師公假、颱風補課、校務活動調課..."
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-amber-500 text-xs"
+                  placeholder="例：教師公假、颱風補課..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-amber-500 text-base sm:text-xs"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+            <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
                 onClick={() => setRescheduleTargetSession(null)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+                className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
               >
                 取消
               </button>
               <button
                 onClick={handleConfirmReschedule}
                 disabled={isSubmitting || !rescheduleDate}
-                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
+                className="w-full sm:w-auto px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
               >
                 {isSubmitting ? '處理中...' : '確認調課'}
               </button>
@@ -937,15 +902,15 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
 
       {/* Modal 2: Create Makeup Session (新增補課堂次) */}
       {isMakeupModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-md w-full max-h-[90dvh] overflow-y-auto p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4 my-auto">
             <div className="flex items-start justify-between">
               <div className="flex items-center space-x-2">
-                <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold">
+                <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold shrink-0">
                   <PlusCircle className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">新增獨立補課堂次</h3>
+                  <h3 className="text-base font-bold text-slate-900">新增補課堂次</h3>
                   <p className="text-xs text-slate-500">補課堂次將計入該班級的排課進度</p>
                 </div>
               </div>
@@ -965,7 +930,7 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
                 <select
                   value={makeupClassId}
                   onChange={(e) => setMakeupClassId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-xs font-medium"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-base sm:text-xs font-medium"
                 >
                   {adminClasses.map((cls) => (
                     <option key={cls.id} value={cls.id}>
@@ -977,17 +942,17 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  補課日期 (Session Date) <span className="text-rose-500">*</span>
+                  補課日期 <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="date"
                   value={makeupDate}
                   onChange={(e) => setMakeupDate(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-xs font-mono"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-base sm:text-xs font-mono"
                 />
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <TimeSelectPicker
                   label="開始時間"
                   value={makeupStartTime}
@@ -1008,7 +973,7 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
                     max={8}
                     value={makeupPeriods}
                     onChange={(e) => setMakeupPeriods(Number(e.target.value))}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-xs font-mono font-bold"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-base sm:text-xs font-mono font-bold"
                   />
                 </div>
               </div>
@@ -1020,22 +985,22 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
                   value={makeupReason}
                   onChange={(e) => setMakeupReason(e.target.value)}
                   placeholder="例：加強輔導、原定進度補課..."
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-xs"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-base sm:text-xs"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+            <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
                 onClick={() => setIsMakeupModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+                className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
               >
                 取消
               </button>
               <button
                 onClick={handleConfirmMakeup}
                 disabled={isSubmitting || !makeupClassId || !makeupDate}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
+                className="w-full sm:w-auto px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
               >
                 {isSubmitting ? '處理中...' : '確認新增補課'}
               </button>
@@ -1046,11 +1011,11 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
 
       {/* Modal 3: Cancel Session (停課作業) */}
       {cancelTargetSession && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-md w-full max-h-[90dvh] overflow-y-auto p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4 my-auto">
             <div className="flex items-start justify-between">
               <div className="flex items-center space-x-2">
-                <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-700 flex items-center justify-center font-bold">
+                <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-700 flex items-center justify-center font-bold shrink-0">
                   <XCircle className="w-5 h-5" />
                 </div>
                 <div>
@@ -1081,23 +1046,23 @@ export const RescheduleScheduleView: React.FC<RescheduleScheduleViewProps> = ({
                   rows={2}
                   value={cancelReason}
                   onChange={(e) => setCancelReason(e.target.value)}
-                  placeholder="例：天候颱風停課、學校重大活動、全校演習..."
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-rose-500 text-xs"
+                  placeholder="例：天候颱風停課、學校重大活動..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-rose-500 text-base sm:text-xs"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+            <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
                 onClick={() => setCancelTargetSession(null)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+                className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
               >
                 取消
               </button>
               <button
                 onClick={handleConfirmCancel}
                 disabled={isSubmitting}
-                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
+                className="w-full sm:w-auto px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
               >
                 {isSubmitting ? '處理中...' : '確認停課'}
               </button>

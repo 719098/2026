@@ -24,6 +24,7 @@ import { formatAttendanceScore, formatTotalGradeDisplay } from '../utils/reportU
 import { resolveStudentGradeWeight } from '../lib/gradeWeightService';
 import { exportGradesToCsv } from '../utils/csvExport';
 import { StudentAvatar } from './StudentAvatar';
+import { InfoTooltip } from './common/InfoTooltip';
 
 interface GradeManagementViewProps {
   students: Student[];
@@ -479,23 +480,20 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
       <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold text-teal-600 bg-teal-50 px-2 py-0.5 rounded border border-teal-200 uppercase tracking-wider">
-                成績管理系統
-              </span>
-              <span className="text-xs font-semibold text-slate-500">
-                {currentTermObj?.name || '2026 夏季班'}
-              </span>
-            </div>
-            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight mt-1.5 flex flex-wrap items-center gap-2">
-              <span>學生成績管理與評量</span>
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex flex-wrap items-center gap-2">
+              <span>學生成績管理</span>
               <span className="text-xs sm:text-sm font-bold bg-teal-600 text-white px-2.5 py-0.5 sm:py-1 rounded-lg">
                 {currentClassName}
               </span>
+              <span className="text-xs font-semibold text-slate-500">
+                {currentTermObj?.name || '當前學期'}
+              </span>
+              <InfoTooltip
+                title="計分與權重說明"
+                content="標準比例：出席 20%、平時 15%、期中 20%、期末 20%、作業 15%、態度 10%。出席成績依出缺席紀錄自動計算；若行政端核定個別權重，該生列將標註「個別自訂」並依專屬比例計分（教師端僅唯讀檢視權重）。"
+                align="left"
+              />
             </h1>
-            <p className="text-xs text-slate-500 mt-1">
-              出席成績由系統依學生實際出缺席自動產生；總成績優先依行政端核定之個別權重計算（無個別自訂者依中心標準比例即時更新）。
-            </p>
           </div>
 
           {/* Action buttons */}
@@ -514,7 +512,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
               onClick={handleSave}
               className={`flex-1 sm:flex-none justify-center flex items-center space-x-1.5 px-4 py-2 rounded-xl font-bold text-xs transition-all shadow-md whitespace-nowrap ${
                 hasUnsavedChanges
-                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white animate-pulse'
+                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
                   : 'bg-slate-900 hover:bg-slate-800 text-white'
               }`}
             >
@@ -545,69 +543,19 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
             );
           })}
         </div>
-      </div>
-
-      {/* Grade Calculation Formula Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-md">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-700/80 pb-4">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-bold text-teal-400 uppercase tracking-wider">
-                中心成績計算比例規範 (總和 100%)
-              </span>
-              <span className="text-[11px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700 font-medium">
-                學期：{currentTermObj?.name || '當前學期'}
-              </span>
-            </div>
-            <div className="text-sm font-semibold text-slate-200 mt-1">
-              中心標準比例：出席 20% + 平時 15% + 期中 20% + 期末 20% + 作業 15% + 態度 10%
-            </div>
-            <p className="text-xs text-amber-300/90 mt-1.5 flex items-start gap-1.5">
-              <span>⚠️ 規範說明：個別學生若經行政端核定自訂比例，成績列將明確標註【個別自訂】並依其專屬比例計算；未設定者依【標準預設】計算。教師端提供即時檢視，無修改權重權限。</span>
-            </p>
+        {/* Class Stats Summary Strip */}
+        <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2.5 text-xs font-mono">
+          <div className="bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 whitespace-nowrap">
+            <span className="text-slate-500 font-sans font-semibold">班級平均分：</span>
+            <strong className="text-teal-700 font-black">
+              {classStats.avgTotal !== null ? classStats.avgTotal : '尚未計算'}
+            </strong>
           </div>
-
-          <div className="flex flex-wrap items-center gap-2.5 sm:gap-4 text-xs font-mono">
-            <div className="flex-1 sm:flex-none bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700 whitespace-nowrap">
-              <span className="text-slate-400">班級平均分：</span>
-              <strong className="text-teal-400 font-bold text-sm ml-1">
-                {classStats.avgTotal !== null ? classStats.avgTotal : '尚未計算'}
-              </strong>
-            </div>
-            <div className="flex-1 sm:flex-none bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700 whitespace-nowrap">
-              <span className="text-slate-400">及格人數：</span>
-              <strong className="text-emerald-400 font-bold text-sm ml-1">
-                {classStats.passCount} / {classStats.evaluatedCount}
-              </strong>
-            </div>
-          </div>
-        </div>
-
-        {/* 6 Metric Weights Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-4 text-xs">
-          <div className="bg-slate-800/80 p-2.5 rounded-xl border border-teal-500/30">
-            <div className="text-teal-400 font-bold">1. 出席成績 (標準 20%)</div>
-            <div className="text-[11px] text-slate-300 mt-0.5">系統依出缺席自動計分</div>
-          </div>
-          <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
-            <div className="text-slate-200 font-bold">2. 平時測驗 (標準 15%)</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">聽寫/小考 (個別依自訂)</div>
-          </div>
-          <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
-            <div className="text-slate-200 font-bold">3. 期中考試 (標準 20%)</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">筆試口試 (個別依自訂)</div>
-          </div>
-          <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
-            <div className="text-slate-200 font-bold">4. 期末考試 (標準 20%)</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">學季總結 (個別依自訂)</div>
-          </div>
-          <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
-            <div className="text-slate-200 font-bold">5. 作業習作 (標準 15%)</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">作業錄音 (個別依自訂)</div>
-          </div>
-          <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
-            <div className="text-slate-200 font-bold">6. 學習態度 (標準 10%)</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">課堂參與 (個別依自訂)</div>
+          <div className="bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 whitespace-nowrap">
+            <span className="text-slate-500 font-sans font-semibold">及格人數：</span>
+            <strong className="text-emerald-700 font-black">
+              {classStats.passCount} / {classStats.evaluatedCount}
+            </strong>
           </div>
         </div>
       </div>
@@ -771,7 +719,6 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs"
                                 title={`行政端個別自訂權重：出席 ${studentW.attendanceWeight}%、平時 ${studentW.quizWeight}%、期中 ${studentW.midtermWeight}%、期末 ${studentW.finalWeight}%、作業 ${studentW.homeworkWeight}%、態度 ${studentW.attitudeWeight}%`}
                               >
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-600 animate-pulse" />
                                 個別自訂 ({studentW.attendanceWeight}/{studentW.quizWeight}/{studentW.midtermWeight}/{studentW.finalWeight}/{studentW.homeworkWeight}/{studentW.attitudeWeight}%)
                               </span>
                             </div>
