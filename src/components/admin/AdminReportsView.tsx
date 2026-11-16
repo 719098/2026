@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3,
   Download,
@@ -9,6 +9,8 @@ import {
   Filter,
   RotateCcw,
   AlertCircle,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import {
   Student,
@@ -44,6 +46,10 @@ interface AdminReportsViewProps {
   allGrades?: Record<string, StudentGrade>;
   transferRecords?: TransferClassRecord[];
   gradeWeightsMap?: Record<string, StudentGradeWeight>;
+  isLoading?: boolean;
+  hasLoaded?: boolean;
+  errorMessage?: string | null;
+  onRetry?: () => void;
   onSelectStudentDetail?: (student: Student) => void;
 }
 
@@ -80,6 +86,10 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
   allGrades = {},
   transferRecords = [],
   gradeWeightsMap = {},
+  isLoading = false,
+  hasLoaded = true,
+  errorMessage = null,
+  onRetry,
   onSelectStudentDetail,
 }) => {
   const [selectedReportTab, setSelectedReportTab] = useState<'attendance' | 'grades' | 'certificate'>('attendance');
@@ -88,6 +98,28 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [selectedStudentId, setSelectedStudentId] = useState<string>(students?.[0]?.id || '');
+
+  const onRetryRef = useRef(onRetry);
+  onRetryRef.current = onRetry;
+
+  // Ensure opening Reports directly triggers loading if data has not yet been loaded
+  useEffect(() => {
+    if (!hasLoaded && !isLoading && !errorMessage && onRetryRef.current) {
+      onRetryRef.current();
+    }
+  }, [hasLoaded, isLoading, errorMessage]);
+
+  // Keep selectedStudentId populated once students load asynchronously
+  useEffect(() => {
+    if (students.length > 0 && (!selectedStudentId || !students.some((s) => s.id === selectedStudentId))) {
+      setSelectedStudentId(students[0].id);
+    }
+  }, [students, selectedStudentId]);
+
+  const hasError = Boolean(errorMessage);
+  const isWaitingForInitialData = !hasLoaded && !hasError;
+  const isReportBlockedByLoadOrError = isWaitingForInitialData || hasError;
+  const isExportDisabled = !hasLoaded || isLoading || hasError;
 
   const reportData = useMemo(() => {
     return buildAdminReportData({
@@ -296,44 +328,80 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
             <div className="flex items-center space-x-2 text-xs font-bold text-[#26313B]">
               <Filter className="w-4 h-4 text-[#536B7A]" />
               <span>報表統計篩選條件</span>
-              <span className="text-[11px] font-normal text-[#66717C]">
-                （共 {filteredClasses.length} 班 / 目前在班 {schoolSummary.currentStudents} 人・期間曾在班 {schoolSummary.periodStudents} 人）
-              </span>
+              {isLoading || !hasLoaded ? (
+                <span className="inline-flex items-center space-x-1 text-[11px] font-medium text-[#536B7A]">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <span>載入中…</span>
+                </span>
+              ) : hasError ? (
+                <span className="text-[11px] font-medium text-rose-700">（資料載入失敗）</span>
+              ) : (
+                <span className="text-[11px] font-normal text-[#66717C]">
+                  （共 {filteredClasses.length} 班 / 目前在班 {schoolSummary.currentStudents} 人・期間曾在班 {schoolSummary.periodStudents} 人）
+                </span>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {onRetry && (
+                <button
+                  type="button"
+                  onClick={() => onRetry()}
+                  disabled={isLoading}
+                  className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-white hover:bg-[#F8FAFC] text-[#536B7A] border border-[#DCE2E6] rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                  <span>{isLoading ? '載入中' : '重新整理'}</span>
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => exportAdminReportsClassSummaryToCsv(classRows)}
-                className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-white hover:bg-[#F8FAFC] text-[#26313B] border border-[#DCE2E6] rounded-lg text-xs font-semibold transition-colors"
+                disabled={isExportDisabled}
+                onClick={() => {
+                  if (!isExportDisabled) {
+                    exportAdminReportsClassSummaryToCsv(classRows);
+                  }
+                }}
+                title={isExportDisabled ? '報表資料尚未載入完成或發生錯誤，暫時停用匯出' : '匯出目前篩選之班級報表 (CSV)'}
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-white hover:bg-[#F8FAFC] text-[#26313B] border border-[#DCE2E6] rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Download className="w-3.5 h-3.5 text-[#536B7A]" />
                 <span>匯出班級報表 (CSV)</span>
               </button>
               <button
                 type="button"
-                onClick={() => exportAdminReportsStudentDetailToCsv(studentRows)}
-                className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-white hover:bg-[#F8FAFC] text-[#26313B] border border-[#DCE2E6] rounded-lg text-xs font-semibold transition-colors"
+                disabled={isExportDisabled}
+                onClick={() => {
+                  if (!isExportDisabled) {
+                    exportAdminReportsStudentDetailToCsv(studentRows);
+                  }
+                }}
+                title={isExportDisabled ? '報表資料尚未載入完成或發生錯誤，暫時停用匯出' : '匯出目前篩選之學員明細 (CSV)'}
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-white hover:bg-[#F8FAFC] text-[#26313B] border border-[#DCE2E6] rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Download className="w-3.5 h-3.5 text-[#536B7A]" />
                 <span>匯出學員明細 (CSV)</span>
               </button>
               <button
                 type="button"
-                onClick={() =>
-                  exportAdminReportsToXlsx({
-                    classRows,
-                    studentRows,
-                    schoolSummary,
-                    filterSummary: {
-                      termLabel: selectedTermLabel,
-                      classLabel: selectedClassLabel,
-                      startDate,
-                      endDate,
-                    },
-                  })
-                }
-                className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-2xs transition-colors"
+                disabled={isExportDisabled}
+                onClick={() => {
+                  if (!isExportDisabled) {
+                    exportAdminReportsToXlsx({
+                      classRows,
+                      studentRows,
+                      schoolSummary,
+                      filterSummary: {
+                        termLabel: selectedTermLabel,
+                        classLabel: selectedClassLabel,
+                        startDate,
+                        endDate,
+                      },
+                    });
+                  }
+                }}
+                title={isExportDisabled ? '報表資料尚未載入完成或發生錯誤，暫時停用匯出' : '匯出目前篩選之綜合報表 (.xlsx)'}
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-2xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-400"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5" />
                 <span>匯出綜合報表 (.xlsx)</span>
@@ -409,8 +477,56 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
         </div>
       )}
 
+      {/* Error State with Retry */}
+      {hasError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-6 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start space-x-3">
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <div className="text-sm font-bold text-rose-900">報表資料載入失敗</div>
+              <p className="text-xs text-rose-800 leading-relaxed">{errorMessage}</p>
+              <p className="text-[11px] text-rose-700">
+                為避免顯示不完整的授課堂數、出席樣本或成績，已暫時鎖定報表內容與匯出功能。
+              </p>
+            </div>
+          </div>
+          {onRetry && (
+            <button
+              type="button"
+              onClick={() => onRetry()}
+              disabled={isLoading}
+              className="inline-flex items-center justify-center space-x-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-2xs transition-colors shrink-0 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              <span>{isLoading ? '重試載入中…' : '重試'}</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Initial Loading State (prevents premature 0 堂 / 尚未安排課程 / 待計算 flash) */}
+      {!hasError && isWaitingForInitialData && (
+        <div className="bg-white border border-[#DCE2E6] rounded-xl p-12 text-center shadow-2xs space-y-3">
+          <Loader2 className="w-8 h-8 text-[#536B7A] animate-spin mx-auto" />
+          <div className="text-sm font-bold text-[#26313B]">報表資料載入中…</div>
+          <p className="text-xs text-[#66717C] max-w-md mx-auto leading-relaxed">
+            正在同步學期設定、班級名冊、轉班紀錄、排課堂次、正式點名與成績資料，完成後將自動顯示完整統計並開放 CSV／Excel 匯出。
+          </p>
+        </div>
+      )}
+
+      {/* Background Sync Banner when refreshing already-loaded reports */}
+      {!hasError && hasLoaded && isLoading && (
+        <div className="bg-sky-50 border border-sky-200 text-sky-900 rounded-xl px-4 py-3 text-xs flex items-center justify-between gap-2">
+          <div className="flex items-center space-x-2">
+            <Loader2 className="w-4 h-4 text-sky-600 animate-spin shrink-0" />
+            <span>正在同步最新排課、點名與成績資料（載入中），資料完成更新後即可匯出報表…</span>
+          </div>
+        </div>
+      )}
+
       {/* Tab 1: Attendance & Teaching Progress Report */}
-      {selectedReportTab === 'attendance' && (
+      {!isReportBlockedByLoadOrError && selectedReportTab === 'attendance' && (
         <div className="space-y-6">
           {/* 3 Summary KPI Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -704,7 +820,7 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
       )}
 
       {/* Tab 2: Grades Distribution */}
-      {selectedReportTab === 'grades' && (
+      {!isReportBlockedByLoadOrError && selectedReportTab === 'grades' && (
         <div className="space-y-4">
           {gradeDistribution.estimatedCount > 0 && (
             <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-3.5 text-xs flex items-center space-x-2">
@@ -756,7 +872,7 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
       )}
 
       {/* Tab 3: Official Certificate Generator */}
-      {selectedReportTab === 'certificate' && (
+      {!isReportBlockedByLoadOrError && selectedReportTab === 'certificate' && (
         <div className="space-y-6">
           {!selectedStudentForCert || !certContext ? (
             <div className="p-12 text-center bg-white rounded-xl border border-[#DCE2E6] text-[#66717C] text-xs">
@@ -784,8 +900,9 @@ export const AdminReportsView: React.FC<AdminReportsViewProps> = ({
 
                 <button
                   type="button"
+                  disabled={isExportDisabled}
                   onClick={handlePrint}
-                  className="inline-flex items-center space-x-1.5 px-4 py-2 bg-[#536B7A] hover:bg-[#455865] text-white rounded-lg text-xs font-semibold shadow-2xs transition-colors"
+                  className="inline-flex items-center space-x-1.5 px-4 py-2 bg-[#536B7A] hover:bg-[#455865] text-white rounded-lg text-xs font-semibold shadow-2xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Printer className="w-4 h-4" />
                   <span>列印 / 存為 PDF 證書</span>

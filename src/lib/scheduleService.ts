@@ -741,7 +741,7 @@ export async function fetchTermSessions(
   }
 }
 
-import { fetchAttendanceRecordsFromSupabase } from './attendanceService';
+import { fetchAttendanceRecordsWithStatus } from './attendanceService';
 
 /**
  * Hydrates CourseSession[] directly from Supabase public.class_sessions, public.classes, public.teachers, and public.class_students.
@@ -756,33 +756,39 @@ export async function fetchCourseSessionsFromSupabase(
 
   try {
     let rawSessions: any[] = [];
+    let sessLoadError: any = null;
     const { data: directSessions, error: sessErr } = await supabase
       .from('class_sessions')
       .select('*')
       .order('session_date', { ascending: true })
       .order('start_time', { ascending: true });
 
-    if (!sessErr && directSessions && directSessions.length > 0) {
+    if (!sessErr && Array.isArray(directSessions) && directSessions.length > 0) {
       rawSessions = directSessions;
     } else {
+      let apiSucceeded = false;
       try {
         const endpoint = typeof window !== 'undefined' ? '/api/class-sessions' : 'http://localhost:3000/api/class-sessions';
         const headers = await getAuthHeaders();
         const res = await fetch(endpoint, { headers });
         if (res.ok) {
           const json = await res.json();
-          if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+          if (json.success && Array.isArray(json.data)) {
             rawSessions = json.data;
+            apiSucceeded = true;
           }
         }
       } catch (e) {
         console.warn('[ScheduleService] Fallback to /api/class-sessions failed:', e);
       }
+      if (!apiSucceeded && sessErr) {
+        sessLoadError = sessErr;
+      }
     }
 
-    if (rawSessions.length === 0 && sessErr) {
-      console.error('[ScheduleService] Error fetching class_sessions:', sessErr);
-      return { data: [], error: sessErr };
+    if (sessLoadError) {
+      console.error('[ScheduleService] Error fetching class_sessions:', sessLoadError);
+      return { data: [], error: sessLoadError };
     }
 
     // Resolve classes: ensure all class_id values in rawSessions are mapped to genuine classes
@@ -796,7 +802,10 @@ export async function fetchCourseSessionsFromSupabase(
     const hasMissingClasses = Array.from(sessionClassIds).some((cid) => !knownClassIds.has(cid));
 
     if (classesToUse.length === 0 || hasMissingClasses) {
-      const { data: dbClasses } = await fetchClassesFromSupabase();
+      const { data: dbClasses, error: clsErr } = await fetchClassesFromSupabase();
+      if (clsErr && classesToUse.length === 0) {
+        return { data: [], error: clsErr };
+      }
       if (dbClasses && dbClasses.length > 0) {
         const mergedMap = new Map<string, any>();
         classesToUse.forEach((c) => mergedMap.set(String(c.id), c));
@@ -812,8 +821,12 @@ export async function fetchCourseSessionsFromSupabase(
       if (t && t.id) teacherMap.set(String(t.id), t);
     });
 
-    // Fetch saved attendance records
-    const attendanceMap = await fetchAttendanceRecordsFromSupabase();
+    // Fetch saved attendance records (and propagate error if attendance cannot be loaded)
+    const { data: attendanceMap, error: attErr } = await fetchAttendanceRecordsWithStatus();
+    if (attErr) {
+      console.error('[ScheduleService] Failed to load attendance records for sessions:', attErr);
+      return { data: [], error: attErr };
+    }
 
     const classMap = new Map<string, any>();
     classesToUse.forEach((c: any) => {

@@ -1119,20 +1119,20 @@ export async function deleteStudentInSupabase(
 /**
  * Fetch all student grades from Supabase public.student_grades
  */
-export async function fetchStudentGradesFromSupabase(
+export async function fetchStudentGradesWithStatus(
   students: Student[],
   classes: ClassEntity[],
   allCourses?: CourseSession[],
   transferRecords?: TransferClassRecord[],
   customWeightsMap?: Record<string, StudentGradeWeight>
-): Promise<Record<string, StudentGrade>> {
+): Promise<{ data: Record<string, StudentGrade>; error: any }> {
   try {
     let rows: any[] = [];
     let fetchError: any = null;
 
     if (supabase) {
       const { data, error } = await supabase.from('student_grades').select('*');
-      if (!error && data && data.length > 0) {
+      if (!error && Array.isArray(data) && data.length > 0) {
         rows = data;
       } else {
         fetchError = error;
@@ -1140,6 +1140,7 @@ export async function fetchStudentGradesFromSupabase(
     }
 
     // Fallback to server API /api/student-grades if direct query was empty or denied
+    let apiSucceeded = false;
     if (rows.length === 0) {
       try {
         const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
@@ -1147,8 +1148,9 @@ export async function fetchStudentGradesFromSupabase(
         const res = await fetch(`${origin}/api/student-grades`, { headers });
         if (res.ok) {
           const json = await res.json();
-          if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+          if (json.success && Array.isArray(json.data)) {
             rows = json.data;
+            apiSucceeded = true;
           }
         }
       } catch (apiErr) {
@@ -1156,9 +1158,9 @@ export async function fetchStudentGradesFromSupabase(
       }
     }
 
-    if (rows.length === 0 && fetchError) {
+    if (rows.length === 0 && fetchError && !apiSucceeded) {
       console.error('[StudentService] Error fetching student_grades:', fetchError);
-      return {};
+      return { data: {}, error: fetchError };
     }
 
     const studentMap = new Map(students.map((s) => [String(s.id), s]));
@@ -1258,11 +1260,28 @@ export async function fetchStudentGradesFromSupabase(
       });
     }
 
-    return gradeMap;
+    return { data: gradeMap, error: null };
   } catch (err) {
-    console.error('[StudentService] Exception in fetchStudentGradesFromSupabase:', err);
-    return {};
+    console.error('[StudentService] Exception in fetchStudentGradesWithStatus:', err);
+    return { data: {}, error: err };
   }
+}
+
+export async function fetchStudentGradesFromSupabase(
+  students: Student[],
+  classes: ClassEntity[],
+  allCourses?: CourseSession[],
+  transferRecords?: TransferClassRecord[],
+  customWeightsMap?: Record<string, StudentGradeWeight>
+): Promise<Record<string, StudentGrade>> {
+  const { data } = await fetchStudentGradesWithStatus(
+    students,
+    classes,
+    allCourses,
+    transferRecords,
+    customWeightsMap
+  );
+  return data;
 }
 
 /**
@@ -1390,21 +1409,22 @@ export async function saveStudentGradeToSupabase(
 /**
  * Fetch transfer history records from Supabase public.student_enrollment_history
  */
-export async function fetchTransferRecordsFromSupabase(
+export async function fetchTransferRecordsWithStatus(
   students: Student[],
   classes: ClassEntity[]
-): Promise<TransferClassRecord[]> {
-  if (!supabase) return [];
+): Promise<{ data: TransferClassRecord[]; error: any }> {
+  if (!supabase) return { data: [], error: new Error('Supabase client is not configured') };
 
   try {
     let rows: any[] = [];
+    let apiSucceeded = false;
     const { data: directRows, error } = await supabase
       .from('student_enrollment_history')
       .select('*')
       .eq('change_type', 'TRANSFER')
       .order('created_at', { ascending: false });
 
-    if (!error && directRows && directRows.length > 0) {
+    if (!error && Array.isArray(directRows) && directRows.length > 0) {
       rows = directRows;
     } else {
       try {
@@ -1415,11 +1435,17 @@ export async function fetchTransferRecordsFromSupabase(
           const json = await apiRes.json();
           if (json.success && Array.isArray(json.data)) {
             rows = json.data;
+            apiSucceeded = true;
           }
         }
       } catch (apiErr) {
         console.warn('[StudentService] Fallback to /api/transfer-history failed:', apiErr);
       }
+    }
+
+    if (rows.length === 0 && error && !apiSucceeded) {
+      console.error('[StudentService] Error fetching transfer history:', error);
+      return { data: [], error };
     }
 
     const studentMap = new Map(students.map((s) => [String(s.id), s]));
@@ -1445,11 +1471,19 @@ export async function fetchTransferRecordsFromSupabase(
       };
     });
 
-    return records;
+    return { data: records, error: null };
   } catch (err) {
     console.error('[StudentService] Exception fetching transfer history:', err);
-    return [];
+    return { data: [], error: err };
   }
+}
+
+export async function fetchTransferRecordsFromSupabase(
+  students: Student[],
+  classes: ClassEntity[]
+): Promise<TransferClassRecord[]> {
+  const { data } = await fetchTransferRecordsWithStatus(students, classes);
+  return data;
 }
 
 /**

@@ -337,25 +337,28 @@ export async function saveAttendanceToSupabase(
  * Fetches saved attendance records from Supabase for all sessions.
  * Returns a map of `course_session` key (classId_date) to { attendanceData, isSubmitted }.
  */
-export async function fetchAttendanceRecordsFromSupabase(): Promise<
-  Map<string, { attendanceData: { [studentId: string]: StudentPeriodAttendance }; isSubmitted: boolean }>
-> {
+export async function fetchAttendanceRecordsWithStatus(): Promise<{
+  data: Map<string, { attendanceData: { [studentId: string]: StudentPeriodAttendance }; isSubmitted: boolean }>;
+  error: any;
+}> {
   const map = new Map<
     string,
     { attendanceData: { [studentId: string]: StudentPeriodAttendance }; isSubmitted: boolean }
   >();
 
-  if (!supabase) return map;
+  if (!supabase) return { data: map, error: new Error('Supabase client is not configured') };
 
   try {
     let courseSessions: any[] = [];
+    let csLoadError: any = null;
     const { data: directCS, error: csErr } = await supabase
       .from('course_sessions')
       .select('*');
 
-    if (!csErr && directCS && directCS.length > 0) {
+    if (!csErr && Array.isArray(directCS) && directCS.length > 0) {
       courseSessions = directCS;
     } else {
+      let apiSucceeded = false;
       try {
         const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
         const headers = await getAuthHeaders();
@@ -364,43 +367,80 @@ export async function fetchAttendanceRecordsFromSupabase(): Promise<
           const json = await apiRes.json();
           if (json.success && Array.isArray(json.data)) {
             courseSessions = json.data;
+            apiSucceeded = true;
           }
         }
       } catch (apiErr) {
         console.warn('[AttendanceService] Fallback to /api/course-sessions failed:', apiErr);
       }
+      if (!apiSucceeded && csErr) {
+        csLoadError = csErr;
+      }
+    }
+
+    if (csLoadError) {
+      console.error('[AttendanceService] Failed to fetch course_sessions:', csLoadError);
+      return { data: map, error: csLoadError };
     }
 
     if (courseSessions.length === 0) {
-      return map;
+      return { data: map, error: null };
     }
 
-    const sessionIds = courseSessions.map((cs) => cs.id);
-    const csMapById = new Map<string, any>();
-    courseSessions.forEach((cs) => csMapById.set(cs.id, cs));
+    const sessionIds = courseSessions.map((cs) => cs.id).filter(Boolean);
+    const sessionIdSet = new Set(sessionIds.map(String));
 
     let attendanceRows: any[] = [];
-    const { data: directAtt, error: attErr } = await supabase
-      .from('attendance_records')
-      .select('*')
-      .in('session_id', sessionIds);
+    let attLoadError: any = null;
 
-    if (!attErr && directAtt && directAtt.length > 0) {
-      attendanceRows = directAtt;
-    } else {
-      try {
-        const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
-        const headers = await getAuthHeaders();
-        const apiRes = await fetch(`${origin}/api/attendance-records`, { headers });
-        if (apiRes.ok) {
-          const json = await apiRes.json();
-          if (json.success && Array.isArray(json.data)) {
-            attendanceRows = json.data.filter((r: any) => sessionIds.includes(r.session_id));
-          }
+    if (sessionIds.length > 0) {
+      const CHUNK_SIZE = 80;
+      let directErr: any = null;
+      const collected: any[] = [];
+
+      for (let i = 0; i < sessionIds.length; i += CHUNK_SIZE) {
+        const chunk = sessionIds.slice(i, i + CHUNK_SIZE);
+        const { data: chunkRows, error: chunkErr } = await supabase
+          .from('attendance_records')
+          .select('*')
+          .in('session_id', chunk);
+
+        if (chunkErr) {
+          directErr = chunkErr;
+          break;
         }
-      } catch (apiErr) {
-        console.warn('[AttendanceService] Fallback to /api/attendance-records failed:', apiErr);
+        if (chunkRows && chunkRows.length > 0) {
+          collected.push(...chunkRows);
+        }
       }
+
+      if (!directErr) {
+        attendanceRows = collected;
+      } else {
+        let apiSucceeded = false;
+        try {
+          const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
+          const headers = await getAuthHeaders();
+          const apiRes = await fetch(`${origin}/api/attendance-records`, { headers });
+          if (apiRes.ok) {
+            const json = await apiRes.json();
+            if (json.success && Array.isArray(json.data)) {
+              attendanceRows = json.data.filter((r: any) => sessionIdSet.has(String(r.session_id)));
+              apiSucceeded = true;
+            }
+          }
+        } catch (apiErr) {
+          console.warn('[AttendanceService] Fallback to /api/attendance-records failed:', apiErr);
+        }
+        if (!apiSucceeded) {
+          attLoadError = directErr;
+        }
+      }
+    }
+
+    if (attLoadError) {
+      console.error('[AttendanceService] Failed to fetch attendance_records:', attLoadError);
+      return { data: map, error: attLoadError };
     }
 
     const mapDbToStatus = (dbVal?: string): 'present' | 'absent' | 'leave' => {
@@ -451,11 +491,18 @@ export async function fetchAttendanceRecordsFromSupabase(): Promise<
       });
     });
 
-    return map;
+    return { data: map, error: null };
   } catch (err) {
-    console.error('[AttendanceService] Exception in fetchAttendanceRecordsFromSupabase:', err);
-    return map;
+    console.error('[AttendanceService] Exception in fetchAttendanceRecordsWithStatus:', err);
+    return { data: map, error: err };
   }
+}
+
+export async function fetchAttendanceRecordsFromSupabase(): Promise<
+  Map<string, { attendanceData: { [studentId: string]: StudentPeriodAttendance }; isSubmitted: boolean }>
+> {
+  const { data } = await fetchAttendanceRecordsWithStatus();
+  return data;
 }
 
 /**

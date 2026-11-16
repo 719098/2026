@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Sidebar, NavigationTab } from './components/Sidebar';
 import { Header } from './components/Header';
 import { TeacherTodayAttendanceView } from './components/TeacherTodayAttendanceView';
@@ -26,8 +26,10 @@ import {
   updateStudentInSupabase, 
   deleteStudentInSupabase,
   fetchStudentGradesFromSupabase,
+  fetchStudentGradesWithStatus,
   saveStudentGradeToSupabase,
   fetchTransferRecordsFromSupabase,
+  fetchTransferRecordsWithStatus,
   createTransferRecordInSupabase
 } from './lib/studentService';
 import {
@@ -157,6 +159,14 @@ export default function App() {
   const [dbStudents, setDbStudents] = useState<Student[]>([]);
   const [isStudentsLoading, setIsStudentsLoading] = useState<boolean>(false);
   const [studentsError, setStudentsError] = useState<string | null>(null);
+  const [hasLoadedAdminData, setHasLoadedAdminData] = useState<boolean>(false);
+  const [isReportDataLoading, setIsReportDataLoading] = useState<boolean>(false);
+  const [reportDataError, setReportDataError] = useState<string | null>(null);
+
+  const loadRequestIdRef = useRef<number>(0);
+  const isReportDataLoadingRef = useRef<boolean>(false);
+  const hasLoadedAdminDataRef = useRef<boolean>(false);
+  const loadedProfileKeyRef = useRef<string | null>(null);
 
   // Supabase Classes & Terms (Directly loaded from Supabase, NO mock/localStorage fallback)
   const [adminClasses, setAdminClasses] = useState<ClassEntity[]>([]);
@@ -407,132 +417,183 @@ export default function App() {
     }
   };
 
-  // Load students, classes, courses and terms from Supabase
-  const loadSupabaseStudents = async () => {
-    if (!isSupabaseConfigured() || !supabase) return;
+  // Load students, classes, courses, grades and terms from Supabase atomically with race protection
+  const loadSupabaseStudents = useCallback(async () => {
+    if (!isSupabaseConfigured() || !supabase) {
+      hasLoadedAdminDataRef.current = true;
+      setHasLoadedAdminData(true);
+      setIsReportDataLoading(false);
+      setReportDataError(null);
+      return;
+    }
+
+    const requestId = ++loadRequestIdRef.current;
+    isReportDataLoadingRef.current = true;
     setIsStudentsLoading(true);
     setIsTermsLoading(true);
+    setIsReportDataLoading(true);
     setStudentsError(null);
+    setReportDataError(null);
+
     try {
-      // 0. Fetch teachers
-      await loadSupabaseTeachers();
+      // 0 & 1. Fetch teachers, terms, grade weights, and classes in parallel
+      const [_, termsRes, allWeightsRes, classesRes] = await Promise.all([
+        loadSupabaseTeachers(),
+        fetchTermsFromSupabase(),
+        fetchAllGradeWeights().catch((wErr: any) => ({ data: {}, list: [], error: wErr })),
+        fetchClassesFromSupabase(),
+      ]);
 
-      // 1. Fetch terms directly from Supabase terms table
-      const { data: dbTerms, error: termErr } = await fetchTermsFromSupabase();
-      if (termErr) {
-        console.error('Failed to load terms from Supabase:', termErr);
+      if (loadRequestIdRef.current !== requestId) return;
+
+      const reportErrors: string[] = [];
+
+      if (termsRes.error) {
+        console.error('Failed to load terms from Supabase:', termsRes.error);
+        reportErrors.push(`學期資料 (${termsRes.error.message || '讀取失敗'})`);
       }
-      const fetchedTerms = dbTerms || [];
-      setAdminTerms(fetchedTerms);
+      const fetchedTerms = termsRes.data || [];
 
-      // Load custom grade weights across all terms (indexing both studentId and studentId_termId)
-      let initialWeightsData: Record<string, StudentGradeWeight> | undefined = undefined;
-      try {
-        const { data: allWeights } = await fetchAllGradeWeights();
-        if (allWeights && Object.keys(allWeights).length > 0) {
-          initialWeightsData = allWeights;
-          setGradeWeightsMap(allWeights);
-        } else {
-          const activeOrFirstTerm = fetchedTerms.find((t) => t.isActive && !t.isLocked) || fetchedTerms[0];
-          if (activeOrFirstTerm?.id) {
-            const { data: weightsData } = await fetchGradeWeightsForTerm(activeOrFirstTerm.id);
-            if (weightsData) {
-              initialWeightsData = weightsData;
-              setGradeWeightsMap(weightsData);
+      let resolvedWeights: Record<string, StudentGradeWeight> = allWeightsRes?.data || {};
+      if (allWeightsRes?.error) {
+        console.warn('Could not load initial grade weights:', allWeightsRes.error);
+      } else if (Object.keys(resolvedWeights).length === 0) {
+        const activeOrFirstTerm = fetchedTerms.find((t) => t.isActive && !t.isLocked) || fetchedTerms[0];
+        if (activeOrFirstTerm?.id) {
+          try {
+            const { data: termWeights } = await fetchGradeWeightsForTerm(activeOrFirstTerm.id);
+            if (termWeights) {
+              resolvedWeights = termWeights;
             }
+          } catch (wErr) {
+            console.warn('Could not load term grade weights:', wErr);
           }
         }
-      } catch (wErr) {
-        console.warn('Could not load initial grade weights:', wErr);
       }
 
-      // 2. Fetch classes directly from Supabase classes table
-      const { data: dbClasses, error: classErr } = await fetchClassesFromSupabase();
-      if (classErr) {
-        console.error('Failed to load classes from Supabase:', classErr);
+      if (classesRes.error) {
+        console.error('Failed to load classes from Supabase:', classesRes.error);
+        reportErrors.push(`班級資料 (${classesRes.error.message || '讀取失敗'})`);
       }
-      const currentClasses = dbClasses || [];
-      setAdminClasses(currentClasses);
+      const currentClasses = classesRes.data || [];
 
-      // 4. Fetch students joined with class_students
-      const { data, error } = await fetchStudentsFromSupabase(currentClasses);
-      if (error) {
-        console.error('Failed to load students from Supabase:', error);
-        setStudentsError(`無法載入學生資料庫 [${error.code || 'ERR'}]: ${error.message}`);
-        setDbStudents([]);
-      } else {
-        setDbStudents(data || []);
-        setStudentsError(null);
+      // 2. Fetch students joined with class_students
+      const { data: fetchedStudentsRaw, error: studentsFetchErr } = await fetchStudentsFromSupabase(currentClasses);
+      if (loadRequestIdRef.current !== requestId) return;
+
+      if (studentsFetchErr) {
+        console.error('Failed to load students from Supabase:', studentsFetchErr);
+        reportErrors.push(`學生名冊 [${studentsFetchErr.code || 'ERR'}]: ${studentsFetchErr.message || '讀取失敗'}`);
+      }
+      const fetchedStudents = fetchedStudentsRaw || [];
+
+      // 3. Fetch transfer history from Supabase public.student_enrollment_history
+      const { data: fetchedTransfers, error: transfersErr } = await fetchTransferRecordsWithStatus(
+        fetchedStudents,
+        currentClasses
+      );
+      if (loadRequestIdRef.current !== requestId) return;
+
+      if (transfersErr) {
+        console.error('Failed to load transfer history from Supabase:', transfersErr);
+        reportErrors.push(`轉班歷史 (${transfersErr.message || '讀取失敗'})`);
       }
 
-      // 5. Fetch transfer history from Supabase public.student_enrollment_history
-      const fetchedTransfers = await fetchTransferRecordsFromSupabase(data || [], currentClasses);
-      setAdminTransferRecords(fetchedTransfers);
-
-      // 6. Fetch class_sessions hydrated into CourseSession[] with genuine classes and verified date rosters
+      // 4. Fetch class_sessions + attendance_records hydrated into CourseSession[]
       const { data: dbSessions, error: sessErr } = await fetchCourseSessionsFromSupabase(
         currentClasses,
-        data || [],
+        fetchedStudents,
         fetchedTransfers
       );
+      if (loadRequestIdRef.current !== requestId) return;
+
       if (sessErr) {
-        console.error('Failed to load class_sessions from Supabase:', sessErr);
-      } else if (dbSessions && dbSessions.length > 0) {
-        setCourses(dbSessions);
+        console.error('Failed to load class_sessions/attendance from Supabase:', sessErr);
+        reportErrors.push(`排課與點名紀錄 (${sessErr.message || '讀取失敗'})`);
       }
+      const activeSessions = dbSessions || [];
 
-      // Determine active course sessions for accurate attendance and grade calculation
-      const activeSessions = (dbSessions && dbSessions.length > 0) ? dbSessions : courses;
-
-      // 7. Sync actual attendance rates across all students using comprehensive history calculation
-      let syncedStudents = data || [];
-      if (data && data.length > 0) {
-        syncedStudents = data.map((s) => {
-          const history = calculateStudentAttendanceHistory(s, activeSessions || [], fetchedTransfers || [], {
-            classes: currentClasses,
-            terms: fetchedTerms,
-          });
-          return {
-            ...s,
-            overallAttendanceRate: history.attendanceRate,
-            attendanceEvaluated: history.hasAttendanceData,
-            totalPresentHours: history.presentHours,
-            totalLeaveHours: history.leaveHours,
-            totalAbsenceHours: history.absentHours,
-            totalCompletedHours: history.completedHours,
-            complianceStatus: history.complianceStatus,
-          };
+      // 5. Sync actual attendance rates across all students using comprehensive history calculation
+      const syncedStudents = fetchedStudents.map((s) => {
+        const history = calculateStudentAttendanceHistory(s, activeSessions, fetchedTransfers, {
+          classes: currentClasses,
+          terms: fetchedTerms,
         });
-        setDbStudents(syncedStudents);
-      }
+        return {
+          ...s,
+          overallAttendanceRate: history.attendanceRate,
+          attendanceEvaluated: history.hasAttendanceData,
+          totalPresentHours: history.presentHours,
+          totalLeaveHours: history.leaveHours,
+          totalAbsenceHours: history.absentHours,
+          totalCompletedHours: history.completedHours,
+          complianceStatus: history.complianceStatus,
+        };
+      });
 
-      // 8. Fetch student grades from Supabase public.student_grades using synced attendance & active sessions
-      const fetchedGrades = await fetchStudentGradesFromSupabase(
-        syncedStudents,
-        currentClasses,
-        activeSessions,
-        fetchedTransfers,
-        initialWeightsData || undefined
-      );
-      setAllGrades(fetchedGrades);
-
-      // 9. Fetch leave requests, over-7-day makeup requests, and attendance audit logs
-      const [fetchedLeaves, fetchedMakeupReqs, fetchedAuditLogs] = await Promise.all([
+      // 6. Fetch student grades, leaves, makeup requests, and audit logs in parallel
+      const [gradesRes, fetchedLeaves, fetchedMakeupReqs, fetchedAuditLogs] = await Promise.all([
+        fetchStudentGradesWithStatus(
+          syncedStudents,
+          currentClasses,
+          activeSessions,
+          fetchedTransfers,
+          Object.keys(resolvedWeights).length > 0 ? resolvedWeights : undefined
+        ),
         fetchLeavesFromSupabase(syncedStudents, currentClasses),
         fetchMakeupRequestsFromSupabase(),
         fetchAttendanceAuditLogsFromSupabase({ limit: 300 }),
       ]);
+
+      if (loadRequestIdRef.current !== requestId) return;
+
+      if (gradesRes.error) {
+        console.error('Failed to load student_grades from Supabase:', gradesRes.error);
+        reportErrors.push(`學員成績 (${gradesRes.error.message || '讀取失敗'})`);
+      }
+
+      // Commit partial non-report errors & available lists cleanly
+      if (!termsRes.error) setAdminTerms(fetchedTerms);
+      if (Object.keys(resolvedWeights).length > 0 || !allWeightsRes?.error) {
+        setGradeWeightsMap(resolvedWeights);
+      }
+      if (!classesRes.error) setAdminClasses(currentClasses);
+      if (studentsFetchErr) {
+        setStudentsError(`無法載入學生資料庫 [${studentsFetchErr.code || 'ERR'}]: ${studentsFetchErr.message}`);
+        if (!hasLoadedAdminDataRef.current) setDbStudents([]);
+      } else {
+        setDbStudents(syncedStudents);
+        setStudentsError(null);
+      }
+      if (!transfersErr) setAdminTransferRecords(fetchedTransfers);
+      if (!sessErr) setCourses(activeSessions);
+      if (!gradesRes.error) setAllGrades(gradesRes.data || {});
       setAdminLeaves(fetchedLeaves);
       setMakeupRequests(fetchedMakeupReqs);
       setAttendanceAuditLogs(fetchedAuditLogs);
+
+      if (reportErrors.length > 0) {
+        setReportDataError(`報表資料載入未完整：${reportErrors.join('、')}，請點擊「重試」重新載入。`);
+      } else {
+        setReportDataError(null);
+        hasLoadedAdminDataRef.current = true;
+        setHasLoadedAdminData(true);
+      }
     } catch (err: any) {
+      if (loadRequestIdRef.current !== requestId) return;
       console.error('Error in loadSupabaseStudents:', err);
-      setStudentsError(`載入資料時發生未預期錯誤: ${err.message || String(err)}`);
+      const errText = `載入資料時發生未預期錯誤: ${err?.message || String(err)}`;
+      setStudentsError(errText);
+      setReportDataError(errText);
     } finally {
-      setIsStudentsLoading(false);
-      setIsTermsLoading(false);
+      if (loadRequestIdRef.current === requestId) {
+        isReportDataLoadingRef.current = false;
+        setIsStudentsLoading(false);
+        setIsTermsLoading(false);
+        setIsReportDataLoading(false);
+      }
     }
-  };
+  }, []);
 
   // Reload custom grade weights callback
   const loadGradeWeights = useCallback(async (termId?: string) => {
@@ -569,12 +630,24 @@ export default function App() {
     }
   }, [dbStudents, adminClasses, courses, adminTransferRecords]);
 
-  // Fetch Supabase data whenever user logs in or switches role
+  // Fetch Supabase data whenever user logs in or navigates to reports without cancelling an in-flight load
   useEffect(() => {
-    if (isSupabaseConfigured() && adminProfile) {
+    if (!isSupabaseConfigured() || !adminProfile) return;
+    const profileKey = `${adminProfile.id}_${currentRole}`;
+
+    if (loadedProfileKeyRef.current !== profileKey) {
+      loadedProfileKeyRef.current = profileKey;
+      hasLoadedAdminDataRef.current = false;
+      setHasLoadedAdminData(false);
+      setReportDataError(null);
+      loadSupabaseStudents();
+      return;
+    }
+
+    if (!isReportDataLoadingRef.current) {
       loadSupabaseStudents();
     }
-  }, [adminProfile, adminActiveTab, currentRole]);
+  }, [adminProfile, adminActiveTab, currentRole, loadSupabaseStudents]);
 
   // Admin login success callback
   const handleAdminLoginSuccess = (profile: UserProfile) => {
@@ -606,11 +679,29 @@ export default function App() {
     } catch (e) {
       console.error('Logout error:', e);
     }
+    loadRequestIdRef.current++;
+    loadedProfileKeyRef.current = null;
+    isReportDataLoadingRef.current = false;
+    hasLoadedAdminDataRef.current = false;
+    setHasLoadedAdminData(false);
+    setIsReportDataLoading(false);
+    setReportDataError(null);
     setAdminProfile(null);
     setCurrentTeacher(null);
     setCurrentRole('ADMIN');
+    setAdminActiveTab('admin_dashboard');
     sessionStorage.removeItem(STORAGE_ROLE_KEY);
     setDbStudents([]);
+    setAdminClasses([]);
+    setAdminTerms([]);
+    setAdminTeachers([]);
+    setAdminTransferRecords([]);
+    setCourses([]);
+    setAllGrades({});
+    setGradeWeightsMap({});
+    setAdminLeaves([]);
+    setMakeupRequests([]);
+    setAttendanceAuditLogs([]);
     showToast('已安全登出系統', 'info');
   };
 
@@ -1678,6 +1769,10 @@ export default function App() {
                   allGrades={allGrades}
                   transferRecords={adminTransferRecords}
                   gradeWeightsMap={gradeWeightsMap}
+                  isLoading={isReportDataLoading}
+                  hasLoaded={isSupabaseConfigured() ? hasLoadedAdminData : true}
+                  errorMessage={reportDataError}
+                  onRetry={loadSupabaseStudents}
                   onSelectStudentDetail={(student) => setSelectedStudentForDetail(student)}
                 />
               )}
