@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { getAuthHeaders } from './apiHelper';
 import { 
   Holiday, 
   ClassScheduleRule, 
@@ -766,7 +767,8 @@ export async function fetchCourseSessionsFromSupabase(
     } else {
       try {
         const endpoint = typeof window !== 'undefined' ? '/api/class-sessions' : 'http://localhost:3000/api/class-sessions';
-        const res = await fetch(endpoint);
+        const headers = await getAuthHeaders();
+        const res = await fetch(endpoint, { headers });
         if (res.ok) {
           const json = await res.json();
           if (json.success && Array.isArray(json.data) && json.data.length > 0) {
@@ -826,16 +828,25 @@ export async function fetchCourseSessionsFromSupabase(
       const tch = teacherId ? teacherMap.get(teacherId) : undefined;
       const teacherName = tch?.name || tch?.emp_name || tch?.tea_name || cls?.teacher_name || cls?.teacherName || (teacherId ? '專任教師' : '未指定教師');
 
-      const st = s.start_time ? String(s.start_time).slice(0, 5) : '09:00';
-      const et = s.end_time ? String(s.end_time).slice(0, 5) : '12:00';
-      const pCount = Number(s.periods_count) || 3;
+      const st = s.start_time ? String(s.start_time).slice(0, 5) : '';
+      const et = s.end_time ? String(s.end_time).slice(0, 5) : '';
+      const rawPCount = Number(s.periods_count);
+      const pCount = rawPCount === 2 || rawPCount === 3 || rawPCount === 4 ? rawPCount : (Number.isFinite(rawPCount) ? rawPCount : 0);
 
       let pTimes: string[] = [];
-      if (st === '09:00') {
-        pTimes = ['09:00-09:50', '10:00-10:50', '11:00-11:50'];
-      } else if (st === '13:00') {
-        pTimes = ['13:00-13:50', '14:00-14:50', '15:00-15:50'];
-      } else {
+      if (st && (pCount === 2 || pCount === 3 || pCount === 4)) {
+        const [startH, startM] = st.split(':').map(Number);
+        if (!isNaN(startH) && !isNaN(startM)) {
+          for (let i = 0; i < pCount; i++) {
+            const totalStartMin = startH * 60 + startM + i * 60;
+            const totalEndMin = totalStartMin + 50;
+            const pStart = `${String(Math.floor(totalStartMin / 60) % 24).padStart(2, '0')}:${String(totalStartMin % 60).padStart(2, '0')}`;
+            const pEnd = `${String(Math.floor(totalEndMin / 60) % 24).padStart(2, '0')}:${String(totalEndMin % 60).padStart(2, '0')}`;
+            pTimes.push(`${pStart}-${pEnd}`);
+          }
+        }
+      }
+      if (pTimes.length === 0 && st && et) {
         pTimes = [`${st}-${et}`];
       }
 

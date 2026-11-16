@@ -218,33 +218,33 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl overflow-hidden border border-slate-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-150">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[90dvh] flex flex-col overflow-hidden border border-slate-200 my-auto">
         {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-50 border-b border-slate-200">
-          <div className="flex items-center space-x-2.5">
-            <div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700">
+        <div className="flex items-center justify-between gap-2 px-4 py-3.5 sm:px-6 sm:py-4 bg-slate-50 border-b border-slate-200 shrink-0">
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 shrink-0">
               <Sliders className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="text-base font-bold text-slate-800">
+            <div className="min-w-0">
+              <h3 className="text-sm sm:text-base font-bold text-slate-800 truncate">
                 {isBatch ? `批量設定成績權重 (${targetCount} 位學生)` : `設定成績權重 — ${student?.name || ''}`}
               </h3>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-500 truncate">
                 {termName || '指定學期'} • 六項權重合計必須等於 100%
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+        <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 flex-1 overflow-y-auto">
           {/* Locked warning */}
           {isLocked && (
             <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center space-x-2.5 text-xs text-amber-800">
@@ -287,13 +287,13 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
               </div>
             </div>
           ) : (
-            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs">
-              <div>
+            <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+              <div className="min-w-0">
                 <span className="font-bold text-slate-800">{student?.name}</span>
                 <span className="text-slate-500 font-mono ml-2">{student?.studentNumber}</span>
                 <span className="text-slate-500 ml-2">({student?.className})</span>
               </div>
-              <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+              <span className={`px-2 py-0.5 rounded text-[11px] font-semibold shrink-0 ${
                 currentWeight ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-700'
               }`}>
                 {currentWeight ? '目前：個別自訂權重' : '目前：標準預設權重'}
@@ -303,7 +303,7 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
 
           {/* Weight inputs */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-1.5">
               <label className="text-xs font-bold text-slate-700">六項成績比例設定 (0 ~ 100%)</label>
               {!isLocked && (
                 <button
@@ -311,16 +311,16 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                   onClick={handleApplyDefaults}
                   className="text-xs text-teal-600 hover:text-teal-700 font-semibold flex items-center gap-1 hover:underline"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  填入預設值 (20/15/20/20/15/10)
+                  <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                  <span>填入預設值 (20/15/20/20/15/10)</span>
                 </button>
               )}
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3">
               {/* 出席成績 */}
-              <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between text-xs text-slate-600 font-medium">
+              <div className="p-2.5 sm:p-3 bg-white rounded-xl border border-slate-200 space-y-1">
+                <div className="flex flex-wrap items-center justify-between gap-x-1 text-[11px] sm:text-xs text-slate-600 font-medium">
                   <span>🕒 出席成績</span>
                   <span className="text-[10px] text-slate-400">預設 20%</span>
                 </div>
@@ -335,15 +335,15 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                     onFocus={(e) => e.target.select()}
                     onClick={(e) => (e.target as HTMLInputElement).select()}
                     placeholder=""
-                    className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    className="w-full pr-7 pl-2.5 py-1.5 text-base sm:text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
                 </div>
               </div>
 
               {/* 平時測驗 */}
-              <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between text-xs text-slate-600 font-medium">
+              <div className="p-2.5 sm:p-3 bg-white rounded-xl border border-slate-200 space-y-1">
+                <div className="flex flex-wrap items-center justify-between gap-x-1 text-[11px] sm:text-xs text-slate-600 font-medium">
                   <span>✏️ 平時測驗</span>
                   <span className="text-[10px] text-slate-400">預設 15%</span>
                 </div>
@@ -358,15 +358,15 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                     onFocus={(e) => e.target.select()}
                     onClick={(e) => (e.target as HTMLInputElement).select()}
                     placeholder=""
-                    className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    className="w-full pr-7 pl-2.5 py-1.5 text-base sm:text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
                 </div>
               </div>
 
               {/* 期中考試 */}
-              <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between text-xs text-slate-600 font-medium">
+              <div className="p-2.5 sm:p-3 bg-white rounded-xl border border-slate-200 space-y-1">
+                <div className="flex flex-wrap items-center justify-between gap-x-1 text-[11px] sm:text-xs text-slate-600 font-medium">
                   <span>📝 期中考試</span>
                   <span className="text-[10px] text-slate-400">預設 20%</span>
                 </div>
@@ -381,15 +381,15 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                     onFocus={(e) => e.target.select()}
                     onClick={(e) => (e.target as HTMLInputElement).select()}
                     placeholder=""
-                    className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    className="w-full pr-7 pl-2.5 py-1.5 text-base sm:text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
                 </div>
               </div>
 
               {/* 期末考試 */}
-              <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between text-xs text-slate-600 font-medium">
+              <div className="p-2.5 sm:p-3 bg-white rounded-xl border border-slate-200 space-y-1">
+                <div className="flex flex-wrap items-center justify-between gap-x-1 text-[11px] sm:text-xs text-slate-600 font-medium">
                   <span>🎓 期末考試</span>
                   <span className="text-[10px] text-slate-400">預設 20%</span>
                 </div>
@@ -404,15 +404,15 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                     onFocus={(e) => e.target.select()}
                     onClick={(e) => (e.target as HTMLInputElement).select()}
                     placeholder=""
-                    className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    className="w-full pr-7 pl-2.5 py-1.5 text-base sm:text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
                 </div>
               </div>
 
               {/* 作業習作 */}
-              <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between text-xs text-slate-600 font-medium">
+              <div className="p-2.5 sm:p-3 bg-white rounded-xl border border-slate-200 space-y-1">
+                <div className="flex flex-wrap items-center justify-between gap-x-1 text-[11px] sm:text-xs text-slate-600 font-medium">
                   <span>📚 作業習作</span>
                   <span className="text-[10px] text-slate-400">預設 15%</span>
                 </div>
@@ -427,15 +427,15 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                     onFocus={(e) => e.target.select()}
                     onClick={(e) => (e.target as HTMLInputElement).select()}
                     placeholder=""
-                    className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    className="w-full pr-7 pl-2.5 py-1.5 text-base sm:text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
                 </div>
               </div>
 
               {/* 學習態度 */}
-              <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
-                <div className="flex items-center justify-between text-xs text-slate-600 font-medium">
+              <div className="p-2.5 sm:p-3 bg-white rounded-xl border border-slate-200 space-y-1">
+                <div className="flex flex-wrap items-center justify-between gap-x-1 text-[11px] sm:text-xs text-slate-600 font-medium">
                   <span>🌟 學習態度</span>
                   <span className="text-[10px] text-slate-400">預設 10%</span>
                 </div>
@@ -450,7 +450,7 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                     onFocus={(e) => e.target.select()}
                     onClick={(e) => (e.target as HTMLInputElement).select()}
                     placeholder=""
-                    className="w-full pr-7 pl-2.5 py-1.5 text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
+                    className="w-full pr-7 pl-2.5 py-1.5 text-base sm:text-sm font-mono font-bold text-slate-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none disabled:bg-slate-100 disabled:cursor-not-allowed"
                   />
                   <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">%</span>
                 </div>
@@ -458,16 +458,16 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
             </div>
 
             {/* Sum validation indicator */}
-            <div className={`p-3 rounded-xl border flex items-center justify-between text-xs ${
+            <div className={`p-3 rounded-xl border flex flex-wrap items-center justify-between gap-1.5 text-xs ${
               isSumValid
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                 : 'bg-amber-50 border-amber-200 text-amber-800'
             }`}>
               <div className="flex items-center space-x-2">
                 {isSumValid ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                 ) : (
-                  <AlertCircle className="w-4 h-4 text-amber-600" />
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
                 )}
                 <span>
                   {isSumValid
@@ -475,7 +475,7 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
                     : `目前合計: ${totalSum}%（必須等於 100%，尚差 ${100 - totalSum}%）`}
                 </span>
               </div>
-              <span className="font-mono font-bold text-sm">{totalSum}% / 100%</span>
+              <span className="font-mono font-bold text-sm shrink-0">{totalSum}% / 100%</span>
             </div>
           </div>
 
@@ -490,7 +490,7 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
               placeholder="例如：個別化學習專案調整、轉班學分採計認定..."
               value={changeReason}
               onChange={(e) => setChangeReason(e.target.value)}
-              className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:outline-none bg-white text-slate-800 disabled:bg-slate-100 disabled:cursor-not-allowed"
+              className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:outline-none bg-white text-slate-800 disabled:bg-slate-100 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -530,14 +530,14 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-50 border-t border-slate-200">
-          <div>
+        <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-2.5 px-4 py-3.5 sm:px-6 sm:py-4 bg-slate-50 border-t border-slate-200 shrink-0">
+          <div className="flex justify-center sm:justify-start">
             {!isLocked && (((!isBatch && currentWeight) || isBatch)) ? (
               <button
                 type="button"
                 onClick={() => setIsResetConfirmOpen(true)}
                 disabled={isSubmitting}
-                className="text-xs text-rose-600 hover:text-rose-700 font-semibold hover:underline flex items-center gap-1"
+                className="text-xs text-rose-600 hover:text-rose-700 font-semibold hover:underline flex items-center gap-1 py-1"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 恢復預設權重
@@ -545,12 +545,12 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
             ) : null}
           </div>
 
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center gap-2 sm:space-x-3 sm:gap-0 w-full sm:w-auto">
             <button
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors"
+              className="flex-1 sm:flex-none px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors text-center"
             >
               取消
             </button>
@@ -558,7 +558,7 @@ export const GradeWeightConfigModal: React.FC<GradeWeightConfigModalProps> = ({
               type="button"
               onClick={handleSubmit}
               disabled={!canSubmit}
-              className="px-5 py-2 text-xs font-bold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-xs transition-colors"
+              className="flex-1 sm:flex-none px-4 sm:px-5 py-2 text-xs font-bold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-xs transition-colors text-center whitespace-nowrap"
             >
               {isSubmitting ? '儲存中...' : isBatch ? `套用至 ${targetCount} 位學生` : '儲存權重設定'}
             </button>

@@ -91,6 +91,43 @@ function calculateNextTeacherNo(teachers: any[]): string {
   return `T${nextNum}`;
 }
 
+async function verifyCallerRole(req: any, requireAdmin: boolean) {
+  const rawAuth = req.headers?.authorization || req.headers?.Authorization || '';
+  const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return { ok: false as const, status: 401, error: '未授權：缺少認證權杖 (Bearer Token)' };
+  }
+  const token = authHeader.slice(7).trim();
+  if (!token) {
+    return { ok: false as const, status: 401, error: '未授權：缺少有效的認證權杖' };
+  }
+  const supabaseUrl = getValidSupabaseUrl();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
+  const activeKey = serviceRoleKey || anonKey;
+  const authClient = createClient(supabaseUrl, activeKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    ...(serviceRoleKey ? {} : { global: { headers: { Authorization: `Bearer ${token}` } } }),
+  });
+  const { data: userData, error: userErr } = await authClient.auth.getUser(token);
+  if (userErr || !userData?.user) {
+    return { ok: false as const, status: 401, error: '未授權：無效或已過期的登入憑證' };
+  }
+  const { data: profile, error: profErr } = await authClient
+    .from('profiles')
+    .select('id, role, is_active')
+    .eq('id', userData.user.id)
+    .maybeSingle();
+  if (profErr || !profile || profile.is_active === false) {
+    return { ok: false as const, status: 403, error: '無權限：帳號已停用或未設定系統角色' };
+  }
+  const role = String(profile.role || '').toUpperCase();
+  if (requireAdmin && role !== 'ADMIN') {
+    return { ok: false as const, status: 403, error: '無權限：僅管理員可執行此操作' };
+  }
+  return { ok: true as const, userId: userData.user.id, role };
+}
+
 export default async function handler(req: any, res: any) {
   // Global try-catch surrounding the entire request lifecycle
   try {
@@ -99,6 +136,14 @@ export default async function handler(req: any, res: any) {
       return sendJsonResponse(res, 405, {
         success: false,
         error: 'Method Not Allowed, please use POST',
+      });
+    }
+
+    const caller = await verifyCallerRole(req, true);
+    if (!caller.ok) {
+      return sendJsonResponse(res, caller.status, {
+        success: false,
+        error: caller.error,
       });
     }
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   ArrowLeft, 
   CheckCircle2, 
@@ -23,13 +23,16 @@ import {
   Student, 
   StudentPeriodAttendance, 
   AttendanceStatus, 
-  LeaveRecord 
+  LeaveRecord,
+  AttendanceMakeupRequest,
+  MakeupRequestType
 } from '../types';
 import { StudentAvatar } from './StudentAvatar';
 import { StudentRemarkModal } from './StudentRemarkModal';
 import { 
   calculateAttendanceStats, 
-  getDefaultAttendanceForStudents, 
+  getDefaultAttendanceForStudents,
+  buildNormalizedAttendanceMap,
   applyApprovedLeaves,
   getStudentIndividualHours 
 } from '../utils/attendanceUtils';
@@ -39,10 +42,23 @@ interface AttendanceSheetProps {
   course: CourseSession;
   students: Student[];
   leaveRecords: LeaveRecord[];
-  onSave: (courseId: string, attendanceData: { [studentId: string]: StudentPeriodAttendance }, status: 'in_progress' | 'completed') => void;
+  onSave: (
+    courseId: string,
+    attendanceData: { [studentId: string]: StudentPeriodAttendance },
+    status: 'in_progress' | 'completed',
+    makeupRequest?: AttendanceMakeupRequest | null
+  ) => void | Promise<boolean | void>;
   onBack: () => void;
-  onShowToast: (message: string, type?: 'success' | 'info' | 'warning') => void;
+  onShowToast: (message: string, type?: 'success' | 'info' | 'warning' | 'error') => void;
   isReadOnly?: boolean;
+  isTermLocked?: boolean;
+  currentProfileId?: string;
+  isAdmin?: boolean;
+  makeupRequests?: AttendanceMakeupRequest[];
+  onSubmitMakeupRequest?: (params: {
+    requestType: MakeupRequestType;
+    reason: string;
+  }) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
@@ -53,8 +69,19 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
   onBack,
   onShowToast,
   isReadOnly: explicitReadOnly = false,
+  isTermLocked = false,
+  currentProfileId,
+  isAdmin = false,
+  makeupRequests = [],
+  onSubmitMakeupRequest,
 }) => {
-  const periodsCount = course.periodsCount || 3;
+  const rawPeriodsCount = Number(course.periodsCount);
+  const hasValidSchedule = Boolean(
+    (rawPeriodsCount === 2 || rawPeriodsCount === 3 || rawPeriodsCount === 4) &&
+      (course.startTime || '').trim() &&
+      (course.endTime || '').trim()
+  );
+  const periodsCount = rawPeriodsCount === 2 || rawPeriodsCount === 3 || rawPeriodsCount === 4 ? rawPeriodsCount : 3;
   const is3H = periodsCount >= 3;
   const is4H = periodsCount >= 4;
 
@@ -63,15 +90,82 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
   const todayDateStr = getTodayDateStr();
   const daysSinceCourse = getDaysDifference(todayDateStr, course.date);
   const isOverdue = course.date < todayDateStr && daysSinceCourse > 7;
-  const isReadOnly = explicitReadOnly || isOverdue || course.isLocked;
+  const isHardLocked = Boolean(
+    isTermLocked ||
+      course.isCancelled ||
+      course.isSuspended ||
+      course.status === 'holiday' ||
+      course.status === 'rescheduled_out'
+  );
 
-  // Initialize state: default to all present
-  const [attendance, setAttendance] = useState<{ [studentId: string]: StudentPeriodAttendance }>(() => {
-    if (course.attendanceData && Object.keys(course.attendanceData).length > 0) {
-      return JSON.parse(JSON.stringify(course.attendanceData));
+  // Match makeup requests for this exact (classId, sessionDate)
+  const sessionMakeupRequests = useMemo(() => {
+    return (makeupRequests || [])
+      .filter((r) => r.classId === course.classId && r.sessionDate === course.date)
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }, [makeupRequests, course.classId, course.date]);
+
+  const rawApprovedRequest = useMemo(
+    () => sessionMakeupRequests.find((r) => r.status === 'APPROVED') || null,
+    [sessionMakeupRequests]
+  );
+  const isApprovedByOtherRequester = Boolean(
+    rawApprovedRequest &&
+      !isAdmin &&
+      currentProfileId &&
+      rawApprovedRequest.requesterProfileId &&
+      rawApprovedRequest.requesterProfileId !== currentProfileId
+  );
+  const activeApprovedRequest = isApprovedByOtherRequester ? null : rawApprovedRequest;
+
+  const pendingMakeupRequest = useMemo(
+    () => sessionMakeupRequests.find((r) => r.status === 'PENDING') || null,
+    [sessionMakeupRequests]
+  );
+  const latestRejectedRequest = useMemo(
+    () => (sessionMakeupRequests[0]?.status === 'REJECTED' ? sessionMakeupRequests[0] : null),
+    [sessionMakeupRequests]
+  );
+  const latestCompletedRequest = useMemo(
+    () => (sessionMakeupRequests[0]?.status === 'COMPLETED' ? sessionMakeupRequests[0] : null),
+    [sessionMakeupRequests]
+  );
+
+  const isUnlockedByMakeup = Boolean(
+    isOverdue && !isHardLocked && !explicitReadOnly && hasValidSchedule && activeApprovedRequest
+  );
+  const isReadOnly =
+    explicitReadOnly ||
+    isHardLocked ||
+    !hasValidSchedule ||
+    (isOverdue && !isUnlockedByMakeup) ||
+    (!isOverdue && Boolean(course.isLocked));
+
+  const [isSaving, setIsSaving] = useState(false);
+  const [isMakeupModalOpen, setIsMakeupModalOpen] = useState(false);
+  const [makeupRequestType, setMakeupRequestType] = useState<MakeupRequestType>(
+    course.status === 'completed' ? 'EDIT' : 'MAKEUP'
+  );
+  const [makeupReason, setMakeupReason] = useState('');
+  const [isSubmittingMakeup, setIsSubmittingMakeup] = useState(false);
+
+  // Initialize state covering EVERY student in the session roster (prevents partial-roster RPC rejection)
+  const [attendance, setAttendance] = useState<{ [studentId: string]: StudentPeriodAttendance }>(() =>
+    buildNormalizedAttendanceMap(students, course.attendanceData, periodsCount)
+  );
+  const sessionSyncKeyRef = useRef<string>(`${course.id}_${course.date}_${periodsCount}`);
+
+  useEffect(() => {
+    const nextKey = `${course.id}_${course.date}_${periodsCount}`;
+    if (sessionSyncKeyRef.current !== nextKey) {
+      sessionSyncKeyRef.current = nextKey;
+      setAttendance(buildNormalizedAttendanceMap(students, course.attendanceData, periodsCount));
+      setSelectedStudentIds(new Set());
+    } else {
+      // Same session: preserve user edits while ensuring newly added roster students exist & stale keys removed
+      setAttendance((prev) => buildNormalizedAttendanceMap(students, prev, periodsCount));
     }
-    return getDefaultAttendanceForStudents(students, periodsCount);
-  });
+  }, [course.id, course.date, periodsCount, course.attendanceData, students]);
 
   const [modalStudent, setModalStudent] = useState<Student | null>(null);
   const [filterQuery, setFilterQuery] = useState<string>('');
@@ -82,13 +176,13 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
     return calculateAttendanceStats(students, attendance, periodsCount);
   }, [students, attendance, periodsCount]);
 
-  // Live count of actual present students (實到人數)
+  // Live count of actual present students (實到人數：當日所有應上課節次皆為出席者始計入)
   const actualPresentStudentsCount = useMemo(() => {
     return students.filter((s) => {
       const record = attendance[s.id];
       if (!record) return false;
       const periods = [record.period1, record.period2, record.period3, record.period4].slice(0, periodsCount);
-      return periods.some((p) => p === 'present');
+      return periods.length > 0 && periods.every((p) => p === 'present');
     }).length;
   }, [students, attendance, periodsCount]);
 
@@ -276,19 +370,69 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
     onShowToast('學生點名備註與佐證資料已更新', 'success');
   };
 
-  // Submit Handler
-  const handleSubmit = (targetStatus: 'in_progress' | 'completed') => {
-    onSave(course.id, attendance, targetStatus);
-    onShowToast(
-      targetStatus === 'completed'
-        ? `🎉 點名已完成！${course.courseName}（${course.className}）出席率 ${stats.attendanceRate}%`
-        : `點名紀錄已暫存為「進行中」`,
-      'success'
-    );
+  // Submit Handler (awaits backend persistence before confirming)
+  const handleSubmit = async (targetStatus: 'in_progress' | 'completed') => {
+    if (isSaving) return;
+    if (!hasValidSchedule) {
+      onShowToast('此課堂缺少有效的排課節數（2/3/4 小時制）或上課起訖時間設定，請聯繫行政端確認排課設定。', 'warning');
+      return;
+    }
+    if (!students || students.length === 0) {
+      onShowToast('此課堂目前查無應到學生名單，無法送出點名紀錄', 'warning');
+      return;
+    }
+
+    const normalizedPayload = buildNormalizedAttendanceMap(students, attendance, periodsCount);
+    setIsSaving(true);
+    try {
+      const result = await onSave(
+        course.id,
+        normalizedPayload,
+        targetStatus,
+        isUnlockedByMakeup ? activeApprovedRequest : null
+      );
+      if (result === false || result === true) {
+        return;
+      }
+      onShowToast(
+        targetStatus === 'completed'
+          ? `點名已完成！${course.courseName}（${course.className}）應到 ${students.length} 人／實到 ${actualPresentStudentsCount} 人`
+          : `點名紀錄已暫存為「進行中」`,
+        'success'
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleMakeupSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onSubmitMakeupRequest) return;
+    const cleanReason = makeupReason.trim();
+    if (!cleanReason) {
+      onShowToast('請填寫補點名或修改原因', 'warning');
+      return;
+    }
+    setIsSubmittingMakeup(true);
+    try {
+      const res = await onSubmitMakeupRequest({
+        requestType: makeupRequestType,
+        reason: cleanReason,
+      });
+      if (res.success) {
+        setIsMakeupModalOpen(false);
+        setMakeupReason('');
+        onShowToast('已送出補點名申請，請靜候管理員審核。', 'success');
+      } else {
+        onShowToast(res.error || '送出補點名申請失敗', 'warning');
+      }
+    } finally {
+      setIsSubmittingMakeup(false);
+    }
   };
 
   return (
-    <div className="space-y-4 sm:space-y-5 pb-36 sm:pb-28">
+    <div className="space-y-4 sm:space-y-5 pb-44 sm:pb-28">
       {/* Top Breadcrumb & Header Bar */}
       <div className="bg-white rounded-2xl border border-slate-200 p-3.5 sm:p-5 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
@@ -304,21 +448,21 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
               </button>
             </div>
 
-            <div className="mt-2.5 flex flex-wrap items-center gap-2 sm:gap-3">
-              <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 sm:gap-3">
+              <h1 className="text-lg sm:text-2xl font-black text-slate-900 tracking-tight break-words">
                 {course.courseName}
               </h1>
               <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-teal-600 text-white shrink-0">
                 {course.className}
               </span>
-              <span className="px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-slate-900 text-white shrink-0">
+              <span className="px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-slate-900 text-white max-w-full break-words">
                 {course.date} ({course.timeSlot})
               </span>
               <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 border border-slate-300 shrink-0">
                 {periodsCount} 節課制
               </span>
               {course.rescheduleInfo && (
-                <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-100 text-blue-800 border border-blue-200 shrink-0">
+                <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-100 text-blue-800 border border-blue-200 max-w-full break-words">
                   🔵 補課／調課堂次（原定 {course.rescheduleInfo.originalDate}）
                 </span>
               )}
@@ -337,33 +481,126 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
               <span className="hidden sm:inline">•</span>
               <span className="flex items-center font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
                 <Users className="w-3.5 h-3.5 mr-1.5 text-teal-600 shrink-0" />
-                <span>應到 {students.length} 人 / 實到 {actualPresentStudentsCount} 人</span>
+                <span>應到 {students.length} 人／實到 {actualPresentStudentsCount} 人</span>
               </span>
             </div>
           </div>
 
           {/* Quick Status Tag on top right */}
-          <div className="flex flex-col items-start md:items-end justify-center shrink-0">
-            {isOverdue ? (
-              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-slate-200 text-slate-700 border border-slate-300">
-                <Lock className="w-3.5 h-3.5 mr-1" />
-                🔒 已超過補點名期限 (逾一週鎖定)
+          <div className="flex flex-col items-start md:items-end justify-center max-w-full">
+            {isUnlockedByMakeup ? (
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 max-w-full text-center sm:text-left">
+                ✓ 補點名已核准（單次修改開放中）
+              </span>
+            ) : isOverdue ? (
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-slate-200 text-slate-700 border border-slate-300 max-w-full">
+                <Lock className="w-3.5 h-3.5 mr-1 shrink-0" />
+                <span>🔒 已超過補點名期限 (逾七天鎖定)</span>
               </span>
             ) : isReadOnly ? (
-              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-slate-200 text-slate-700">
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-slate-200 text-slate-700 max-w-full">
                 🔒 僅供檢視紀錄
               </span>
             ) : course.status === 'completed' ? (
-              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 max-w-full">
                 🟢 已完成狀態 (可再次修改更新)
               </span>
             ) : (
-              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300 max-w-full">
                 🟠 待點名 / 點名編輯中
               </span>
             )}
           </div>
         </div>
+
+        {/* Invalid schedule or hard-lock banner */}
+        {!hasValidSchedule && !isHardLocked && (
+          <div className="mt-4 p-3.5 rounded-xl border bg-rose-50 border-rose-200 text-rose-900 flex items-start space-x-2.5 text-xs">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+            <div>
+              <div className="font-bold">此堂課排課節數或上課時間設定不完整</div>
+              <div className="text-[11px] text-rose-800 mt-0.5">
+                僅支援排定明確上課起訖時間與 2 / 3 / 4 小時制之課堂進行點名或補點名申請，請聯繫中心行政人員確認課表。
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Over-7-Day Lock / Makeup Request Banner */}
+        {isOverdue && !isHardLocked && !explicitReadOnly && hasValidSchedule && (
+          <div
+            className={`mt-4 p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+              isUnlockedByMakeup
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                : 'bg-amber-50 border-amber-200 text-amber-950'
+            }`}
+          >
+            <div className="flex items-start space-x-2.5 text-xs">
+              <AlertCircle
+                className={`w-4 h-4 shrink-0 mt-0.5 ${
+                  isUnlockedByMakeup ? 'text-emerald-600' : 'text-amber-600'
+                }`}
+              />
+              <div className="space-y-1">
+                {isUnlockedByMakeup ? (
+                  <>
+                    <div className="font-bold">
+                      管理員已核准您的補點名申請（單次有效）
+                    </div>
+                    <div className="text-[11px] text-emerald-800">
+                      本次修改儲存成功後，系統將自動重新鎖定本堂點名紀錄並留下異動稽核紀錄。
+                      {activeApprovedRequest?.reviewNotes
+                        ? ` 審核備註：${activeApprovedRequest.reviewNotes}`
+                        : ''}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="font-bold">
+                      此課堂已超過可直接修改期限，如需補點名或修改紀錄，請提出申請。
+                    </div>
+                    {isApprovedByOtherRequester && (
+                      <div className="text-[11px] font-semibold text-amber-800">
+                        此課堂已有其他申請人取得單次補點名核准，僅原申請人或管理員可送出。
+                      </div>
+                    )}
+                    {pendingMakeupRequest && (
+                      <div className="text-[11px] font-semibold text-amber-800">
+                        審核狀態：待管理員審核中（申請類型：{pendingMakeupRequest.requestType === 'EDIT' ? '修改既有點名' : '補點名'}）
+                      </div>
+                    )}
+                    {!pendingMakeupRequest && latestRejectedRequest && (
+                      <div className="text-[11px] font-semibold text-rose-700">
+                        前次申請已駁回{latestRejectedRequest.reviewNotes ? `（原因：${latestRejectedRequest.reviewNotes}）` : ''}，您可重新提出申請。
+                      </div>
+                    )}
+                    {!pendingMakeupRequest && latestCompletedRequest && (
+                      <div className="text-[11px] font-semibold text-slate-600">
+                        前次核准補點名已於 {latestCompletedRequest.usedAt ? latestCompletedRequest.usedAt.slice(0, 16).replace('T', ' ') : ''} 使用完畢並重新鎖定。
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {!isUnlockedByMakeup && !isApprovedByOtherRequester && onSubmitMakeupRequest && (
+              <button
+                id="btn-request-makeup"
+                type="button"
+                disabled={Boolean(pendingMakeupRequest)}
+                onClick={() => {
+                  setMakeupRequestType(course.status === 'completed' ? 'EDIT' : 'MAKEUP');
+                  setMakeupReason('');
+                  setIsMakeupModalOpen(true);
+                }}
+                className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold shrink-0 transition-colors cursor-pointer bg-amber-600 hover:bg-amber-700 text-white disabled:bg-slate-300 disabled:text-slate-600 disabled:cursor-not-allowed text-center"
+              >
+                {pendingMakeupRequest ? '審核中（不可重複申請）' : '申請補點名'}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Quick Batch Actions & Filter Bar */}
@@ -411,7 +648,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
             placeholder="搜尋學生姓名 / 學號 / 國籍..."
             value={filterQuery}
             onChange={(e) => setFilterQuery(e.target.value)}
-            className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+            className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
           />
         </div>
       </div>
@@ -839,19 +1076,19 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                         key={pNum}
                         className="flex items-center justify-between gap-2 p-2 bg-slate-50/80 rounded-xl border border-slate-200/70"
                       >
-                        <div className="w-20 shrink-0">
+                        <div className="w-[70px] sm:w-20 shrink-0">
                           <div className="text-xs font-bold text-slate-800">第 {pNum} 節</div>
                           {timeLabel && (
                             <div className="text-[10px] text-slate-400 font-mono truncate">{timeLabel}</div>
                           )}
                         </div>
 
-                        <div className="flex-1 grid grid-cols-3 gap-1.5 max-w-[220px]">
+                        <div className="flex-1 grid grid-cols-3 gap-1 sm:gap-1.5 max-w-[230px]">
                           <button
                             type="button"
                             disabled={isReadOnly}
                             onClick={() => handleSetPeriodStatus(student.id, field as any, 'present')}
-                            className={`py-1.5 text-xs font-bold rounded-lg transition-all text-center ${
+                            className={`py-2 sm:py-1.5 text-xs font-bold rounded-lg transition-all text-center ${
                               curStatus === 'present'
                                 ? 'bg-emerald-600 text-white shadow-xs'
                                 : 'bg-white text-slate-600 border border-slate-200 hover:bg-emerald-50 hover:text-emerald-700'
@@ -863,7 +1100,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                             type="button"
                             disabled={isReadOnly}
                             onClick={() => handleSetPeriodStatus(student.id, field as any, 'leave')}
-                            className={`py-1.5 text-xs font-bold rounded-lg transition-all text-center ${
+                            className={`py-2 sm:py-1.5 text-xs font-bold rounded-lg transition-all text-center ${
                               curStatus === 'leave'
                                 ? 'bg-blue-600 text-white shadow-xs'
                                 : 'bg-white text-slate-600 border border-slate-200 hover:bg-blue-50 hover:text-blue-700'
@@ -875,7 +1112,7 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
                             type="button"
                             disabled={isReadOnly}
                             onClick={() => handleSetPeriodStatus(student.id, field as any, 'absent')}
-                            className={`py-1.5 text-xs font-bold rounded-lg transition-all text-center ${
+                            className={`py-2 sm:py-1.5 text-xs font-bold rounded-lg transition-all text-center ${
                               curStatus === 'absent'
                                 ? 'bg-rose-600 text-white shadow-xs'
                                 : 'bg-white text-slate-600 border border-slate-200 hover:bg-rose-50 hover:text-rose-700'
@@ -949,33 +1186,125 @@ export const AttendanceSheet: React.FC<AttendanceSheetProps> = ({
 
       {/* Floating Bottom Sticky Action Bar */}
       {!isReadOnly && (
-        <div className="fixed bottom-3 sm:bottom-4 left-3 sm:left-4 lg:left-72 right-3 sm:right-4 z-40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/95 backdrop-blur-md text-white p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-slate-700 pb-safe">
+        <div className="fixed bottom-3 sm:bottom-4 left-3 sm:left-4 lg:left-72 right-3 sm:right-4 z-40 flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 bg-slate-900/95 backdrop-blur-md text-white p-3 sm:p-4 rounded-2xl shadow-2xl border border-slate-700 pb-safe">
           <div className="flex items-center space-x-3">
             <div>
-              <span className="text-[11px] text-slate-400">目前點名進度</span>
-              <div className="text-xs sm:text-sm font-extrabold text-white">
-                全堂出席率 <span className="text-teal-400 font-mono text-sm sm:text-base">{stats.attendanceRate}%</span> (實到 {stats.totalPresentHours} / 應到 {stats.totalHours} 小時)
+              <span className="text-[11px] text-slate-400">
+                {isUnlockedByMakeup ? '補點名開放中（送出後將鎖定）' : '目前點名統計'}
+              </span>
+              <div id="attendance-headcount-summary" className="text-xs sm:text-sm font-extrabold text-white">
+                應到 <span className="text-slate-200 font-mono text-sm sm:text-base">{students.length}</span> 人／實到 <span className="text-teal-400 font-mono text-sm sm:text-base">{actualPresentStudentsCount}</span> 人
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:flex items-center gap-2 sm:space-x-3">
-            <button
-              id="btn-save-draft"
-              onClick={() => handleSubmit('in_progress')}
-              className="w-full sm:w-auto px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-xl text-xs font-bold transition-colors text-center"
-            >
-              暫存草稿
-            </button>
+          <div className={`grid ${isUnlockedByMakeup ? 'grid-cols-1' : 'grid-cols-2'} sm:flex items-center gap-2 sm:space-x-3`}>
+            {!isUnlockedByMakeup && (
+              <button
+                id="btn-save-draft"
+                disabled={isSaving}
+                onClick={() => handleSubmit('in_progress')}
+                className="w-full sm:w-auto px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-xl text-xs font-bold transition-colors text-center disabled:opacity-50"
+              >
+                {isSaving ? '儲存中...' : '暫存草稿'}
+              </button>
+            )}
 
             <button
               id="btn-submit-attendance"
+              disabled={isSaving}
               onClick={() => handleSubmit('completed')}
-              className="w-full sm:w-auto flex items-center justify-center space-x-1.5 px-4 sm:px-6 py-2.5 bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white rounded-xl text-xs font-extrabold shadow-lg shadow-teal-900/50 transition-all hover:scale-[1.02] text-center"
+              className="w-full sm:w-auto flex items-center justify-center space-x-1.5 px-4 sm:px-6 py-2.5 bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white rounded-xl text-xs font-extrabold shadow-lg shadow-teal-900/50 transition-all hover:scale-[1.02] text-center disabled:opacity-50"
             >
               <CheckCircle2 className="w-4 h-4 shrink-0" />
-              <span>完成點名並送出</span>
+              <span>{isSaving ? '送出中...' : isUnlockedByMakeup ? '完成補點名並送出' : '完成點名並送出'}</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Makeup Attendance Request Modal */}
+      {isMakeupModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md max-h-[90dvh] flex flex-col overflow-hidden my-auto">
+            <div className="px-4 sm:px-5 py-3.5 sm:py-4 bg-slate-900 text-white flex items-center justify-between gap-2 shrink-0">
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold truncate">申請逾七天補點名／修改紀錄</h3>
+                <p className="text-[11px] text-slate-300 mt-0.5 truncate">
+                  {course.className} • {course.date} ({course.timeSlot})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMakeupModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleMakeupSubmit} className="p-4 sm:p-5 space-y-4 flex-1 overflow-y-auto">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">申請類型</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setMakeupRequestType('MAKEUP')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-colors ${
+                      makeupRequestType === 'MAKEUP'
+                        ? 'bg-teal-50 border-teal-500 text-teal-800'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    補點名
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMakeupRequestType('EDIT')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-colors ${
+                      makeupRequestType === 'EDIT'
+                        ? 'bg-teal-50 border-teal-500 text-teal-800'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    修改既有點名
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="makeup-reason-input" className="block text-xs font-bold text-slate-700 mb-1.5">
+                  申請原因 <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  id="makeup-reason-input"
+                  rows={3}
+                  value={makeupReason}
+                  onChange={(e) => setMakeupReason(e.target.value)}
+                  placeholder="請說明需補點名或修改既有紀錄的原因..."
+                  className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 sm:space-x-2 sm:gap-0 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsMakeupModalOpen(false)}
+                  disabled={isSubmittingMakeup}
+                  className="w-full sm:w-auto px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl text-center"
+                >
+                  取消
+                </button>
+                <button
+                  id="btn-confirm-makeup-request"
+                  type="submit"
+                  disabled={isSubmittingMakeup}
+                  className="w-full sm:w-auto px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl disabled:opacity-50 text-center"
+                >
+                  {isSubmittingMakeup ? '送出中...' : '送出申請'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

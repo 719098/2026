@@ -20,7 +20,12 @@
   scrollbar-color: rgba(100, 116, 139, 0.6) transparent;
 }
 .floating-scrollbar::-webkit-scrollbar {
-  height: 6px;
+  height: 8px;
+}
+@media (min-width: 640px) {
+  .floating-scrollbar::-webkit-scrollbar {
+    height: 6px;
+  }
 }
 .floating-scrollbar::-webkit-scrollbar-track {
   background: transparent;

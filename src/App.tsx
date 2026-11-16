@@ -14,6 +14,7 @@ import { AttendanceHistoryView } from './components/AttendanceHistoryView';
 import { AttendanceStatsView } from './components/AttendanceStatsView';
 import { GradeManagementView } from './components/GradeManagementView';
 import { StudentDetailModal } from './components/StudentDetailModal';
+import { TeacherPasswordModal } from './components/TeacherPasswordModal';
 import { ToastNotification, ToastItem } from './components/ToastNotification';
 import { AdminLoginView } from './components/AdminLoginView';
 import { calculateStudentAttendanceHistory } from './utils/attendanceUtils';
@@ -51,7 +52,6 @@ import {
   deleteTeacherInSupabase,
   toggleTeacherStatusInSupabase,
   updateTeacherClassAssignmentsInSupabase,
-  mapDbToTeacher,
   fetchTeacherWithClassesByProfileId
 } from './lib/teacherService';
 import {
@@ -61,7 +61,11 @@ import {
   saveAttendanceToSupabase,
   fetchLeavesFromSupabase,
   createLeaveInSupabase,
-  updateLeaveStatusInSupabase
+  updateLeaveStatusInSupabase,
+  fetchMakeupRequestsFromSupabase,
+  submitMakeupRequestToSupabase,
+  reviewMakeupRequestInSupabase,
+  fetchAttendanceAuditLogsFromSupabase
 } from './lib/attendanceService';
 import { fetchGradeWeightsForTerm, fetchAllGradeWeights, resolveStudentGradeWeight } from './lib/gradeWeightService';
 
@@ -91,23 +95,13 @@ import {
   Term,
   TransferClassRecord,
   LeaveRecord,
-  StudentGradeWeight
+  StudentGradeWeight,
+  AttendanceMakeupRequest,
+  AttendanceAuditLog,
+  MakeupRequestType
 } from './types';
-const DEFAULT_TEACHER: Teacher = {
-  id: 'T-001',
-  name: '林明學',
-  title: '高級華語講師',
-  email: 'lin@pu.edu.tw',
-  department: '華語文教學中心',
-  office: '博愛大樓 302 室',
-  phone: '04-26328001 #17011',
-  avatarUrl: undefined,
-  term: '2026 夏季班',
-  assignedClasses: ['初級華語一', '中級華語二', '高級華語三'],
-};
 import { generateDateStrip, formatDateFull, getAdjacentDate } from './utils/dateUtils';
-import { generateFullQuarterCourses, getTodayDateStr } from './utils/quarterScheduler';
-import { generateAllInitialGrades } from './utils/gradeUtils';
+import { getTodayDateStr, getDaysDifference } from './utils/quarterScheduler';
 import { 
   Coffee, 
   CalendarX2, 
@@ -120,12 +114,9 @@ import {
 
 const STORAGE_ROLE_KEY = 'clc_user_role_v2';
 const STORAGE_COURSES_KEY = 'clc_quarter_courses_v5';
-const STORAGE_GRADES_KEY = 'clc_quarter_grades_v5';
 const STORAGE_ADMIN_CLASSES_KEY = 'clc_admin_classes_v2';
 const STORAGE_ADMIN_COURSES_KEY = 'clc_admin_courses_v2';
 const STORAGE_ADMIN_TEACHERS_KEY = 'clc_admin_teachers_v2';
-const STORAGE_ADMIN_TRANSFERS_KEY = 'clc_admin_transfers_v2';
-const STORAGE_ADMIN_LEAVES_KEY = 'clc_admin_leaves_v2';
 
 export default function App() {
   // Current active system role: ADMIN (行政端) or TEACHER (老師端)
@@ -179,6 +170,9 @@ export default function App() {
   const [adminTransferRecords, setAdminTransferRecords] = useState<TransferClassRecord[]>([]);
 
   const [adminLeaves, setAdminLeaves] = useState<LeaveRecord[]>([]);
+  const [makeupRequests, setMakeupRequests] = useState<AttendanceMakeupRequest[]>([]);
+  const [attendanceAuditLogs, setAttendanceAuditLogs] = useState<AttendanceAuditLog[]>([]);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState<boolean>(false);
 
   // Persistent Full Quarter Courses state
   const [courses, setCourses] = useState<CourseSession[]>([]);
@@ -370,14 +364,8 @@ export default function App() {
                 setCurrentRole('TEACHER');
                 sessionStorage.setItem(STORAGE_ROLE_KEY, 'TEACHER');
 
-                const { data: tRow } = await client
-                  .from('teachers')
-                  .select('*')
-                  .eq('profile_id', profile.id)
-                  .maybeSingle();
-
-                if (tRow) {
-                  const mappedTeacher = mapDbToTeacher(tRow);
+                const mappedTeacher = await fetchTeacherWithClassesByProfileId(profile.id);
+                if (mappedTeacher && isMounted) {
                   setCurrentTeacher(mappedTeacher);
                 }
               }
@@ -522,9 +510,15 @@ export default function App() {
       );
       setAllGrades(fetchedGrades);
 
-      // 9. Fetch leave requests from Supabase public.leave_requests
-      const fetchedLeaves = await fetchLeavesFromSupabase(syncedStudents, currentClasses);
+      // 9. Fetch leave requests, over-7-day makeup requests, and attendance audit logs
+      const [fetchedLeaves, fetchedMakeupReqs, fetchedAuditLogs] = await Promise.all([
+        fetchLeavesFromSupabase(syncedStudents, currentClasses),
+        fetchMakeupRequestsFromSupabase(),
+        fetchAttendanceAuditLogsFromSupabase({ limit: 300 }),
+      ]);
       setAdminLeaves(fetchedLeaves);
+      setMakeupRequests(fetchedMakeupReqs);
+      setAttendanceAuditLogs(fetchedAuditLogs);
     } catch (err: any) {
       console.error('Error in loadSupabaseStudents:', err);
       setStudentsError(`載入資料時發生未預期錯誤: ${err.message || String(err)}`);
@@ -1084,15 +1078,22 @@ export default function App() {
   // ================= TEACHER SPECIFIC COMPUTED =================
   const teacherCourses = useMemo(() => {
     if (!currentTeacher) return [];
+    const assignedIdSet = new Set(currentTeacher.assignedClassIds || []);
     const assignedSet = new Set(currentTeacher.assignedClasses || []);
     return courses.filter((c) => {
       const isTeacherIdMatch = Boolean(c.teacherId && c.teacherId === currentTeacher.id);
+      const isClassIdMatch = Boolean(c.classId && assignedIdSet.has(c.classId));
+      if (isTeacherIdMatch || isClassIdMatch) return true;
+      const hasIdMetadata = Boolean(
+        c.teacherId || (currentTeacher.assignedClassIds && currentTeacher.assignedClassIds.length > 0 && c.classId)
+      );
+      if (hasIdMetadata) return false;
       const isTeacherNameMatch = Boolean(c.teacherName && c.teacherName === currentTeacher.name);
       const isClassNameMatch = Boolean(
         (c.className && assignedSet.has(c.className)) ||
         (c.courseName && assignedSet.has(c.courseName))
       );
-      return isTeacherIdMatch || isTeacherNameMatch || isClassNameMatch;
+      return isTeacherNameMatch || isClassNameMatch;
     });
   }, [courses, currentTeacher]);
 
@@ -1161,15 +1162,23 @@ export default function App() {
   // Fail-Closed ownership validator: strictly checks if a session belongs to current teacher
   const isCourseOwnedByCurrentTeacher = (course: CourseSession | null): boolean => {
     if (!course) return false;
-    if (currentRole !== 'TEACHER' || !currentTeacher) return true; // Admins are unrestricted
+    if (currentRole !== 'TEACHER') return true; // Admins are unrestricted
+    if (!currentTeacher) return false; // Fail-closed when teacher profile is missing
+    const assignedIdSet = new Set(currentTeacher.assignedClassIds || []);
     const assignedSet = new Set(currentTeacher.assignedClasses || []);
     const matchesTeacherId = Boolean(course.teacherId && course.teacherId === currentTeacher.id);
+    const matchesClassId = Boolean(course.classId && assignedIdSet.has(course.classId));
+    if (matchesTeacherId || matchesClassId) return true;
+    const hasIdMetadata = Boolean(
+      course.teacherId || (currentTeacher.assignedClassIds && currentTeacher.assignedClassIds.length > 0 && course.classId)
+    );
+    if (hasIdMetadata) return false;
     const matchesTeacherName = Boolean(course.teacherName && course.teacherName === currentTeacher.name);
     const matchesClassName = Boolean(
       (course.className && assignedSet.has(course.className)) ||
       (course.courseName && assignedSet.has(course.courseName))
     );
-    return matchesTeacherId || matchesTeacherName || matchesClassName;
+    return matchesTeacherName || matchesClassName;
   };
 
   // Handler: Start Attendance
@@ -1196,36 +1205,43 @@ export default function App() {
     setActiveAttendanceCourse(course);
   };
 
-  // Handler: Save Attendance
+  // Handler: Save Attendance (supports over-7-day single-use makeup unlock)
   const handleSaveAttendance = async (
     courseId: string,
     attendanceData: { [studentId: string]: StudentPeriodAttendance },
-    targetStatus: 'in_progress' | 'completed'
-  ) => {
+    targetStatus: 'in_progress' | 'completed',
+    makeupRequest?: AttendanceMakeupRequest | null
+  ): Promise<boolean> => {
     const targetCourse = courses.find((c) => c.id === courseId) || activeAttendanceCourse;
     if (!targetCourse) {
       showToast('❌ 找不到對應的課程資料', 'error');
-      return;
+      return false;
     }
 
     if (!isCourseOwnedByCurrentTeacher(targetCourse)) {
       showToast('⚠️ 無權限修改非本人授課之課堂點名！', 'warning');
-      return;
+      return false;
     }
 
-    const operatedBy = adminProfile?.fullName || currentTeacher?.name || '專任教師';
+    const todayStr = getTodayDateStr();
+    const daysSince = getDaysDifference(todayStr, targetCourse.date);
+    const isOverdueSession = targetCourse.date < todayStr && daysSince > 7;
+    const operatedBy = adminProfile?.id || adminProfile?.fullName || currentTeacher?.name || '專任教師';
 
     const { success, error } = await saveAttendanceToSupabase({
       course: targetCourse,
       attendanceData,
       targetStatus,
       operatedBy,
+      makeupRequestId: makeupRequest?.id,
+      isOverdueSession,
+      isAdmin: currentRole === 'ADMIN',
     });
 
     if (!success || error) {
       console.error('[App] Failed to save attendance to Supabase:', error);
       showToast(`❌ 點名儲存失敗：${error?.message || String(error)}`, 'error');
-      return;
+      return false;
     }
 
     const now = new Date();
@@ -1245,13 +1261,90 @@ export default function App() {
       });
     });
 
-    setActiveAttendanceCourse(null);
-    showToast(`🎉 點名紀錄已成功儲存！已自動重新計算學員出缺席與出席成績。`, 'success');
+    if (makeupRequest?.id) {
+      const usedAtIso = new Date().toISOString();
+      setMakeupRequests((prev) =>
+        prev.map((r) =>
+          r.id === makeupRequest.id
+            ? { ...r, status: 'COMPLETED', usedAt: usedAtIso, updatedAt: usedAtIso }
+            : r
+        )
+      );
+    }
 
-    // Asynchronously reload students and grades so grade management view reflects the newly recorded attendance
+    setActiveAttendanceCourse(null);
+    showToast(
+      makeupRequest
+        ? '✅ 補點名紀錄已成功送出並寫入稽核紀錄！本次單次補點授權已核銷。'
+        : '🎉 點名紀錄已成功儲存！已自動重新計算學員出缺席與出席成績。',
+      'success'
+    );
+
+    // Reload courses, makeup requests, audit logs, and grades cleanly
     loadSupabaseStudents().catch((err) => {
       console.warn('[App] Background reload after attendance save failed:', err);
     });
+    return true;
+  };
+
+  // Handler: Teacher submits over-7-day makeup request
+  const handleSubmitMakeupRequest = async (params: {
+    requestType: MakeupRequestType;
+    reason: string;
+  }): Promise<{ success: boolean; error?: string }> => {
+    if (!activeAttendanceCourse) {
+      return { success: false, error: '找不到對應課堂資訊' };
+    }
+    if (!isCourseOwnedByCurrentTeacher(activeAttendanceCourse)) {
+      return { success: false, error: '無權限對非本人授課班級提出申請' };
+    }
+
+    const res = await submitMakeupRequestToSupabase({
+      sessionId: activeAttendanceCourse.id,
+      classId: activeAttendanceCourse.classId || '',
+      sessionDate: activeAttendanceCourse.date,
+      teacherId: currentTeacher?.id,
+      teacherName: currentTeacher?.name || adminProfile?.fullName,
+      requestType: params.requestType,
+      reason: params.reason,
+    });
+
+    if (res.success) {
+      const freshReqs = await fetchMakeupRequestsFromSupabase();
+      setMakeupRequests(freshReqs);
+    }
+    return res;
+  };
+
+  // Handler: Admin approves or rejects makeup request
+  const handleReviewMakeupRequest = async (params: {
+    requestId: string;
+    decision: 'APPROVED' | 'REJECTED';
+    reviewNotes?: string;
+  }): Promise<{ success: boolean; error?: string }> => {
+    if (currentRole !== 'ADMIN' || adminProfile?.role !== 'ADMIN') {
+      showToast('⚠️ 僅管理員具備補點名審核權限！', 'warning');
+      return { success: false, error: '無審核權限' };
+    }
+
+    const res = await reviewMakeupRequestInSupabase({
+      requestId: params.requestId,
+      decision: params.decision,
+      reviewerProfileId: adminProfile?.id,
+      reviewNotes: params.reviewNotes,
+    });
+
+    if (res.success) {
+      showToast(
+        params.decision === 'APPROVED' ? '✅ 已核准該筆逾七天補點名申請（單次有效）' : '已駁回該筆補點名申請',
+        params.decision === 'APPROVED' ? 'success' : 'info'
+      );
+      const freshReqs = await fetchMakeupRequestsFromSupabase();
+      setMakeupRequests(freshReqs);
+    } else {
+      showToast(`❌ 審核失敗：${res.error || '未知錯誤'}`, 'error');
+    }
+    return res;
   };
 
   // Handler: Jump to target date
@@ -1332,7 +1425,11 @@ export default function App() {
         <StudentDetailModal
           student={selectedStudentForDetail}
           allCourses={courses}
-          grade={allGrades[selectedStudentForDetail.id]}
+          grade={
+            allGrades[`${selectedStudentForDetail.id}_${selectedStudentForDetail.classId || ''}`] ||
+            allGrades[selectedStudentForDetail.id]
+          }
+          allGrades={allGrades}
           customWeight={(() => {
             const studentClass = adminClasses.find(
               (c) => c.id === selectedStudentForDetail.classId || c.name === selectedStudentForDetail.className
@@ -1344,11 +1441,26 @@ export default function App() {
             );
             return res.customWeight || null;
           })()}
-          teacherName={currentRole === 'ADMIN' ? '教務行政組' : `${currentTeacher?.name || ''}老師`}
+          gradeWeightsMap={gradeWeightsMap}
+          classes={adminClasses}
+          terms={adminTerms}
+          teachers={adminTeachers}
+          auditLogs={attendanceAuditLogs}
+          teacherName={currentRole === 'TEACHER' && currentTeacher ? `${currentTeacher.name} 老師` : undefined}
           transferRecords={adminTransferRecords}
+          isAdmin={currentRole === 'ADMIN'}
+          onShowToast={showToast}
           onClose={() => setSelectedStudentForDetail(null)}
         />
       )}
+
+      {/* Teacher Self-Service Password Modal */}
+      <TeacherPasswordModal
+        isOpen={isPasswordModalOpen && currentRole === 'TEACHER'}
+        onClose={() => setIsPasswordModalOpen(false)}
+        userEmail={adminProfile.email}
+        onShowToast={showToast}
+      />
 
       {/* Responsive Left Sidebar */}
       <Sidebar
@@ -1374,6 +1486,7 @@ export default function App() {
         onCloseMobile={() => setIsMobileSidebarOpen(false)}
         adminProfile={adminProfile}
         onLogout={handleLogout}
+        onOpenPasswordModal={currentRole === 'TEACHER' ? () => setIsPasswordModalOpen(true) : undefined}
       />
 
       {/* Main Content Area */}
@@ -1525,7 +1638,12 @@ export default function App() {
                   allCourses={courses}
                   students={dbStudents}
                   classes={adminClasses}
+                  transferRecords={adminTransferRecords}
+                  makeupRequests={makeupRequests}
+                  auditLogs={attendanceAuditLogs}
                   onSelectStudentDetail={(student) => setSelectedStudentForDetail(student)}
+                  onReviewMakeupRequest={handleReviewMakeupRequest}
+                  onRefresh={loadSupabaseStudents}
                 />
               )}
 
@@ -1559,7 +1677,7 @@ export default function App() {
             /* ================= TEACHER VIEWS ================= */
             <div>
               {activeAttendanceCourse && isCourseOwnedByCurrentTeacher(activeAttendanceCourse) ? (
-                /* Attendance Sheet Component (2-Hour vs 3-Hour Dynamic) */
+                /* Attendance Sheet Component (2-Hour vs 3-Hour vs 4-Hour Dynamic + 7-Day Makeup) */
                 <AttendanceSheet
                   course={activeAttendanceCourse}
                   students={activeCourseStudents}
@@ -1568,6 +1686,19 @@ export default function App() {
                   onBack={() => setActiveAttendanceCourse(null)}
                   onShowToast={showToast}
                   isReadOnly={isReadOnlyAttendance}
+                  isTermLocked={(() => {
+                    const cls =
+                      (activeAttendanceCourse.classId
+                        ? adminClasses.find((c) => c.id === activeAttendanceCourse.classId)
+                        : undefined) ||
+                      adminClasses.find((c) => c.name === activeAttendanceCourse.className);
+                    if (!cls?.termId) return false;
+                    return Boolean(adminTerms.find((t) => t.id === cls.termId)?.isLocked);
+                  })()}
+                  currentProfileId={adminProfile?.id}
+                  isAdmin={currentRole === 'ADMIN'}
+                  makeupRequests={makeupRequests}
+                  onSubmitMakeupRequest={handleSubmitMakeupRequest}
                 />
               ) : activeTab === 'today' ? (
                 /* 1. Homepage / Today's Attendance Dashboard (Streamlined To-Do Focused) */
@@ -1583,6 +1714,8 @@ export default function App() {
                   onNavigateTab={(tab) => {
                     setActiveTab(tab as NavigationTab);
                   }}
+                  makeupRequests={makeupRequests}
+                  teacherCourses={teacherCourses}
                 />
               ) : activeTab === 'grades' ? (
                 /* 2. Grade Management View (Teacher - Read Only Weights) */
@@ -1639,11 +1772,13 @@ export default function App() {
                       showToast('⚠️ 無權限存取非本人授課之課堂點名！', 'warning');
                       return;
                     }
+                    setIsReadOnlyAttendance(false);
                     setSelectedDate(c.date);
                     setActiveAttendanceCourse(c);
                   }}
                   onShowToast={showToast}
                   currentTeacher={currentTeacher}
+                  makeupRequests={makeupRequests}
                 />
               ) : (
                 /* 6. Attendance Rate Warning */

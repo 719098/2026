@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { ClassEntity } from '../types';
 import { fetchClassMaterialsFromSupabase, saveClassMaterialsInSupabase } from './materialService';
+import { getAuthHeaders } from './apiHelper';
 
 /**
  * Converts a database record in public.classes to the frontend ClassEntity interface.
@@ -70,7 +71,8 @@ export async function fetchClassesFromSupabase(): Promise<{ data: ClassEntity[];
       // Fallback to server endpoint if direct client query encounters RLS permission error (42501)
       try {
         const endpoint = typeof window !== 'undefined' ? '/api/classes' : 'http://localhost:3000/api/classes';
-        const apiRes = await fetch(endpoint);
+        const headers = await getAuthHeaders();
+        const apiRes = await fetch(endpoint, { headers });
         if (apiRes.ok) {
           const json = await apiRes.json();
           if (json.success && Array.isArray(json.data) && json.data.length > 0) {

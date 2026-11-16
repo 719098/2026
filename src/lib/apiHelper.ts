@@ -4,11 +4,34 @@
  * when calling server-side / Vercel Serverless Function APIs.
  */
 
+import { supabase } from './supabase';
+
 export interface SafeApiResponse<T = any> {
   ok: boolean;
   status: number;
   data?: T;
   error?: string;
+}
+
+export async function getAuthHeaders(
+  extraHeaders: Record<string, string> = {}
+): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...extraHeaders,
+  };
+  try {
+    if (supabase) {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data?.session?.access_token;
+      if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+      }
+    }
+  } catch (e) {
+    console.warn('[apiHelper] Could not read auth session for headers:', e);
+  }
+  return headers;
 }
 
 export async function safeApiPost<T = any>(
@@ -17,11 +40,10 @@ export async function safeApiPost<T = any>(
   endpointLabel: string = 'API'
 ): Promise<SafeApiResponse<T>> {
   try {
+    const headers = await getAuthHeaders();
     const res = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(bodyData),
     });
 

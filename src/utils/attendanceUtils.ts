@@ -109,6 +109,36 @@ export function getDefaultAttendanceForStudents(
   return initial;
 }
 
+/**
+ * Builds a complete, normalized attendance map strictly scoped to the given session roster
+ * and periodsCount (2, 3, or 4). Ensures every enrolled student on the session date is included
+ * and prevents stale/foreign student keys from being submitted.
+ */
+export function buildNormalizedAttendanceMap(
+  students: Student[] = [],
+  rawAttendanceData?: { [studentId: string]: StudentPeriodAttendance } | null,
+  periodsCount: number = 3
+): { [studentId: string]: StudentPeriodAttendance } {
+  const safeData = rawAttendanceData || {};
+  const normalized: { [studentId: string]: StudentPeriodAttendance } = {};
+
+  (students || []).forEach((student) => {
+    if (!student || !student.id) return;
+    const existing = safeData[student.id];
+    normalized[student.id] = {
+      period1: existing?.period1 || 'present',
+      period2: periodsCount >= 2 ? (existing?.period2 || 'present') : 'present',
+      period3: periodsCount >= 3 ? (existing?.period3 || 'present') : undefined,
+      period4: periodsCount >= 4 ? (existing?.period4 || 'present') : undefined,
+      remarks: existing?.remarks,
+      evidenceImagePath: existing?.evidenceImagePath,
+      evidenceImageUrl: existing?.evidenceImageUrl,
+    };
+  });
+
+  return normalized;
+}
+
 export function applyApprovedLeaves(
   currentAttendance: { [studentId: string]: StudentPeriodAttendance } = {},
   students: Student[] = [],

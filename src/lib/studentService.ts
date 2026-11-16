@@ -5,6 +5,7 @@ import { resolveStudentGradeWeight } from './gradeWeightService';
 import { batchResolveStudentAvatars, extractStoragePath, deleteStudentStorageFiles } from './storageService';
 import { mapDbToClass, fetchClassesFromSupabase } from './classService';
 import { getTodayDateStr } from '../utils/quarterScheduler';
+import { getAuthHeaders } from './apiHelper';
 
 export { mapDbToClass, fetchClassesFromSupabase };
 
@@ -43,15 +44,14 @@ export function mapDbToStudent(row: any): Student {
   const nationality = row.nation || '未設定';
   const nationalityCode = row.natcode || NATIONALITY_TO_CODE[nationality] || 'TW';
   const studentNum = row.stno || '';
-  const passportNumber = row.idno || '';
-  const fallbackPassport = passportNumber || `${nationalityCode}9${(studentNum || row.id || '888888').replace(/\D/g, '').slice(-6) || '123456'}`;
+  const passportNumber = row.idno || row.passport_no || row.passport_number || '';
 
   return {
     id: String(row.id),
     studentNumber: studentNum,
     name: row.name || '',
     englishName: row.ename || '',
-    passportNumber: fallbackPassport,
+    passportNumber,
     avatarUrl:
       row.avatar_url ||
       'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=120&auto=format&fit=crop&q=80',
@@ -80,12 +80,14 @@ export function mapDbToStudent(row: any): Student {
     visaStatus: (row.visa_status || 'safe') as 'safe' | 'warning' | 'danger',
     enrollmentStatus: normalizedStatus,
     admissionDate: admissionDate,
+    registrationStartDate: row.registration_start_date || row.reg_start_date || '',
+    registrationEndDate: row.registration_end_date || row.reg_end_date || '',
     joinedAt: row.joined_at || undefined,
     droppedAt: row.dropped_at || undefined,
     // School DB Spec Fields
     stno: studentNum,
     ename: row.ename || '',
-    idno: fallbackPassport,
+    idno: passportNumber,
     nation: nationality,
     natcode: nationalityCode,
     sex: row.sex || 'M',
@@ -246,6 +248,12 @@ export function mapStudentToDb(student: Partial<Student>): Record<string, any> {
     const d = cleanDateValue(student.insertDate);
     if (d !== null) payload.insert_date = d;
   }
+  if (student.registrationStartDate !== undefined) {
+    payload.registration_start_date = cleanDateValue(student.registrationStartDate);
+  }
+  if (student.registrationEndDate !== undefined) {
+    payload.registration_end_date = cleanDateValue(student.registrationEndDate);
+  }
 
   return payload;
 }
@@ -404,7 +412,8 @@ export async function fetchStudentsFromSupabase(
   } else {
     try {
       const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
-      const apiRes = await fetch(`${origin}/api/students`);
+      const headers = await getAuthHeaders();
+      const apiRes = await fetch(`${origin}/api/students`, { headers });
       if (apiRes.ok) {
         const json = await apiRes.json();
         if (json.success && Array.isArray(json.data) && json.data.length > 0) {
@@ -453,7 +462,8 @@ export async function fetchStudentsFromSupabase(
     } else {
       try {
         const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
-        const apiRes = await fetch(`${origin}/api/class-students`);
+        const headers = await getAuthHeaders();
+        const apiRes = await fetch(`${origin}/api/class-students`, { headers });
         if (apiRes.ok) {
           const json = await apiRes.json();
           if (json.success && Array.isArray(json.data)) {
@@ -510,7 +520,8 @@ export async function fetchStudentsFromSupabase(
     } else {
       try {
         const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
-        const apiRes = await fetch(`${origin}/api/transfer-history`);
+        const headers = await getAuthHeaders();
+        const apiRes = await fetch(`${origin}/api/transfer-history`, { headers });
         if (apiRes.ok) {
           const json = await apiRes.json();
           if (json.success && Array.isArray(json.data)) {
@@ -1106,7 +1117,8 @@ export async function fetchStudentGradesFromSupabase(
     if (rows.length === 0) {
       try {
         const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
-        const res = await fetch(`${origin}/api/student-grades`);
+        const headers = await getAuthHeaders();
+        const res = await fetch(`${origin}/api/student-grades`, { headers });
         if (res.ok) {
           const json = await res.json();
           if (json.success && Array.isArray(json.data) && json.data.length > 0) {
@@ -1355,9 +1367,10 @@ export async function saveStudentGradeToSupabase(
     // Fallback: Use server API /api/student-grades/save to guarantee persistence
     try {
       const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
+      const headers = await getAuthHeaders();
       const apiRes = await fetch(`${origin}/api/student-grades/save`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           grade: {
             ...grade,
@@ -1409,7 +1422,8 @@ export async function fetchTransferRecordsFromSupabase(
     } else {
       try {
         const origin = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost:3000';
-        const apiRes = await fetch(`${origin}/api/transfer-history`);
+        const headers = await getAuthHeaders();
+        const apiRes = await fetch(`${origin}/api/transfer-history`, { headers });
         if (apiRes.ok) {
           const json = await apiRes.json();
           if (json.success && Array.isArray(json.data)) {

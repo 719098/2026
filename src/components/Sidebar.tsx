@@ -23,7 +23,8 @@ import {
   FileText,
   CheckCircle2,
   Building2,
-  LogOut
+  LogOut,
+  KeyRound
 } from 'lucide-react';
 import { Teacher, UserRole, AdminNavigationTab, UserProfile } from '../types';
 import { TeacherAvatar } from './TeacherAvatar';
@@ -47,6 +48,7 @@ interface SidebarProps {
   onCloseMobile?: () => void;
   adminProfile?: UserProfile | null;
   onLogout?: () => void;
+  onOpenPasswordModal?: () => void;
 }
 
 interface MenuItem {
@@ -82,6 +84,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile,
   adminProfile,
   onLogout,
+  onOpenPasswordModal,
 }) => {
   // Teacher core navigation items (授課核心)
   const coreMenuItems: MenuItem[] = [
@@ -484,16 +487,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
 
-          <div className="mt-2.5 pt-2.5 border-t border-[#DCE2E6] flex items-center justify-between">
-            <button
-              id="btn-reset-demo"
-              onClick={onResetData}
-              className="flex items-center space-x-1 text-[11px] text-slate-500 hover:text-slate-800 transition-colors"
-              title="重設全季所有點名、排班與成績資料"
-            >
-              <RotateCcw className="w-3 h-3 text-slate-400" />
-              <span>重設狀態</span>
-            </button>
+          <div className="mt-2.5 pt-2.5 border-t border-[#DCE2E6] flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center space-x-2.5">
+              <button
+                id="btn-reset-demo"
+                onClick={onResetData}
+                className="flex items-center space-x-1 text-[11px] text-slate-500 hover:text-slate-800 transition-colors"
+                title="重設全季所有點名、排班與成績資料"
+              >
+                <RotateCcw className="w-3 h-3 text-slate-400" />
+                <span>重設狀態</span>
+              </button>
+              {!isRoleAdmin && onOpenPasswordModal && (
+                <button
+                  id="btn-teacher-change-password"
+                  type="button"
+                  onClick={onOpenPasswordModal}
+                  className="flex items-center space-x-1 text-[11px] text-[#536B7A] hover:text-[#26313B] font-semibold transition-colors cursor-pointer"
+                  title="修改個人登入密碼"
+                >
+                  <KeyRound className="w-3 h-3" />
+                  <span>修改密碼</span>
+                </button>
+              )}
+            </div>
             {onLogout && (
               <button
                 id="btn-sidebar-logout"

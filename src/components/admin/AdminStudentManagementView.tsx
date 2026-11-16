@@ -284,6 +284,8 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
     className: '',
     email: '',
     phone: '',
+    registrationStartDate: '',
+    registrationEndDate: '',
     avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
   });
 
@@ -331,7 +333,7 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
     }
 
     const studentNum = `2026${String(students.length + 101)}`;
-    const passport = newForm.passportNumber || `${newForm.nationalityCode}9${Date.now().toString().slice(-6)}`;
+    const passport = newForm.passportNumber.trim();
     const matchedClass = classes.find((c) => c.name === newForm.className || c.id === newForm.className);
 
     const newStudent: Student = {
@@ -354,6 +356,8 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
       totalPresentHours: 0,
       enrollmentStatus: 'active',
       admissionDate: '2026-07-01',
+      registrationStartDate: newForm.registrationStartDate || '',
+      registrationEndDate: newForm.registrationEndDate || '',
       enrollmentHistory: [
         {
           id: `HIST-${Date.now()}-1`,
@@ -385,6 +389,8 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
         className: '',
         email: '',
         phone: '',
+        registrationStartDate: '',
+        registrationEndDate: '',
         avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
       });
     } finally {
@@ -1009,6 +1015,27 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">註冊起日（選填）</label>
+                  <input
+                    type="date"
+                    value={newForm.registrationStartDate}
+                    onChange={(e) => setNewForm({ ...newForm, registrationStartDate: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">註冊訖日（選填）</label>
+                  <input
+                    type="date"
+                    value={newForm.registrationEndDate}
+                    onChange={(e) => setNewForm({ ...newForm, registrationEndDate: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono"
+                  />
+                </div>
+              </div>
+
               <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
                 <button
                   type="button"
@@ -1143,6 +1170,27 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
                     value={editingStudent.phone || editingStudent.mobilePhone || ''}
                     onChange={(e) => setEditingStudent({ ...editingStudent, phone: e.target.value, mobilePhone: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">註冊起日</label>
+                  <input
+                    type="date"
+                    value={editingStudent.registrationStartDate || ''}
+                    onChange={(e) => setEditingStudent({ ...editingStudent, registrationStartDate: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">註冊訖日</label>
+                  <input
+                    type="date"
+                    value={editingStudent.registrationEndDate || ''}
+                    onChange={(e) => setEditingStudent({ ...editingStudent, registrationEndDate: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono"
                   />
                 </div>
               </div>

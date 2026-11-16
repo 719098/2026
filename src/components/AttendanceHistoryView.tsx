@@ -12,7 +12,7 @@ import {
   Filter,
   Users
 } from 'lucide-react';
-import { CourseSession, Student, Teacher } from '../types';
+import { CourseSession, Student, Teacher, AttendanceMakeupRequest } from '../types';
 import { calculateAttendanceStats } from '../utils/attendanceUtils';
 import { exportAttendanceSummaryToCsv } from '../utils/csvExport';
 
@@ -21,6 +21,7 @@ interface AttendanceHistoryViewProps {
   onOpenAttendance: (course: CourseSession) => void;
   onShowToast: (message: string, type?: 'success' | 'info' | 'warning') => void;
   currentTeacher?: Teacher;
+  makeupRequests?: AttendanceMakeupRequest[];
 }
 
 export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
@@ -28,6 +29,7 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
   onOpenAttendance,
   onShowToast,
   currentTeacher,
+  makeupRequests = [],
 }) => {
   const [selectedClassFilter, setSelectedClassFilter] = useState<string>('all');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('all');
@@ -37,15 +39,22 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
   // Strictly scope courses to currentTeacher (Fail-Closed) if logged in as teacher
   const scopedCourses = useMemo(() => {
     if (currentTeacher) {
+      const assignedIdSet = new Set(currentTeacher.assignedClassIds || []);
       const assignedSet = new Set(currentTeacher.assignedClasses || []);
       return courses.filter((c) => {
         const matchesTeacherId = Boolean(c.teacherId && c.teacherId === currentTeacher.id);
+        const matchesClassId = Boolean(c.classId && assignedIdSet.has(c.classId));
+        if (matchesTeacherId || matchesClassId) return true;
+        const hasIdMetadata = Boolean(
+          c.teacherId || (currentTeacher.assignedClassIds && currentTeacher.assignedClassIds.length > 0 && c.classId)
+        );
+        if (hasIdMetadata) return false;
         const matchesTeacherName = Boolean(c.teacherName && c.teacherName === currentTeacher.name);
         const matchesClassName = Boolean(
           (c.className && assignedSet.has(c.className)) ||
           (c.courseName && assignedSet.has(c.courseName))
         );
-        return matchesTeacherId || matchesTeacherName || matchesClassName;
+        return matchesTeacherName || matchesClassName;
       });
     }
     return courses;
@@ -64,18 +73,9 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
 
   const completedOrPastCourses = useMemo(() => {
     return scopedCourses.filter((c) => {
-      // Fail closed teacher filter
-      if (teacherFilter === 'current' && currentTeacher) {
-        const assignedSet = new Set(currentTeacher.assignedClasses || []);
-        const matchesTeacherId = Boolean(c.teacherId && c.teacherId === currentTeacher.id);
-        const matchesTeacherName = Boolean(c.teacherName && c.teacherName === currentTeacher.name);
-        const matchesClassName = Boolean(
-          (c.className && assignedSet.has(c.className)) ||
-          (c.courseName && assignedSet.has(c.courseName))
-        );
-        if (!matchesTeacherId && !matchesTeacherName && !matchesClassName) {
-          return false;
-        }
+      // ScopedCourses already strictly filters by currentTeacher
+      if (teacherFilter === 'current' && !currentTeacher) {
+        return true;
       }
       if (selectedClassFilter !== 'all' && c.className !== selectedClassFilter) return false;
       if (selectedStatusFilter !== 'all') {
@@ -146,24 +146,24 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Top Banner */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-teal-50 text-teal-800 border border-teal-200 mb-2">
-              <ClipboardList className="w-3.5 h-3.5" />
+              <ClipboardList className="w-3.5 h-3.5 shrink-0" />
               <span>點名紀錄存檔中心 {currentTeacher ? `• ${currentTeacher.name} 老師` : ''}</span>
             </div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
               學期點名日誌與紀錄查閱
             </h1>
             <p className="text-xs text-slate-500 mt-1">
-              查閱各授課班級點名歷史紀錄、三節出席明細，並支援匯出教育部與中心評鑑格式報表。
+              查閱各授課班級點名歷史紀錄、分節出席明細，並支援匯出教育部與中心評鑑格式報表。
             </p>
           </div>
 
           <button
             onClick={handleExportCSV}
-            className="flex items-center space-x-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-colors shadow-2xs self-start md:self-auto"
+            className="w-full sm:w-auto flex items-center justify-center space-x-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-colors shadow-2xs shrink-0"
           >
             <Download className="w-4 h-4" />
             <span>匯出本學期點名總表 (CSV)</span>
@@ -171,7 +171,7 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
         </div>
 
         {/* Filter Controls */}
-        <div className="mt-5 pt-4 border-t border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+        <div className="mt-4 sm:mt-5 pt-4 border-t border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-bold text-slate-500 flex items-center mr-1">
               <Filter className="w-3.5 h-3.5 mr-1" />
@@ -208,16 +208,147 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
               placeholder="搜尋課程名稱 / 日期 / 教材..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+              className="w-full px-3 py-2 text-base sm:text-xs border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
           </div>
         </div>
       </div>
 
-      {/* History Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
+      {/* History Cards - Mobile View (< md) */}
+      <div className="block md:hidden space-y-3">
+        {completedOrPastCourses.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-xs text-slate-500">
+            查無符合條件之點名紀錄
+          </div>
+        ) : (
+          completedOrPastCourses.map((course) => {
+            const isCancelled = course.isCancelled || course.status === 'holiday' || (course.status as string) === 'CANCELLED';
+            const isCompleted = !isCancelled && course.status === 'completed';
+            const isRescheduledOut = course.status === 'rescheduled_out';
+            const isRescheduledIn = course.status === 'rescheduled_in' || course.rescheduleInfo?.type === 'in';
+            const isLocked = course.status === 'locked' || course.isLocked;
+
+            const studentList = (course.studentIds || []).map((id) => ({ id, name: id } as Student));
+            const stats = isCompleted && course.attendanceData
+              ? calculateAttendanceStats(studentList, course.attendanceData)
+              : null;
+
+            const sessionReqs = (makeupRequests || [])
+              .filter((r) => r.classId === course.classId && r.sessionDate === course.date)
+              .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+            const activeReq = sessionReqs.find((r) => r.status === 'APPROVED') || sessionReqs[0];
+
+            return (
+              <div
+                key={`mobile-${course.id}`}
+                className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs space-y-3"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-mono font-bold text-sm text-slate-900">{course.date}</span>
+                      <span className="text-[11px] font-mono text-slate-500">{course.timeSlot}</span>
+                    </div>
+                    <div className="font-extrabold text-slate-800 text-sm mt-1 break-words">{course.courseName}</div>
+                    <div className="text-teal-700 font-semibold text-xs mt-0.5">{course.className} • {course.classroom}</div>
+                  </div>
+
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    {course.isCancelled || course.status === 'holiday' ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                        ❌ 已停課
+                      </span>
+                    ) : isCompleted ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        🟢 已完成
+                      </span>
+                    ) : isRescheduledOut ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                        ⚠️ 已調課
+                      </span>
+                    ) : isRescheduledIn ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
+                        🔵 補課堂次
+                      </span>
+                    ) : isLocked ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-200 text-slate-700 border border-slate-300">
+                        🔒 已鎖定
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                        🟠 待補點名
+                      </span>
+                    )}
+
+                    {activeReq && activeReq.status === 'PENDING' && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                        待審核補點名
+                      </span>
+                    )}
+                    {activeReq && activeReq.status === 'APPROVED' && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-300">
+                        已核准可補點
+                      </span>
+                    )}
+                    {activeReq && activeReq.status === 'COMPLETED' && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300">
+                        已補點完成
+                      </span>
+                    )}
+                    {activeReq && activeReq.status === 'REJECTED' && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                        補點名已駁回
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100 text-xs flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-slate-600 truncate max-w-full">
+                    教材：{course.textbook} • {course.studentCount} 人
+                  </span>
+                  {stats ? (
+                    <span className="font-mono font-bold text-emerald-700">
+                      出席 {stats.attendanceRate}% ({stats.totalPresentHours}/{stats.totalHours}H)
+                    </span>
+                  ) : isCancelled ? (
+                    <span className="text-slate-400 text-[11px]">停課免計</span>
+                  ) : (
+                    <span className="text-slate-400 text-[11px]">尚未結算</span>
+                  )}
+                </div>
+
+                {!(course.isCancelled || course.status === 'holiday' || isRescheduledOut) && (
+                  <button
+                    onClick={() => onOpenAttendance(course)}
+                    className={`w-full py-2 px-3 rounded-xl text-xs font-bold inline-flex items-center justify-center space-x-1.5 transition-colors cursor-pointer ${
+                      activeReq?.status === 'APPROVED'
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <Eye className={`w-3.5 h-3.5 ${activeReq?.status === 'APPROVED' ? 'text-white' : 'text-slate-500'}`} />
+                    <span>
+                      {activeReq?.status === 'APPROVED'
+                        ? '前往補點名'
+                        : isLocked && !isCompleted
+                        ? '檢視／申請補點'
+                        : isCompleted
+                        ? '檢視紀錄'
+                        : '前往點名'}
+                    </span>
+                  </button>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* History Table - Desktop View (>= md) */}
+      <div className="hidden md:block bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full min-w-[720px] text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
                 <th className="py-3.5 px-4">上課日期與時段</th>
@@ -258,6 +389,11 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
                   );
                 }
 
+                const sessionReqs = (makeupRequests || [])
+                  .filter((r) => r.classId === course.classId && r.sessionDate === course.date)
+                  .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+                const activeReq = sessionReqs.find((r) => r.status === 'APPROVED') || sessionReqs[0];
+
                 return (
                   <tr key={course.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="py-3.5 px-4">
@@ -286,31 +422,53 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
                     </td>
 
                     <td className="py-3.5 px-3 text-center">
-                      {course.isCancelled || course.status === 'holiday' ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
-                          ❌ 已停課
-                        </span>
-                      ) : isCompleted ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                          🟢 已完成
-                        </span>
-                      ) : isRescheduledOut ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                          ⚠️ 已調課
-                        </span>
-                      ) : isRescheduledIn ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
-                          🔵 補課堂次
-                        </span>
-                      ) : isLocked ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-200 text-slate-700 border border-slate-300">
-                          🔒 已鎖定
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                          🟠 待補點名
-                        </span>
-                      )}
+                      <div className="flex flex-col items-center gap-1">
+                        {course.isCancelled || course.status === 'holiday' ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                            ❌ 已停課
+                          </span>
+                        ) : isCompleted ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            🟢 已完成
+                          </span>
+                        ) : isRescheduledOut ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                            ⚠️ 已調課
+                          </span>
+                        ) : isRescheduledIn ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
+                            🔵 補課堂次
+                          </span>
+                        ) : isLocked ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-200 text-slate-700 border border-slate-300">
+                            🔒 已鎖定
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                            🟠 待補點名
+                          </span>
+                        )}
+                        {activeReq && activeReq.status === 'PENDING' && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                            待審核補點名
+                          </span>
+                        )}
+                        {activeReq && activeReq.status === 'APPROVED' && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-300">
+                            已核准可補點
+                          </span>
+                        )}
+                        {activeReq && activeReq.status === 'COMPLETED' && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300">
+                            已補點完成
+                          </span>
+                        )}
+                        {activeReq && activeReq.status === 'REJECTED' && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                            補點名已駁回
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
@@ -321,10 +479,22 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
                       ) : (
                         <button
                           onClick={() => onOpenAttendance(course)}
-                          className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 inline-flex items-center space-x-1 transition-colors cursor-pointer"
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold inline-flex items-center space-x-1 transition-colors cursor-pointer ${
+                            activeReq?.status === 'APPROVED'
+                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                              : 'bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900'
+                          }`}
                         >
-                          <Eye className="w-3.5 h-3.5 text-slate-500" />
-                          <span>{isCompleted ? '檢視紀錄' : '前往點名'}</span>
+                          <Eye className={`w-3.5 h-3.5 ${activeReq?.status === 'APPROVED' ? 'text-white' : 'text-slate-500'}`} />
+                          <span>
+                            {activeReq?.status === 'APPROVED'
+                              ? '前往補點名'
+                              : isLocked && !isCompleted
+                              ? '檢視／申請補點'
+                              : isCompleted
+                              ? '檢視紀錄'
+                              : '前往點名'}
+                          </span>
                         </button>
                       )}
                     </td>

@@ -12,7 +12,8 @@ import {
   EyeOff, 
   ShieldCheck,
   GraduationCap,
-  UserCheck
+  UserCheck,
+  ChevronDown
 } from 'lucide-react';
 
 interface AdminLoginViewProps {
@@ -24,7 +25,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
   onLoginSuccess,
   onTeacherLoginSuccess,
 }) => {
-  const [loginRoleTab, setLoginRoleTab] = useState<UserRole>('ADMIN');
+  const [loginRoleTab, setLoginRoleTab] = useState<UserRole>('TEACHER');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -281,38 +282,44 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
         {/* Shared Login Card */}
         <div className="bg-slate-800/90 backdrop-blur-xl border border-slate-700/80 rounded-3xl p-6 sm:p-8 shadow-2xl shadow-slate-950/50">
           
-          {/* Role Selector Tabs */}
-          <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-900/90 rounded-2xl border border-slate-700/60 mb-6">
-            <button
-              type="button"
-              onClick={() => {
-                setLoginRoleTab('ADMIN');
-                setErrorMessage(null);
-              }}
-              className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer ${
-                loginRoleTab === 'ADMIN'
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-900/50'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-              }`}
+          {/* Role Selector Dropdown */}
+          <div className="mb-6 space-y-1.5">
+            <label
+              htmlFor="login-role-select"
+              className="block text-xs font-bold text-slate-300 tracking-wide"
             >
-              <ShieldCheck className="w-4 h-4 shrink-0" />
-              <span>管理員登入</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setLoginRoleTab('TEACHER');
-                setErrorMessage(null);
-              }}
-              className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer ${
-                loginRoleTab === 'TEACHER'
-                  ? 'bg-teal-600 text-white shadow-md shadow-teal-900/50'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-              }`}
-            >
-              <GraduationCap className="w-4 h-4 shrink-0" />
-              <span>教師登入</span>
-            </button>
+              登入身分選擇
+            </label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                {loginRoleTab === 'TEACHER' ? (
+                  <GraduationCap className="w-4 h-4 text-teal-400" />
+                ) : (
+                  <ShieldCheck className="w-4 h-4 text-blue-400" />
+                )}
+              </div>
+              <select
+                id="login-role-select"
+                value={loginRoleTab}
+                onChange={(e) => {
+                  const nextRole = e.target.value === 'ADMIN' ? 'ADMIN' : 'TEACHER';
+                  setLoginRoleTab(nextRole);
+                  setErrorMessage(null);
+                }}
+                className="w-full appearance-none pl-10 pr-10 py-3 rounded-2xl bg-slate-900/90 border border-slate-700/80 text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all cursor-pointer"
+              >
+                <option value="TEACHER">教師登入</option>
+                <option value="ADMIN">管理員登入</option>
+              </select>
+              <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-400">
+                <ChevronDown className="w-4 h-4" />
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              {loginRoleTab === 'TEACHER'
+                ? '請使用授課教師帳號密碼登入。系統登入後將依資料庫授權角色驗證存取權限。'
+                : '請使用中心行政管理員帳號密碼登入。系統登入後將依資料庫授權角色驗證存取權限。'}
+            </p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-5">

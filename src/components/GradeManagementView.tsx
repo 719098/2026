@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { 
   Calculator, 
   Save, 
@@ -278,10 +278,141 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
     onShowToast(`已匯出 ${currentClassName} 成績報表 (CSV)`, 'success');
   };
 
+  // Floating horizontal scrollbar synchronization refs and state
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const floatingScrollRef = useRef<HTMLDivElement>(null);
+  const isSyncingRef = useRef<boolean>(false);
+
+  const [showFloatingScrollbar, setShowFloatingScrollbar] = useState<boolean>(false);
+  const [scrollMetrics, setScrollMetrics] = useState({
+    scrollWidth: 0,
+    clientWidth: 0,
+    scrollLeft: 0,
+    maxScrollLeft: 0,
+  });
+  const [floatingBarLayout, setFloatingBarLayout] = useState({
+    left: 0,
+    width: 0,
+  });
+
+  const updateScrollState = useCallback(() => {
+    const tableEl = tableContainerRef.current;
+    if (!tableEl) return;
+
+    const scrollWidth = tableEl.scrollWidth;
+    const clientWidth = tableEl.clientWidth;
+    const scrollLeft = tableEl.scrollLeft;
+    const maxScrollLeft = Math.max(0, scrollWidth - clientWidth);
+    const needsScroll = scrollWidth > clientWidth + 4;
+
+    if (!needsScroll) {
+      setShowFloatingScrollbar(false);
+      setScrollMetrics({ scrollWidth, clientWidth, scrollLeft, maxScrollLeft });
+      return;
+    }
+
+    const tableRect = tableEl.getBoundingClientRect();
+    const scrollParent = tableEl.closest('.overflow-y-auto') as HTMLElement | null;
+    const parentRect = scrollParent ? scrollParent.getBoundingClientRect() : null;
+
+    const viewportBottom = parentRect
+      ? Math.min(parentRect.bottom, window.innerHeight)
+      : window.innerHeight;
+    const viewportTop = parentRect
+      ? Math.max(parentRect.top, 0)
+      : 0;
+
+    const isTableTopVisible = tableRect.top < viewportBottom - 40;
+    const isNativeScrollbarOffScreen = tableRect.bottom > viewportBottom + 16;
+    const isTableBottomAboveTop = tableRect.bottom > viewportTop + 80;
+
+    const shouldShow = needsScroll && isTableTopVisible && isNativeScrollbarOffScreen && isTableBottomAboveTop;
+    setShowFloatingScrollbar(shouldShow);
+
+    const viewportWidth = window.innerWidth;
+    const barLeft = Math.max(12, tableRect.left);
+    const maxAvailableWidth = Math.max(180, viewportWidth - barLeft - 12);
+    const barWidth = Math.min(tableRect.width, maxAvailableWidth);
+
+    setFloatingBarLayout({
+      left: barLeft,
+      width: barWidth,
+    });
+    setScrollMetrics({ scrollWidth, clientWidth, scrollLeft, maxScrollLeft });
+
+    if (floatingScrollRef.current && !isSyncingRef.current) {
+      floatingScrollRef.current.scrollLeft = scrollLeft;
+    }
+  }, []);
+
+  const handleTableScroll = () => {
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
+    const left = tableContainerRef.current?.scrollLeft || 0;
+    if (floatingScrollRef.current) {
+      floatingScrollRef.current.scrollLeft = left;
+    }
+    setScrollMetrics((prev) => ({ ...prev, scrollLeft: left }));
+    requestAnimationFrame(() => {
+      isSyncingRef.current = false;
+    });
+  };
+
+  const handleFloatingScroll = () => {
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
+    const left = floatingScrollRef.current?.scrollLeft || 0;
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollLeft = left;
+    }
+    setScrollMetrics((prev) => ({ ...prev, scrollLeft: left }));
+    requestAnimationFrame(() => {
+      isSyncingRef.current = false;
+    });
+  };
+
+  const handleTableWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.shiftKey && e.deltaY !== 0 && tableContainerRef.current) {
+      tableContainerRef.current.scrollLeft += e.deltaY;
+    }
+  };
+
+  useEffect(() => {
+    const tableEl = tableContainerRef.current;
+    if (!tableEl) return;
+
+    updateScrollState();
+
+    const scrollParent = tableEl.closest('.overflow-y-auto');
+    const handleScrollOrResize = () => {
+      updateScrollState();
+    };
+
+    window.addEventListener('resize', handleScrollOrResize);
+    window.addEventListener('scroll', handleScrollOrResize, { passive: true });
+    if (scrollParent) {
+      scrollParent.addEventListener('scroll', handleScrollOrResize, { passive: true });
+    }
+
+    const ro = new ResizeObserver(() => {
+      updateScrollState();
+    });
+    ro.observe(tableEl);
+
+    return () => {
+      window.removeEventListener('resize', handleScrollOrResize);
+      window.removeEventListener('scroll', handleScrollOrResize);
+      if (scrollParent) {
+        scrollParent.removeEventListener('scroll', handleScrollOrResize);
+      }
+      ro.disconnect();
+    };
+  }, [updateScrollState, filteredStudents.length]);
+
   return (
-    <div className="space-y-5 pb-20">
+    <div className="space-y-5 pb-24 sm:pb-20">
       {/* Header Bar */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
@@ -292,9 +423,9 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                 {currentTermObj?.name || '2026 夏季班'}
               </span>
             </div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight mt-1 flex items-center space-x-3">
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight mt-1.5 flex flex-wrap items-center gap-2">
               <span>學生成績管理與評量</span>
-              <span className="text-sm font-bold bg-teal-600 text-white px-2.5 py-1 rounded-lg">
+              <span className="text-xs sm:text-sm font-bold bg-teal-600 text-white px-2.5 py-0.5 sm:py-1 rounded-lg">
                 {currentClassName}
               </span>
             </h1>
@@ -304,26 +435,26 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
           </div>
 
           {/* Action buttons */}
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
             <button
               id="btn-export-grades"
               onClick={handleExportCSV}
-              className="flex items-center space-x-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl font-bold text-xs transition-colors shadow-2xs"
+              className="flex-1 sm:flex-none justify-center flex items-center space-x-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl font-bold text-xs transition-colors shadow-2xs whitespace-nowrap"
             >
-              <Download className="w-4 h-4 text-slate-500" />
+              <Download className="w-4 h-4 text-slate-500 shrink-0" />
               <span>匯出成績單 (CSV)</span>
             </button>
 
             <button
               id="btn-save-grades"
               onClick={handleSave}
-              className={`flex items-center space-x-1.5 px-4 py-2 rounded-xl font-bold text-xs transition-all shadow-md ${
+              className={`flex-1 sm:flex-none justify-center flex items-center space-x-1.5 px-4 py-2 rounded-xl font-bold text-xs transition-all shadow-md whitespace-nowrap ${
                 hasUnsavedChanges
                   ? 'bg-emerald-600 hover:bg-emerald-700 text-white animate-pulse'
                   : 'bg-slate-900 hover:bg-slate-800 text-white'
               }`}
             >
-              <Save className="w-4 h-4" />
+              <Save className="w-4 h-4 shrink-0" />
               <span>{hasUnsavedChanges ? '儲存修改成績 *' : '儲存成績單'}</span>
             </button>
           </div>
@@ -353,10 +484,10 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
       </div>
 
       {/* Grade Calculation Formula Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl p-5 shadow-md">
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-md">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-700/80 pb-4">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-bold text-teal-400 uppercase tracking-wider">
                 中心成績計算比例規範 (總和 100%)
               </span>
@@ -367,17 +498,17 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
             <div className="text-sm font-semibold text-slate-200 mt-1">
               中心標準比例：出席 20% + 平時 15% + 期中 20% + 期末 20% + 作業 15% + 態度 10%
             </div>
-            <p className="text-xs text-amber-300/90 mt-1.5 flex items-center gap-1.5">
+            <p className="text-xs text-amber-300/90 mt-1.5 flex items-start gap-1.5">
               <span>⚠️ 規範說明：個別學生若經行政端核定自訂比例，成績列將明確標註【個別自訂】並依其專屬比例計算；未設定者依【標準預設】計算。教師端提供即時檢視，無修改權重權限。</span>
             </p>
           </div>
 
-          <div className="flex items-center space-x-4 text-xs font-mono">
-            <div className="bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700">
+          <div className="flex flex-wrap items-center gap-2.5 sm:gap-4 text-xs font-mono">
+            <div className="flex-1 sm:flex-none bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700 whitespace-nowrap">
               <span className="text-slate-400">班級平均分：</span>
               <strong className="text-teal-400 font-bold text-sm ml-1">{classStats.avgTotal}</strong>
             </div>
-            <div className="bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700">
+            <div className="flex-1 sm:flex-none bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700 whitespace-nowrap">
               <span className="text-slate-400">及格人數：</span>
               <strong className="text-emerald-400 font-bold text-sm ml-1">{classStats.passCount} / {classStudents.length}</strong>
             </div>
@@ -428,13 +559,19 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
               placeholder="搜尋學生姓名 / 學號..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+              className="w-full px-3 py-1.5 text-base sm:text-xs border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
             />
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+        <div
+          ref={tableContainerRef}
+          onScroll={handleTableScroll}
+          onWheel={handleTableWheel}
+          className="overflow-x-auto focus:outline-none select-auto"
+          style={{ WebkitOverflowScrolling: 'touch' }}
+        >
+          <table className="w-full min-w-[920px] text-left border-collapse">
             <thead>
               <tr className="bg-slate-50 text-slate-700 text-xs font-bold border-b border-slate-200">
                 <th className="py-3.5 px-3 w-10 text-center">#</th>
@@ -611,13 +748,14 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                       <div className="flex flex-col items-center">
                         <input
                           type="number"
+                          inputMode="decimal"
                           min="0"
                           max="100"
                           step="0.5"
                           id={`input-quiz-${student.id}`}
                           value={grade.quizScore}
                           onChange={(e) => handleScoreChange(student.id, student.name, 'quizScore', e.target.value)}
-                          className="w-20 px-2.5 py-1.5 text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+                          className="w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
                         />
                         <div className="text-[10px] font-semibold text-slate-500 mt-1">
                           權重 {studentW.quizWeight}%
@@ -630,13 +768,14 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                       <div className="flex flex-col items-center">
                         <input
                           type="number"
+                          inputMode="decimal"
                           min="0"
                           max="100"
                           step="0.5"
                           id={`input-midterm-${student.id}`}
                           value={grade.midtermScore}
                           onChange={(e) => handleScoreChange(student.id, student.name, 'midtermScore', e.target.value)}
-                          className={`w-20 px-2.5 py-1.5 text-center font-mono font-bold bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs ${
+                          className={`w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs ${
                             studentW.midtermWeight === 0
                               ? 'border-amber-300 bg-amber-50/40 text-slate-600'
                               : 'border-slate-300 text-slate-800'
@@ -655,13 +794,14 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                       <div className="flex flex-col items-center">
                         <input
                           type="number"
+                          inputMode="decimal"
                           min="0"
                           max="100"
                           step="0.5"
                           id={`input-final-${student.id}`}
                           value={grade.finalScore}
                           onChange={(e) => handleScoreChange(student.id, student.name, 'finalScore', e.target.value)}
-                          className="w-20 px-2.5 py-1.5 text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+                          className="w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
                         />
                         <div className="text-[10px] font-semibold text-slate-500 mt-1">
                           權重 {studentW.finalWeight}%
@@ -674,13 +814,14 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                       <div className="flex flex-col items-center">
                         <input
                           type="number"
+                          inputMode="decimal"
                           min="0"
                           max="100"
                           step="0.5"
                           id={`input-homework-${student.id}`}
                           value={grade.homeworkScore}
                           onChange={(e) => handleScoreChange(student.id, student.name, 'homeworkScore', e.target.value)}
-                          className="w-20 px-2.5 py-1.5 text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+                          className="w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
                         />
                         <div className="text-[10px] font-semibold text-slate-500 mt-1">
                           權重 {studentW.homeworkWeight}%
@@ -693,13 +834,14 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                       <div className="flex flex-col items-center">
                         <input
                           type="number"
+                          inputMode="decimal"
                           min="0"
                           max="100"
                           step="0.5"
                           id={`input-attitude-${student.id}`}
                           value={grade.attitudeScore}
                           onChange={(e) => handleScoreChange(student.id, student.name, 'attitudeScore', e.target.value)}
-                          className="w-20 px-2.5 py-1.5 text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+                          className="w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
                         />
                         <div className="text-[10px] font-semibold text-slate-500 mt-1">
                           權重 {studentW.attitudeWeight}%
@@ -747,6 +889,37 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Minimal Floating Horizontal Scrollbar */}
+      {showFloatingScrollbar && (
+        <div
+          aria-label="橫向捲軸"
+          className="fixed z-30 pointer-events-none transition-opacity duration-150"
+          style={{
+            bottom: '10px',
+            left: `${floatingBarLayout.left}px`,
+            width: `${floatingBarLayout.width}px`,
+            maxWidth: 'calc(100vw - 24px)',
+          }}
+        >
+          <div
+            ref={floatingScrollRef}
+            onScroll={handleFloatingScroll}
+            className="pointer-events-auto floating-scrollbar touch-pan-x overflow-x-auto overflow-y-hidden h-3.5 sm:h-3 bg-slate-200/80 hover:bg-slate-300/90 backdrop-blur-md rounded-full border border-slate-300/70 shadow-sm cursor-ew-resize transition-colors"
+            style={{
+              WebkitOverflowScrolling: 'touch',
+            }}
+            title="橫向捲動表格"
+          >
+            <div
+              style={{
+                width: `${scrollMetrics.scrollWidth}px`,
+                height: '1px',
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

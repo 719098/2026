@@ -247,6 +247,8 @@ export interface Student {
   admissionDate?: string; // 入學日期
   joinedAt?: string; // 入班日期 (class_students.joined_at)
   droppedAt?: string; // 離班日期 (class_students.dropped_at)
+  registrationStartDate?: string; // 註冊起日
+  registrationEndDate?: string; // 註冊迄日
   birthday?: string; // 學校欄位：生日
   enterdep?: string; // 學校欄位：入學系所
   enterdate?: string; // 學校欄位：入學日期
@@ -432,3 +434,77 @@ export type AdminNavigationTab =
   | 'admin_attendance'    // 全校點名監控
   | 'admin_grades'        // 全校成績總表
   | 'admin_reports';      // 行政報表中心
+
+export interface DailyAttendanceRecord {
+  date: string;
+  courseName: string;
+  className: string;
+  periodsCount: number;
+  period1: AttendanceStatus;
+  period2: AttendanceStatus;
+  period3?: AttendanceStatus;
+  period4?: AttendanceStatus;
+  totalHours: number;
+  presentHours: number;
+  leaveHours: number;
+  absentHours: number;
+  statusSummary: string;
+  remarks?: string;
+  isDefaultPresent?: boolean;
+  isCancelled?: boolean;
+}
+
+export type MakeupRequestType = 'MAKEUP' | 'EDIT';
+export type MakeupRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'COMPLETED';
+
+export interface AttendanceMakeupRequest {
+  id: string;
+  sessionId?: string | null;
+  classSessionId?: string | null;
+  courseSessionId?: string | null;
+  classId: string;
+  className?: string;
+  sessionDate: string;
+  teacherId?: string | null;
+  teacherName?: string;
+  requesterProfileId?: string;
+  requestType: MakeupRequestType;
+  reason: string;
+  status: MakeupRequestStatus;
+  reviewedBy?: string | null;
+  reviewerName?: string;
+  reviewedAt?: string | null;
+  reviewNotes?: string | null;
+  usedAt?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface AttendanceAuditLog {
+  id: string;
+  attendanceRecordId?: string | null;
+  sessionId: string;
+  classId?: string;
+  className?: string;
+  sessionDate?: string;
+  studentId: string;
+  studentName?: string;
+  studentNumber?: string;
+  oldValue?: Record<string, any> | null;
+  newValue?: Record<string, any> | null;
+  oldPeriod1?: string | null;
+  oldPeriod2?: string | null;
+  oldPeriod3?: string | null;
+  oldPeriod4?: string | null;
+  newPeriod1?: string | null;
+  newPeriod2?: string | null;
+  newPeriod3?: string | null;
+  newPeriod4?: string | null;
+  oldEarnedHours?: number | null;
+  newEarnedHours?: number | null;
+  changedBy?: string | null;
+  changedByName?: string;
+  reason?: string | null;
+  createdAt: string;
+}
+

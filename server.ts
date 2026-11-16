@@ -2,7 +2,16 @@ import "dotenv/config";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
+
+interface CallerCheckResult {
+  ok: boolean;
+  status: number;
+  error?: string;
+  userId?: string;
+  role?: string;
+  dbClient?: SupabaseClient<any>;
+}
 
 const app = express();
 const PORT = 3000;
@@ -51,8 +60,69 @@ function calculateNextTeacherNo(teachers: any[]): string {
   return `T${nextNum}`;
 }
 
+function getSupabaseKeys() {
+  const supabaseUrl = getValidSupabaseUrl();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
+  return { supabaseUrl, serviceRoleKey, anonKey };
+}
+
+async function verifyCallerRole(
+  req: express.Request,
+  requireAdmin: boolean
+): Promise<CallerCheckResult> {
+  const rawAuth = req.headers.authorization || (req.headers as any).Authorization || '';
+  const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return { ok: false, status: 401, error: '未授權：缺少認證權杖 (Bearer Token)' };
+  }
+  const token = authHeader.slice(7).trim();
+  if (!token) {
+    return { ok: false, status: 401, error: '未授權：缺少有效的認證權杖' };
+  }
+
+  const { supabaseUrl, serviceRoleKey, anonKey } = getSupabaseKeys();
+  const activeKey = serviceRoleKey || anonKey;
+  if (!activeKey) {
+    return { ok: false, status: 500, error: '伺服器未設定 Supabase 金鑰' };
+  }
+
+  const dbClient: SupabaseClient<any> = createClient(supabaseUrl, activeKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    ...(serviceRoleKey
+      ? {}
+      : { global: { headers: { Authorization: `Bearer ${token}` } } }),
+  });
+
+  const { data: userData, error: userErr } = await dbClient.auth.getUser(token);
+  if (userErr || !userData?.user) {
+    return { ok: false, status: 401, error: '未授權：無效或已過期的登入憑證' };
+  }
+
+  const { data: profile, error: profErr } = await dbClient
+    .from('profiles')
+    .select('id, role, is_active')
+    .eq('id', userData.user.id)
+    .maybeSingle();
+
+  if (profErr || !profile || profile.is_active === false) {
+    return { ok: false, status: 403, error: '無權限：帳號已停用或未設定系統角色' };
+  }
+
+  const role = String(profile.role || '').toUpperCase();
+  if (requireAdmin && role !== 'ADMIN') {
+    return { ok: false, status: 403, error: '無權限：僅管理員可執行此操作' };
+  }
+
+  return { ok: true, status: 200, userId: userData.user.id, role, dbClient };
+}
+
 // Admin API: Create Teacher with Supabase Auth User + public.teachers entry
 app.post("/api/admin/create-teacher", async (req, res) => {
+  const caller = await verifyCallerRole(req, true);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
   const { name, englishName, email, phone, specialty, password } = req.body || {};
 
   const cleanName = typeof name === 'string' ? name.trim() : '';
@@ -305,6 +375,10 @@ app.post("/api/admin/create-teacher", async (req, res) => {
 
 // Admin API: Reset Teacher Password in Supabase Auth
 app.post("/api/admin/reset-teacher-password", async (req, res) => {
+  const caller = await verifyCallerRole(req, true);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
   const { teacherId, profileId, email, newPassword } = req.body || {};
 
   const cleanPassword = typeof newPassword === 'string' ? newPassword : '';
@@ -377,6 +451,10 @@ app.post("/api/admin/reset-teacher-password", async (req, res) => {
 
 // Admin API: Upload Teacher Avatar to Supabase Storage ('teacher-avatars')
 app.post("/api/admin/upload-teacher-avatar", async (req, res) => {
+  const caller = await verifyCallerRole(req, true);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
   const { teacherId, fileData, fileType } = req.body || {};
 
   if (!teacherId || typeof teacherId !== 'string') {
@@ -484,6 +562,10 @@ app.post("/api/admin/upload-teacher-avatar", async (req, res) => {
 
 // Admin API: Delete Teacher Avatar from Supabase Storage ('teacher-avatars')
 app.post("/api/admin/delete-teacher-avatar", async (req, res) => {
+  const caller = await verifyCallerRole(req, true);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
   const { teacherId } = req.body || {};
 
   if (!teacherId || typeof teacherId !== 'string') {
@@ -536,6 +618,10 @@ app.post("/api/admin/delete-teacher-avatar", async (req, res) => {
 
 // Admin API: Delete or Deactivate Teacher
 app.post("/api/admin/delete-teacher", async (req, res) => {
+  const caller = await verifyCallerRole(req, true);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
   const { teacherId, action = 'check', nextStatus } = req.body || {};
 
   if (!teacherId || typeof teacherId !== 'string') {
@@ -776,8 +862,12 @@ app.post("/api/admin/delete-teacher", async (req, res) => {
   }
 });
 
-// Admin API: Batch Get Teacher Avatar Signed URLs
+// Admin API: Batch Get Teacher Avatar Signed URLs (allowed for any authenticated active user)
 app.post("/api/admin/get-teacher-avatar-urls", async (req, res) => {
+  const caller = await verifyCallerRole(req, false);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
   const { teacherIds } = req.body || {};
 
   if (!Array.isArray(teacherIds) || teacherIds.length === 0) {
@@ -827,16 +917,13 @@ app.post("/api/admin/get-teacher-avatar-urls", async (req, res) => {
   }
 });
 
-// Real-time Class Query API: Bypasses RLS to ensure genuine database classes are loaded
+// Real-time Class Query API
 app.get("/api/classes", async (req, res) => {
-  const supabaseUrl = getValidSupabaseUrl();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
-  const activeKey = serviceRoleKey || anonKey;
-
-  const adminSupabase = createClient(supabaseUrl, activeKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
+  const caller = await verifyCallerRole(req, false);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
+  const adminSupabase = caller.dbClient;
 
   try {
     const { data, error } = await adminSupabase
@@ -855,16 +942,13 @@ app.get("/api/classes", async (req, res) => {
   }
 });
 
-// Real-time Transfer History API: Bypasses RLS to ensure student enrollment history is loaded
+// Real-time Transfer History API
 app.get("/api/transfer-history", async (req, res) => {
-  const supabaseUrl = getValidSupabaseUrl();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
-  const activeKey = serviceRoleKey || anonKey;
-
-  const adminSupabase = createClient(supabaseUrl, activeKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
+  const caller = await verifyCallerRole(req, false);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
+  const adminSupabase = caller.dbClient;
 
   try {
     const { data, error } = await adminSupabase
@@ -883,16 +967,13 @@ app.get("/api/transfer-history", async (req, res) => {
   }
 });
 
-// Real-time Students Query API: Bypasses RLS to ensure genuine students are loaded
+// Real-time Students Query API
 app.get("/api/students", async (req, res) => {
-  const supabaseUrl = getValidSupabaseUrl();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
-  const activeKey = serviceRoleKey || anonKey;
-
-  const adminSupabase = createClient(supabaseUrl, activeKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
+  const caller = await verifyCallerRole(req, false);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
+  const adminSupabase = caller.dbClient;
 
   try {
     const { data, error } = await adminSupabase
@@ -911,16 +992,13 @@ app.get("/api/students", async (req, res) => {
   }
 });
 
-// Real-time Class-Students Query API: Bypasses RLS to ensure accurate class enrollment
+// Real-time Class-Students Query API
 app.get("/api/class-students", async (req, res) => {
-  const supabaseUrl = getValidSupabaseUrl();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
-  const activeKey = serviceRoleKey || anonKey;
-
-  const adminSupabase = createClient(supabaseUrl, activeKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
+  const caller = await verifyCallerRole(req, false);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
+  const adminSupabase = caller.dbClient;
 
   try {
     const { data, error } = await adminSupabase
@@ -938,16 +1016,13 @@ app.get("/api/class-students", async (req, res) => {
   }
 });
 
-// Real-time Course-Sessions Query API: Bypasses RLS to ensure recorded sessions are loaded
+// Real-time Course-Sessions Query API
 app.get("/api/course-sessions", async (req, res) => {
-  const supabaseUrl = getValidSupabaseUrl();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
-  const activeKey = serviceRoleKey || anonKey;
-
-  const adminSupabase = createClient(supabaseUrl, activeKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
+  const caller = await verifyCallerRole(req, false);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
+  const adminSupabase = caller.dbClient;
 
   try {
     const { data, error } = await adminSupabase
@@ -965,16 +1040,13 @@ app.get("/api/course-sessions", async (req, res) => {
   }
 });
 
-// Real-time Attendance-Records Query API: Bypasses RLS to ensure official records are loaded
+// Real-time Attendance-Records Query API
 app.get("/api/attendance-records", async (req, res) => {
-  const supabaseUrl = getValidSupabaseUrl();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
-  const activeKey = serviceRoleKey || anonKey;
-
-  const adminSupabase = createClient(supabaseUrl, activeKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
+  const caller = await verifyCallerRole(req, false);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
+  const adminSupabase = caller.dbClient;
 
   try {
     const { data, error } = await adminSupabase
@@ -992,16 +1064,13 @@ app.get("/api/attendance-records", async (req, res) => {
   }
 });
 
-// Real-time Teachers Query API: Bypasses RLS to ensure accurate teacher profiles are loaded
+// Real-time Teachers Query API
 app.get("/api/teachers", async (req, res) => {
-  const supabaseUrl = getValidSupabaseUrl();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
-  const activeKey = serviceRoleKey || anonKey;
-
-  const adminSupabase = createClient(supabaseUrl, activeKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
+  const caller = await verifyCallerRole(req, false);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
+  const adminSupabase = caller.dbClient;
 
   try {
     const { data, error } = await adminSupabase
@@ -1020,16 +1089,13 @@ app.get("/api/teachers", async (req, res) => {
   }
 });
 
-// Real-time Class-Sessions Query API: Bypasses RLS to ensure all scheduled class sessions are loaded
+// Real-time Class-Sessions Query API
 app.get("/api/class-sessions", async (req, res) => {
-  const supabaseUrl = getValidSupabaseUrl();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
-  const activeKey = serviceRoleKey || anonKey;
-
-  const adminSupabase = createClient(supabaseUrl, activeKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
+  const caller = await verifyCallerRole(req, false);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
+  const adminSupabase = caller.dbClient;
 
   try {
     const { data, error } = await adminSupabase
@@ -1051,14 +1117,11 @@ app.get("/api/class-sessions", async (req, res) => {
 
 // Real-time Student Grades Query API: Ensures grades are reliably loaded for all roles
 app.get("/api/student-grades", async (req, res) => {
-  const supabaseUrl = getValidSupabaseUrl();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
-  const activeKey = serviceRoleKey || anonKey;
-
-  const adminSupabase = createClient(supabaseUrl, activeKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
+  const caller = await verifyCallerRole(req, false);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
+  const adminSupabase = caller.dbClient;
 
   try {
     const { student_id, class_id } = req.query || {};
@@ -1085,14 +1148,11 @@ app.get("/api/student-grades", async (req, res) => {
 
 // Real-time Student Grades Save API: Ensures grade persistence across teachers and admin
 app.post("/api/student-grades/save", async (req, res) => {
-  const supabaseUrl = getValidSupabaseUrl();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_t1pbOZMnOqshN1IPLfOPKw_OFJFZQeM';
-  const activeKey = serviceRoleKey || anonKey;
-
-  const adminSupabase = createClient(supabaseUrl, activeKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
+  const caller = await verifyCallerRole(req, false);
+  if (!caller.ok) {
+    return res.status(caller.status).json({ success: false, error: caller.error });
+  }
+  const adminSupabase = caller.dbClient;
 
   try {
     const { grade, classId } = req.body || {};
@@ -1103,6 +1163,22 @@ app.post("/api/student-grades/save", async (req, res) => {
     const targetClassId = classId || grade.classId;
     if (!targetClassId) {
       return res.status(400).json({ success: false, error: '缺少班級代碼 (classId 為必填)' });
+    }
+
+    if (caller.role !== 'ADMIN') {
+      const { data: teacherRow } = await adminSupabase
+        .from('teachers')
+        .select('id')
+        .eq('profile_id', caller.userId)
+        .maybeSingle();
+      const { data: classRow } = await adminSupabase
+        .from('classes')
+        .select('id, teacher_id')
+        .eq('id', targetClassId)
+        .maybeSingle();
+      if (!teacherRow || !classRow || String(classRow.teacher_id) !== String(teacherRow.id)) {
+        return res.status(403).json({ success: false, error: '無權限：教師僅可修改自己授課班級的成績' });
+      }
     }
 
     const attendance_score = Number(grade.attendanceScore ?? 100);

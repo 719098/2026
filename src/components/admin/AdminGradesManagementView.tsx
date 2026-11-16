@@ -489,8 +489,8 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
 
     // Calculate layout aligned to the visible table area
     const viewportWidth = window.innerWidth;
-    const barLeft = Math.max(16, tableRect.left);
-    const maxAvailableWidth = Math.max(260, viewportWidth - barLeft - 16);
+    const barLeft = Math.max(12, tableRect.left);
+    const maxAvailableWidth = Math.max(180, viewportWidth - barLeft - 12);
     const barWidth = Math.min(tableRect.width, maxAvailableWidth);
 
     setFloatingBarLayout({
@@ -573,13 +573,13 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
   }, [updateScrollState, filteredStudents.length]);
 
   return (
-    <div className="space-y-6 pb-14">
+    <div className="space-y-6 pb-20 sm:pb-14">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-5 rounded-xl border border-[#DCE2E6] shadow-2xs">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-4 sm:p-5 rounded-xl border border-[#DCE2E6] shadow-2xs">
         <div>
           <div className="flex items-center space-x-2">
-            <Award className="w-5 h-5 text-[#536B7A]" />
-            <h1 className="text-lg font-bold text-[#26313B]">學員期末成績總評與自訂權重</h1>
+            <Award className="w-5 h-5 text-[#536B7A] shrink-0" />
+            <h1 className="text-base sm:text-lg font-bold text-[#26313B]">學員期末成績總評與自訂權重</h1>
             <InfoTooltip
               title="學生成績結算與個別自訂權重"
               content="全校預設比例：出席 20% + 平時 15% + 期中 20% + 期末 20% + 作業 15% + 態度 10%（合計 100%）。可針對單一或批量學生自訂比例；未自訂者自動套用預設值。學期鎖定後不可修改。"
@@ -590,15 +590,15 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
           </p>
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           {terms.length > 0 && (
-            <div className="flex items-center space-x-1.5 bg-[#F8FAFC] border border-[#DCE2E6] px-3 py-1.5 rounded-lg text-xs">
-              <Calendar className="w-3.5 h-3.5 text-[#536B7A]" />
-              <span className="font-semibold text-slate-600">學期：</span>
+            <div className="flex-1 sm:flex-none flex items-center space-x-1.5 bg-[#F8FAFC] border border-[#DCE2E6] px-3 py-1.5 rounded-lg text-xs min-w-0">
+              <Calendar className="w-3.5 h-3.5 text-[#536B7A] shrink-0" />
+              <span className="font-semibold text-slate-600 shrink-0">學期：</span>
               <select
                 value={selectedTermId}
                 onChange={(e) => handleTermChange(e.target.value)}
-                className="bg-transparent font-bold text-[#26313B] focus:outline-none"
+                className="w-full sm:w-auto bg-transparent font-bold text-base sm:text-xs text-[#26313B] focus:outline-none truncate"
               >
                 {terms.map((t) => (
                   <option key={t.id} value={t.id}>
@@ -611,9 +611,9 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
 
           <button
             onClick={handleExportAllCSV}
-            className="inline-flex items-center space-x-1.5 px-4 py-2 bg-[#536B7A] hover:bg-[#455865] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors"
+            className="w-full sm:w-auto justify-center inline-flex items-center space-x-1.5 px-4 py-2 bg-[#536B7A] hover:bg-[#455865] text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors whitespace-nowrap"
           >
-            <FileSpreadsheet className="w-4 h-4" />
+            <FileSpreadsheet className="w-4 h-4 shrink-0" />
             <span>匯出全校成績冊 (CSV)</span>
           </button>
         </div>
@@ -650,7 +650,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
       </div>
 
       {/* Filter toolbar */}
-      <div className="bg-white p-4 rounded-xl border border-[#DCE2E6] shadow-2xs flex flex-col lg:flex-row gap-3 items-center justify-between">
+      <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-[#DCE2E6] shadow-2xs flex flex-col lg:flex-row gap-3 items-center justify-between">
         <div className="relative w-full lg:w-72">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
@@ -658,7 +658,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
             placeholder="搜尋學號 / 姓名 / 英文名..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-xs border border-[#DCE2E6] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#536B7A] focus:border-[#536B7A] bg-white text-[#26313B]"
+            className="w-full pl-9 pr-3 py-2 text-base sm:text-xs border border-[#DCE2E6] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#536B7A] focus:border-[#536B7A] bg-white text-[#26313B]"
           />
         </div>
 
@@ -667,7 +667,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
           <select
             value={selectedClassFilter}
             onChange={(e) => setSelectedClassFilter(e.target.value)}
-            className="px-3 py-2 text-xs border border-[#DCE2E6] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#536B7A] font-semibold text-[#26313B]"
+            className="flex-1 min-w-[140px] sm:flex-none px-3 py-2 text-base sm:text-xs border border-[#DCE2E6] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#536B7A] font-semibold text-[#26313B]"
           >
             <option value="ALL">全部班級名冊 ({termClasses.length} 班)</option>
             {termClasses.map((c) => (
@@ -681,7 +681,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
           <select
             value={selectedWeightTypeFilter}
             onChange={(e) => setSelectedWeightTypeFilter(e.target.value as any)}
-            className="px-3 py-2 text-xs border border-[#DCE2E6] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#536B7A] font-semibold text-[#26313B]"
+            className="flex-1 min-w-[140px] sm:flex-none px-3 py-2 text-base sm:text-xs border border-[#DCE2E6] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#536B7A] font-semibold text-[#26313B]"
           >
             <option value="ALL">全部權重類型</option>
             <option value="CUSTOM">僅顯示個別自訂權重</option>
@@ -692,7 +692,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
           <select
             value={selectedGradeBandFilter}
             onChange={(e) => setSelectedGradeBandFilter(e.target.value)}
-            className="px-3 py-2 text-xs border border-[#DCE2E6] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#536B7A] font-semibold text-[#26313B]"
+            className="w-full sm:w-auto px-3 py-2 text-base sm:text-xs border border-[#DCE2E6] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#536B7A] font-semibold text-[#26313B]"
           >
             <option value="ALL">全部成績區間</option>
             <option value="A">優異等級 (80分以上)</option>
@@ -722,7 +722,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
           className="overflow-x-auto focus:outline-none select-auto"
           style={{ WebkitOverflowScrolling: 'touch' }}
         >
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="w-full min-w-[980px] text-left text-xs border-collapse">
             <thead>
               <tr className="bg-[#F8FAFC] text-[#66717C] font-semibold border-b border-[#DCE2E6]">
                 <th className="py-3 px-3 text-center w-10">
@@ -882,13 +882,13 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
             bottom: '10px',
             left: `${floatingBarLayout.left}px`,
             width: `${floatingBarLayout.width}px`,
-            maxWidth: 'calc(100vw - 32px)',
+            maxWidth: 'calc(100vw - 24px)',
           }}
         >
           <div
             ref={floatingScrollRef}
             onScroll={handleFloatingScroll}
-            className="pointer-events-auto floating-scrollbar overflow-x-auto overflow-y-hidden h-2.5 sm:h-3 bg-slate-200/80 hover:bg-slate-300/90 backdrop-blur-md rounded-full border border-slate-300/70 shadow-sm cursor-ew-resize transition-colors"
+            className="pointer-events-auto floating-scrollbar touch-pan-x overflow-x-auto overflow-y-hidden h-3.5 sm:h-3 bg-slate-200/80 hover:bg-slate-300/90 backdrop-blur-md rounded-full border border-slate-300/70 shadow-sm cursor-ew-resize transition-colors"
             style={{
               WebkitOverflowScrolling: 'touch',
             }}

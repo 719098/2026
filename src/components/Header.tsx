@@ -48,9 +48,9 @@ export const Header: React.FC<HeaderProps> = ({
   const isRoleAdmin = currentRole === 'ADMIN';
 
   return (
-    <header className="h-16 bg-white border-b border-[#DCE2E6] px-3 sm:px-6 flex items-center justify-between shrink-0 z-20 relative">
+    <header className="min-h-16 py-1.5 sm:py-0 sm:h-16 bg-white border-b border-[#DCE2E6] px-3 sm:px-6 flex items-center justify-between gap-2 shrink-0 z-20 relative">
       {/* Left Title, Hamburger & Status */}
-      <div className="flex items-center space-x-2 sm:space-x-4 min-w-0">
+      <div className="flex items-center space-x-2 sm:space-x-4 min-w-0 flex-1">
         {/* Mobile Hamburger Menu Button */}
         {onOpenMobileMenu && (
           <button
@@ -65,7 +65,7 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center space-x-2">
             <span
               className={`px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wider uppercase border ${
@@ -78,7 +78,7 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </div>
           <h2 className="text-xs sm:text-base font-bold text-[#26313B] flex items-center flex-wrap gap-1 sm:gap-2 mt-0.5 min-w-0">
-            <span className="truncate max-w-[130px] sm:max-w-none">{title}</span>
+            <span className="truncate max-w-[140px] sm:max-w-none">{title}</span>
             {!isRoleAdmin && (
               pendingAttendanceCount > 0 ? (
                 <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-medium bg-[#E8EEF2] text-[#26313B] border border-[#C9D1D7] shrink-0">
@@ -102,15 +102,15 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Right Controls: User Profile & Logout */}
-      <div className="flex items-center space-x-3">
+      <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
         {/* In Admin mode: Admin info pill & Logout */}
         {isRoleAdmin ? (
-          <div className="flex items-center space-x-2.5 pl-3 border-l border-[#DCE2E6]">
+          <div className="flex items-center space-x-2 sm:space-x-2.5 pl-2 sm:pl-3 border-l border-[#DCE2E6]">
             <TeacherAvatar
               avatarUrl={adminProfile?.avatarUrl}
               name={adminProfile?.fullName || '系統管理員'}
               sizeClassName="w-8 h-8"
-              className="border border-[#C9D1D7] shadow-2xs"
+              className="border border-[#C9D1D7] shadow-2xs shrink-0"
             />
             <div className="hidden sm:block text-left">
               <div className="text-xs font-bold text-[#26313B] flex items-center space-x-1">
@@ -126,7 +126,7 @@ export const Header: React.FC<HeaderProps> = ({
                 id="btn-admin-header-logout"
                 type="button"
                 onClick={onLogout}
-                className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors ml-1 flex items-center space-x-1 text-xs font-bold border border-[#DCE2E6] cursor-pointer"
+                className="px-2 sm:px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors flex items-center space-x-1 text-xs font-bold border border-[#DCE2E6] cursor-pointer shrink-0"
                 title="登出管理員系統"
                 aria-label="登出管理員系統"
               >
@@ -137,13 +137,13 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         ) : (
           /* In Teacher mode: Teacher profile badge & Logout */
-          <div className="flex items-center space-x-2.5 pl-3 border-l border-[#DCE2E6]">
+          <div className="flex items-center space-x-2 sm:space-x-2.5 pl-2 sm:pl-3 border-l border-[#DCE2E6]">
             <div className="flex items-center space-x-2">
               <TeacherAvatar
                 avatarUrl={currentTeacher?.avatarUrl}
                 name={currentTeacher?.name || '教師'}
                 sizeClassName="w-8 h-8"
-                className="border border-[#C9D1D7] shadow-2xs"
+                className="border border-[#C9D1D7] shadow-2xs shrink-0"
               />
               <div className="text-left hidden sm:block">
                 <div className="text-xs font-bold text-[#26313B] flex items-center space-x-1">
@@ -163,7 +163,7 @@ export const Header: React.FC<HeaderProps> = ({
                 id="btn-teacher-header-logout"
                 type="button"
                 onClick={onLogout}
-                className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors shrink-0 flex items-center space-x-1 text-xs font-bold border border-[#DCE2E6] cursor-pointer"
+                className="px-2 sm:px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors shrink-0 flex items-center space-x-1 text-xs font-bold border border-[#DCE2E6] cursor-pointer"
                 title="登出教師系統"
                 aria-label="登出教師系統"
               >

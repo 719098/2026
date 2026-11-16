@@ -13,10 +13,10 @@ import {
   X,
   BookOpen
 } from 'lucide-react';
-import { CourseSession, Student, Teacher } from '../types';
+import { CourseSession, Student, Teacher, AttendanceMakeupRequest } from '../types';
 import { InfoTooltip } from './common/InfoTooltip';
 import { formatDateFull } from '../utils/dateUtils';
-import { getTodayDateStr } from '../utils/quarterScheduler';
+import { getTodayDateStr, getDaysDifference } from '../utils/quarterScheduler';
 import { DatePickerWheelModal } from './DatePickerWheelModal';
 
 interface TeacherTodayAttendanceViewProps {
@@ -29,6 +29,8 @@ interface TeacherTodayAttendanceViewProps {
   onStartAttendance: (course: CourseSession) => void;
   onViewRecord: (course: CourseSession) => void;
   onNavigateTab?: (tab: string) => void;
+  makeupRequests?: AttendanceMakeupRequest[];
+  teacherCourses?: CourseSession[];
 }
 
 /**
@@ -66,12 +68,34 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
   onStartAttendance,
   onViewRecord,
   onNavigateTab,
+  makeupRequests = [],
+  teacherCourses = [],
 }) => {
   const [showAllPending, setShowAllPending] = useState(false);
   const [isDatePickerModalOpen, setIsDatePickerModalOpen] = useState(false);
 
   const realTodayStr = getTodayDateStr();
   const isViewingToday = selectedDate === realTodayStr;
+
+  const approvedOverdueSessions = useMemo(() => {
+    const activeReqs = (makeupRequests || []).filter((r) => r.status === 'APPROVED');
+    const result: Array<{ req: AttendanceMakeupRequest; course: CourseSession }> = [];
+    activeReqs.forEach((req) => {
+      const matched = teacherCourses.find(
+        (c) =>
+          c.classId === req.classId &&
+          c.date === req.sessionDate &&
+          !c.isCancelled &&
+          !c.isSuspended &&
+          c.status !== 'holiday' &&
+          c.status !== 'rescheduled_out'
+      );
+      if (matched) {
+        result.push({ req, course: matched });
+      }
+    });
+    return result.sort((a, b) => b.req.sessionDate.localeCompare(a.req.sessionDate));
+  }, [makeupRequests, teacherCourses]);
 
   // Filter out cancelled / suspended / holiday courses so they never demand teacher attendance
   const activeTodayCourses = useMemo(() => {
@@ -198,13 +222,63 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
         </div>
       )}
 
+      {/* Approved Over-7-Day Makeup Requests (單次補點名核准快速入口) */}
+      {approvedOverdueSessions.length > 0 && (
+        <div className="bg-emerald-50/90 border border-emerald-200 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-start sm:items-center space-x-2 min-w-0">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5 sm:mt-0" />
+              <h2 className="text-sm sm:text-base font-bold text-emerald-950 flex flex-wrap items-center gap-1.5">
+                <span>已核准逾七天補點名（單次有效）</span>
+                <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-md bg-emerald-200/80 text-emerald-900 shrink-0">
+                  {approvedOverdueSessions.length} 堂
+                </span>
+              </h2>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {approvedOverdueSessions.map(({ req, course }) => (
+              <div
+                key={req.id}
+                className="bg-white rounded-xl border border-emerald-200/90 p-3 sm:p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-2xs"
+              >
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs">
+                  <span className="font-black text-slate-900 text-sm sm:text-base">
+                    {course.className}
+                  </span>
+                  <span className="font-mono font-bold text-emerald-900 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200">
+                    {course.date}
+                  </span>
+                  <span className="font-mono font-bold text-slate-700">
+                    {course.timeSlot}
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-teal-50 text-teal-800 border border-teal-200 font-bold">
+                    {req.requestType === 'EDIT' ? '修改既有點名' : '補點名'}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => onStartAttendance(course)}
+                  className="w-full sm:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs shadow-2xs transition-colors inline-flex items-center justify-center space-x-1 cursor-pointer"
+                >
+                  <span>前往補點名</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Pending Makeup Section (待補點名精簡區塊) */}
       {pendingMakeupCourses.length > 0 && (
         <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0 animate-pulse" />
-              <h2 className="text-sm sm:text-base font-bold text-amber-950 flex items-center space-x-1.5">
+              <h2 className="text-sm sm:text-base font-bold text-amber-950 flex flex-wrap items-center gap-1.5">
                 <span>待補點名</span>
                 <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-md bg-amber-200/80 text-amber-900">
                   {pendingMakeupCourses.length} 堂
@@ -213,7 +287,7 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
               {/* Detailed rule tooltip on desktop hover / mobile tap */}
               <InfoTooltip
                 title="補點名規則說明"
-                content="依華語中心規定，僅提醒今天以前應完成但尚未完成之課堂。課程結束後一週內可直接線上補做點名；逾期將自動鎖定並送交教務組。"
+                content="依華語中心規定，僅提醒今天以前應完成但尚未完成之課堂。課程結束後一週內可直接線上補做點名；逾期將自動鎖定，需提出補點名申請經管理員核准。"
                 align="left"
               />
             </div>
@@ -306,6 +380,13 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
           sortedTodayCourses.map((course) => {
             const isCompleted = course.status === 'completed';
             const isInProgress = course.status === 'in_progress';
+            const isOverdueCourse =
+              course.date < realTodayStr && getDaysDifference(realTodayStr, course.date) > 7;
+            const sessionReqs = (makeupRequests || [])
+              .filter((r) => r.classId === course.classId && r.sessionDate === course.date)
+              .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+            const activeApprovedReq = sessionReqs.find((r) => r.status === 'APPROVED');
+            const pendingReq = sessionReqs.find((r) => r.status === 'PENDING');
             const isInSession =
               isViewingToday && isCurrentlyInSession(course.timeSlot) && !isCompleted;
 
@@ -313,7 +394,9 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
               <div
                 key={course.id}
                 onClick={() => {
-                  if (isCompleted) {
+                  if (activeApprovedReq) {
+                    onStartAttendance(course);
+                  } else if (isCompleted || isOverdueCourse) {
                     onViewRecord(course);
                   } else {
                     onStartAttendance(course);
@@ -357,6 +440,24 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
                           <span>已完成點名</span>
                         </span>
                       )}
+
+                      {isOverdueCourse && activeApprovedReq && (
+                        <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-teal-100 text-teal-800 border border-teal-300">
+                          <span>已核准補點名（單次）</span>
+                        </span>
+                      )}
+
+                      {isOverdueCourse && !activeApprovedReq && pendingReq && (
+                        <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                          <span>補點名審核中</span>
+                        </span>
+                      )}
+
+                      {isOverdueCourse && !activeApprovedReq && !pendingReq && !isCompleted && (
+                        <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-200 text-slate-700 border border-slate-300">
+                          <span>逾七天已鎖定</span>
+                        </span>
+                      )}
                     </div>
 
                     {/* Time, Classroom, Student Count */}
@@ -381,10 +482,10 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
                     </div>
 
                     {/* Course / Textbook Title */}
-                    <div className="text-xs sm:text-sm font-semibold text-slate-700 pt-0.5 truncate">
+                    <div className="text-xs sm:text-sm font-semibold text-slate-700 pt-0.5 break-words sm:truncate">
                       {course.courseName}
                       {course.textbook && (
-                        <span className="text-xs text-slate-500 font-normal ml-2">
+                        <span className="text-xs text-slate-500 font-normal ml-1.5 sm:ml-2">
                           ({course.textbook})
                         </span>
                       )}
@@ -393,7 +494,19 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
 
                   {/* Right Action Button (Large, Finger-Friendly on Mobile) */}
                   <div className="shrink-0 pt-2 sm:pt-0">
-                    {isCompleted ? (
+                    {activeApprovedReq ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onStartAttendance(course);
+                        }}
+                        className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs sm:text-sm inline-flex items-center justify-center space-x-1.5 transition-colors shadow-xs"
+                      >
+                        <span>前往補點名</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    ) : isCompleted || isOverdueCourse ? (
                       <button
                         type="button"
                         onClick={(e) => {
@@ -403,7 +516,7 @@ export const TeacherTodayAttendanceView: React.FC<TeacherTodayAttendanceViewProp
                         className="w-full sm:w-auto px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs sm:text-sm inline-flex items-center justify-center space-x-1.5 transition-colors"
                       >
                         <Eye className="w-4 h-4 text-slate-500" />
-                        <span>檢視紀錄</span>
+                        <span>{isOverdueCourse ? '檢視／申請補點' : '檢視紀錄'}</span>
                       </button>
                     ) : (
                       <button

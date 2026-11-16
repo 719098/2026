@@ -53,16 +53,16 @@ export const BatchActionBar: React.FC<BatchActionBarProps> = ({
       <div
         className={`sticky top-2 z-40 my-3 p-2.5 sm:p-3 bg-white/95 backdrop-blur-md rounded-xl border border-slate-300 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 animate-in fade-in slide-in-from-top-2 duration-150 ${className}`}
       >
-        <div className="flex items-center justify-between sm:justify-start space-x-3">
+        <div className="flex flex-wrap items-center justify-between sm:justify-start gap-2 sm:gap-3">
           <div className="flex items-center space-x-2 bg-slate-100 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-800">
-            <span className="w-2 h-2 rounded-full bg-teal-500 animate-pulse" />
+            <span className="w-2 h-2 rounded-full bg-teal-500 animate-pulse shrink-0" />
             <span>
               已選取 <strong className="text-teal-700 font-mono tabular-nums">{selectedCount}</strong> 筆
               {totalCount !== undefined && <span className="text-slate-500 font-normal"> / 共 {totalCount} 筆</span>}
             </span>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1.5 sm:space-x-2">
             {onSelectAllCurrentPage && (
               <button
                 type="button"
@@ -95,14 +95,14 @@ export const BatchActionBar: React.FC<BatchActionBarProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center space-x-2 overflow-x-auto pb-0.5 sm:pb-0">
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:gap-2">
           {actions.map((act) => (
             <button
               key={act.key}
               type="button"
               onClick={act.onClick}
               disabled={act.disabled}
-              className={`inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors shadow-2xs whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed shrink-0 ${getButtonClass(
+              className={`inline-flex items-center justify-center space-x-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors shadow-2xs whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed flex-1 sm:flex-none shrink-0 ${getButtonClass(
                 act.variant
               )}`}
             >

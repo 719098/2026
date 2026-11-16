@@ -90,9 +90,12 @@ export function getStudentClassTimeline(
     return 0;
   });
 
-  // If no transfer history: student belongs to current class strictly starting from joinedAt or admissionDate
+  // If no transfer history: student belongs to current class strictly starting from joinedAt, admissionDate, or registrationStartDate
   if (transfers.length === 0) {
-    const startDate = student.joinedAt || student.admissionDate;
+    const startDate =
+      student.joinedAt ||
+      student.admissionDate ||
+      (student.registrationStartDate ? student.registrationStartDate : undefined);
     if (!startDate || (!student.classId && !student.className)) {
       // Historical data missing or unassigned: do NOT guess, leave blank per rule IV
       return [];
@@ -141,10 +144,15 @@ export function getStudentClassTimeline(
 
   // After last transfer
   const last = transfers[transfers.length - 1];
+  const lastTargetClassId = last.toClassId || student.classId;
+  const isCurrentClassAfterLast = Boolean(
+    !student.classId || !lastTargetClassId || String(lastTargetClassId) === String(student.classId)
+  );
   periods.push({
     className: last.toClassName || student.className || '',
-    classId: last.toClassId || student.classId,
+    classId: lastTargetClassId,
     startDate: last.date,
+    endDate: isCurrentClassAfterLast ? (student.droppedAt || undefined) : undefined,
   });
 
   return periods;

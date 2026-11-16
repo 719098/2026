@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { Student, Teacher } from '../types';
+import { getAuthHeaders } from './apiHelper';
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
@@ -411,9 +412,10 @@ export async function uploadTeacherAvatar(
 
   try {
     const base64Str = await fileToBase64(file);
+    const headers = await getAuthHeaders();
     const res = await fetch('/api/admin/upload-teacher-avatar', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         teacherId,
         fileData: base64Str,
@@ -501,9 +503,10 @@ export async function deleteTeacherAvatar(
   }
 
   try {
+    const headers = await getAuthHeaders();
     const res = await fetch('/api/admin/delete-teacher-avatar', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ teacherId }),
     });
 
@@ -563,9 +566,10 @@ export async function batchResolveTeacherAvatars(
 
   try {
     const teacherIds = validTeachers.map((t) => t.id);
+    const headers = await getAuthHeaders();
     const res = await fetch('/api/admin/get-teacher-avatar-urls', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ teacherIds }),
     });
 

@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
 import { Teacher } from '../types';
 import { batchResolveTeacherAvatars } from './storageService';
-import { safeApiPost } from './apiHelper';
+import { safeApiPost, getAuthHeaders } from './apiHelper';
 
 /**
  * Calculates the next teacher_no (e.g. T001, T002, T008... T999, T1000...) based on existing database records.
@@ -92,7 +92,8 @@ export async function fetchTeachersFromSupabase(): Promise<{ data: Teacher[]; er
     } else {
       try {
         const endpoint = typeof window !== 'undefined' ? '/api/teachers' : 'http://localhost:3000/api/teachers';
-        const apiRes = await fetch(endpoint);
+        const headers = await getAuthHeaders();
+        const apiRes = await fetch(endpoint, { headers });
         if (apiRes.ok) {
           const json = await apiRes.json();
           if (json.success && Array.isArray(json.data) && json.data.length > 0) {
@@ -109,18 +110,26 @@ export async function fetchTeachersFromSupabase(): Promise<{ data: Teacher[]; er
       return { data: [], error };
     }
 
-    // Fetch classes to map teacher_id -> class names
-    let teacherToClassNamesMap = new Map<string, string[]>();
+    // Fetch classes to map teacher_id -> class names and class IDs
+    const teacherToClassNamesMap = new Map<string, string[]>();
+    const teacherToClassIdsMap = new Map<string, string[]>();
     try {
       const { data: classesData } = await supabase.from('classes').select('id, name, teacher_id');
       if (classesData) {
         classesData.forEach((c: any) => {
           if (c.teacher_id) {
-            const existing = teacherToClassNamesMap.get(String(c.teacher_id)) || [];
+            const tid = String(c.teacher_id);
+            const existing = teacherToClassNamesMap.get(tid) || [];
             if (c.name && !existing.includes(c.name)) {
               existing.push(c.name);
             }
-            teacherToClassNamesMap.set(String(c.teacher_id), existing);
+            teacherToClassNamesMap.set(tid, existing);
+
+            const existingIds = teacherToClassIdsMap.get(tid) || [];
+            if (c.id && !existingIds.includes(String(c.id))) {
+              existingIds.push(String(c.id));
+            }
+            teacherToClassIdsMap.set(tid, existingIds);
           }
         });
       }
@@ -130,8 +139,8 @@ export async function fetchTeachersFromSupabase(): Promise<{ data: Teacher[]; er
 
     const teachers = (rawTeachers || []).map((row: any) => {
       const teacher = mapDbToTeacher(row);
-      const assigned = teacherToClassNamesMap.get(teacher.id) || [];
-      teacher.assignedClasses = assigned;
+      teacher.assignedClasses = teacherToClassNamesMap.get(teacher.id) || [];
+      teacher.assignedClassIds = teacherToClassIdsMap.get(teacher.id) || [];
       return teacher;
     });
 
@@ -166,9 +175,12 @@ export async function fetchTeacherWithClassesByProfileId(profileId: string): Pro
 
     if (classesData && classesData.length > 0) {
       const assigned = classesData.map((c: any) => c.name || c.class_code).filter(Boolean);
+      const assignedIds = classesData.map((c: any) => String(c.id)).filter(Boolean);
       teacher.assignedClasses = assigned;
+      teacher.assignedClassIds = assignedIds;
     } else {
       teacher.assignedClasses = [];
+      teacher.assignedClassIds = [];
     }
 
     const [resolvedTeacher] = await batchResolveTeacherAvatars([teacher]);

@@ -24,11 +24,17 @@ import {
  * 嚴格使用 new Date() 動態生成，不再寫死任何固定日期。
  */
 export function getTodayDateStr(): string {
-  const d = new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Taipei',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  } catch {
+    const taipeiNow = new Date(Date.now() + 8 * 60 * 60 * 1000);
+    return taipeiNow.toISOString().slice(0, 10);
+  }
 }
 
 // 導出動態計算的 TODAY_DATE，相容於既有模組參照，每次呼叫時返回真實當天
@@ -62,8 +68,8 @@ export function isWeekend(dateStr: string): boolean {
 export function getDaysDifference(dateA: string, dateB: string): number {
   const [y1, m1, d1] = dateA.split('-').map(Number);
   const [y2, m2, d2] = dateB.split('-').map(Number);
-  const timeA = new Date(y1, m1 - 1, d1).getTime();
-  const timeB = new Date(y2, m2 - 1, d2).getTime();
+  const timeA = Date.UTC(y1, m1 - 1, d1);
+  const timeB = Date.UTC(y2, m2 - 1, d2);
   return Math.round((timeA - timeB) / (1000 * 60 * 60 * 24));
 }
 
@@ -193,178 +199,3 @@ export function calculateQuarterStats(courses: CourseSession[], className: strin
   };
 }
 
-// 產生模擬點名紀錄 (提供給非 Supabase 舊版 Teacher View 作為過渡期預覽)
-function generateRealisticAttendance(students: any[], dateStr: string, seed: number, periodsCount: number = 3) {
-  const attendance: Record<string, any> = {};
-  students.forEach((student, idx) => {
-    const isLate = (idx + seed) % 11 === 0;
-    const isLeave = (idx + seed) % 17 === 0;
-    const isAbsent = (idx + seed) % 23 === 0;
-    const isTruant = (idx + seed) % 31 === 0;
-
-    let periodStatuses: ('present' | 'late' | 'leave' | 'absent' | 'truant')[] = [];
-    for (let p = 1; p <= periodsCount; p++) {
-      if (isTruant && p === periodsCount) {
-        periodStatuses.push('truant');
-      } else if (isLate && p === 1) {
-        periodStatuses.push('late');
-      } else if (isLeave) {
-        periodStatuses.push('leave');
-      } else if (isAbsent) {
-        periodStatuses.push('absent');
-      } else {
-        periodStatuses.push('present');
-      }
-    }
-
-    attendance[student.id] = {
-      period1: periodStatuses[0] || 'present',
-      period2: periodStatuses[1] || 'present',
-      period3: periodStatuses[2] || 'present',
-      leaveReason: isLeave ? '身體不適請病假' : undefined,
-    };
-  });
-  return attendance;
-}
-
-// 產生全學期課表堂次 (提供給 Teacher View 預覽)
-export function generateFullQuarterCourses(classes: ClassEntity[] = [], students: Student[] = []): CourseSession[] {
-  if (!classes || classes.length === 0) {
-    return [];
-  }
-  const allCourses: CourseSession[] = [];
-  const classConfigs = classes.map((c, idx) => {
-    const clsStudents = students.filter(s => s.classId === c.id || s.className === c.name);
-    const dailyHours = c.dailyHours || 3;
-    const periodsCount = dailyHours;
-    let startTime = '09:00';
-    let endTime = dailyHours === 2 ? '11:00' : '12:00';
-    if (c.timeSlot && c.timeSlot.includes('-')) {
-      const parts = c.timeSlot.split('-').map(s => s.trim());
-      startTime = parts[0] || '09:00';
-      endTime = parts[1] || '12:00';
-    }
-
-    return {
-      code: c.classCode || `CLS-${idx + 1}`,
-      courseName: c.courseName || c.name,
-      level: '華語課程',
-      className: c.name,
-      textbook: '標準教材',
-      classroom: c.classroom || '華語中心 301 教室',
-      teacher: { id: c.teacherId || 'T-001', name: c.teacherName || '授課教師' },
-      startTime,
-      endTime,
-      timeSlot: c.timeSlot || `${startTime} - ${endTime}`,
-      periodsCount,
-      periodTimes: periodsCount === 2 ? ['18:30-19:20', '19:30-20:20'] : ['09:00-09:50', '10:00-10:50', '11:00-11:50'],
-      students: clsStudents,
-      classIdx: idx + 1,
-    };
-  });
-
-  let curr = QUARTER_START_DATE;
-  let sessionIndexCounter: Record<string, number> = {};
-  classConfigs.forEach((c) => {
-    sessionIndexCounter[c.className] = 0;
-  });
-
-  while (curr <= QUARTER_END_DATE) {
-    const isWknd = isWeekend(curr);
-    const holidayInfo = isHoliday(curr);
-
-    if (!isWknd) {
-      classConfigs.forEach((config) => {
-        sessionIndexCounter[config.className]++;
-        const sessionNum = sessionIndexCounter[config.className];
-        const sessionId = `C-${curr.replace(/-/g, '')}-${config.classIdx}`;
-
-        if (holidayInfo && holidayInfo.isNoClass) {
-          allCourses.push({
-            id: sessionId,
-            courseCode: config.code,
-            courseName: config.courseName,
-            level: config.level,
-            className: config.className,
-            textbook: config.textbook,
-            classroom: config.classroom,
-            teacherName: config.teacher.name,
-            teacherId: config.teacher.id,
-            date: curr,
-            startTime: config.startTime,
-            endTime: config.endTime,
-            timeSlot: config.timeSlot,
-            periodsCount: config.periodsCount,
-            periodTimes: config.periodTimes,
-            studentCount: config.students.length,
-            studentIds: config.students.map((s) => s.id),
-            status: 'holiday',
-            isLocked: true,
-            lockReason: `${holidayInfo.name}，本日全校停課`,
-          });
-          return;
-        }
-
-        const todayDateStr = getTodayDateStr();
-        const daysDiff = getDaysDifference(todayDateStr, curr);
-        const lessonNum = Math.min(15, Math.ceil(sessionNum / 3));
-
-        if (curr < todayDateStr) {
-          allCourses.push({
-            id: sessionId,
-            courseCode: config.code,
-            courseName: config.courseName,
-            level: config.level,
-            className: config.className,
-            textbook: `${config.textbook} 第 ${lessonNum} 課`,
-            classroom: config.classroom,
-            teacherName: config.teacher.name,
-            teacherId: config.teacher.id,
-            date: curr,
-            startTime: config.startTime,
-            endTime: config.endTime,
-            timeSlot: config.timeSlot,
-            periodsCount: config.periodsCount,
-            periodTimes: config.periodTimes,
-            studentCount: config.students.length,
-            studentIds: config.students.map((s) => s.id),
-            status: 'completed',
-            attendanceData: generateRealisticAttendance(config.students, curr, config.classIdx, config.periodsCount),
-            lastUpdated: `${curr} ${config.endTime}`,
-          });
-        } else {
-          allCourses.push({
-            id: sessionId,
-            courseCode: config.code,
-            courseName: config.courseName,
-            level: config.level,
-            className: config.className,
-            textbook: `${config.textbook} 第 ${lessonNum > 0 ? lessonNum : 1} 課`,
-            classroom: config.classroom,
-            teacherName: config.teacher.name,
-            teacherId: config.teacher.id,
-            date: curr,
-            startTime: config.startTime,
-            endTime: config.endTime,
-            timeSlot: config.timeSlot,
-            periodsCount: config.periodsCount,
-            periodTimes: config.periodTimes,
-            studentCount: config.students.length,
-            studentIds: config.students.map((s) => s.id),
-            status: 'unmarked',
-          });
-        }
-      });
-    }
-
-    const [y, m, d] = curr.split('-').map(Number);
-    const nextDate = new Date(y, m - 1, d);
-    nextDate.setDate(nextDate.getDate() + 1);
-    const nextY = nextDate.getFullYear();
-    const nextM = nextDate.getMonth() + 1;
-    const nextD = nextDate.getDate();
-    curr = `${nextY}-${nextM < 10 ? '0' + nextM : nextM}-${nextD < 10 ? '0' + nextD : nextD}`;
-  }
-
-  return allCourses;
-}
