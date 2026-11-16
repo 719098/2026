@@ -1,5 +1,31 @@
 import { Student, StudentGrade, CourseSession, TransferClassRecord, StudentGradeWeight } from '../types';
-import { calculateFinalGrade, getStudentScores, getStudentEffectiveGrade } from './gradeUtils';
+import { getStudentEffectiveGrade } from './gradeUtils';
+import {
+  ClassReportRow,
+  StudentReportRow,
+  formatAttendanceRate,
+  formatAttendanceScore,
+  formatTotalGradeDisplay,
+} from './reportUtils';
+
+/**
+ * Builds RFC-4180 CSV content with UTF-8 BOM for Microsoft Excel compatibility.
+ */
+export function buildCsvContent(
+  headers: string[],
+  rows: (string | number | null | undefined)[][]
+): string {
+  const sanitizeCell = (cell: string | number | null | undefined): string => {
+    if (cell === null || cell === undefined) return '""';
+    const str = String(cell);
+    const escaped = str.replace(/"/g, '""');
+    return `"${escaped}"`;
+  };
+
+  const headerRow = headers.map(sanitizeCell).join(',');
+  const dataRows = rows.map((row) => row.map(sanitizeCell).join(',')).join('\r\n');
+  return '\uFEFF' + headerRow + '\r\n' + dataRows;
+}
 
 /**
  * Universal CSV export utility with UTF-8 BOM for Microsoft Excel compatibility
@@ -9,17 +35,7 @@ export function exportToCsv(
   headers: string[],
   rows: (string | number | null | undefined)[][]
 ) {
-  const sanitizeCell = (cell: string | number | null | undefined): string => {
-    if (cell === null || cell === undefined) return '""';
-    const str = String(cell);
-    // Escape double quotes by doubling them
-    const escaped = str.replace(/"/g, '""');
-    return `"${escaped}"`;
-  };
-
-  const headerRow = headers.map(sanitizeCell).join(',');
-  const dataRows = rows.map((row) => row.map(sanitizeCell).join(',')).join('\r\n');
-  const csvContent = '\uFEFF' + headerRow + '\r\n' + dataRows;
+  const csvContent = buildCsvContent(headers, rows);
 
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -69,7 +85,9 @@ export function exportStudentsToCsv(students: Student[], filename = '學生名�
     s.passportNumber || '',
     s.email || '',
     s.phone || '',
-    s.overallAttendanceRate ?? 100,
+    s.overallAttendanceRate !== null && s.overallAttendanceRate !== undefined
+      ? s.overallAttendanceRate
+      : '—',
   ]);
 
   const timestamp = new Date().toISOString().slice(0, 10);
@@ -90,7 +108,7 @@ export function exportClassStudentAttendanceToCsv(
     presentHours: number;
     leaveHours: number;
     absentHours: number;
-    attendanceRate: number;
+    attendanceRate: number | null;
     warningStatus: string;
   }[],
   filename?: string
@@ -119,7 +137,7 @@ export function exportClassStudentAttendanceToCsv(
     r.presentHours,
     r.leaveHours,
     r.absentHours,
-    r.attendanceRate,
+    r.attendanceRate !== null && r.attendanceRate !== undefined ? r.attendanceRate : '—',
     r.warningStatus,
   ]);
 
@@ -140,7 +158,7 @@ export function exportAttendanceSummaryToCsv(
     classroom: string;
     textbook: string;
     studentCount: number;
-    attendanceRate?: number;
+    attendanceRate?: number | null;
     presentHours?: number;
     totalHours?: number;
     statusText: string;
@@ -169,7 +187,7 @@ export function exportAttendanceSummaryToCsv(
     r.classroom,
     r.textbook,
     r.studentCount,
-    r.attendanceRate !== undefined ? `${r.attendanceRate}%` : '尚未結算',
+    r.attendanceRate !== undefined && r.attendanceRate !== null ? `${r.attendanceRate}%` : '尚未結算',
     r.presentHours ?? '-',
     r.totalHours ?? '-',
     r.statusText,
@@ -178,7 +196,6 @@ export function exportAttendanceSummaryToCsv(
   const timestamp = new Date().toISOString().slice(0, 10);
   exportToCsv(`${filename}_${timestamp}`, headers, rows);
 }
-
 
 /**
  * Export grades report
@@ -190,7 +207,8 @@ export function exportGradesToCsv(
   allCourses?: CourseSession[],
   transferRecords?: TransferClassRecord[],
   gradeWeightsMap?: Record<string, StudentGradeWeight>,
-  termId?: string
+  termId?: string,
+  targetClassId?: string
 ) {
   const headers = [
     '學號',
@@ -207,13 +225,22 @@ export function exportGradesToCsv(
     '學習態度',
     '學期總成績',
     '是否及格',
+    '缺項說明',
   ];
 
   const rows = students.map((s) => {
     const customWeight = gradeWeightsMap
       ? ((termId ? gradeWeightsMap[`${s.id}_${termId}`] : undefined) || gradeWeightsMap[s.id])
       : undefined;
-    const grade = getStudentEffectiveGrade(s, allGrades, allCourses, transferRecords, gradeWeightsMap, termId);
+    const grade = getStudentEffectiveGrade(
+      s,
+      allGrades,
+      allCourses,
+      transferRecords,
+      gradeWeightsMap,
+      termId,
+      targetClassId
+    );
     const isCustom = customWeight && !(
       Number(customWeight.attendanceWeight) === 20 &&
       Number(customWeight.quizWeight) === 15 &&
@@ -225,7 +252,12 @@ export function exportGradesToCsv(
     const weightDesc = isCustom
       ? `個別自訂 (${customWeight!.attendanceWeight}/${customWeight!.quizWeight}/${customWeight!.midtermWeight}/${customWeight!.finalWeight}/${customWeight!.homeworkWeight}/${customWeight!.attitudeWeight}%)`
       : '';
-    const isPass = grade.totalScore >= 60 ? '及格' : '不及格';
+    const isPass =
+      grade.totalScore === null || grade.isEstimated
+        ? '待計算'
+        : grade.totalScore >= 60
+        ? '及格'
+        : '不及格';
 
     return [
       s.studentNumber,
@@ -234,19 +266,123 @@ export function exportGradesToCsv(
       s.className || '未分班',
       s.nationality,
       weightDesc,
-      grade.attendanceScore,
-      grade.quizScore,
-      grade.midtermScore,
-      grade.finalScore,
-      grade.homeworkScore,
-      grade.attitudeScore,
-      grade.totalScore,
+      grade.attendanceScore !== null && grade.attendanceScore !== undefined ? grade.attendanceScore : '尚未計算',
+      grade.quizScore !== null && grade.quizScore !== undefined ? grade.quizScore : '未輸入',
+      grade.midtermScore !== null && grade.midtermScore !== undefined ? grade.midtermScore : '未輸入',
+      grade.finalScore !== null && grade.finalScore !== undefined ? grade.finalScore : '未輸入',
+      grade.homeworkScore !== null && grade.homeworkScore !== undefined ? grade.homeworkScore : '未輸入',
+      grade.attitudeScore !== null && grade.attitudeScore !== undefined ? grade.attitudeScore : '未輸入',
+      formatTotalGradeDisplay(grade),
       isPass,
+      grade.missingItems && grade.missingItems.length > 0 ? grade.missingItems.join('、') : '',
     ];
   });
 
   const timestamp = new Date().toISOString().slice(0, 10);
   exportToCsv(`${filename}_${timestamp}`, headers, rows);
+}
+
+/**
+ * Builds CSV rows for a single student's cross-class detailed attendance records.
+ */
+export function buildIndividualStudentAttendanceCsvData(
+  student: Student,
+  dailyRecords: Array<{
+    date: string;
+    courseName: string;
+    className: string;
+    periodsCount: number;
+    period1: string;
+    period2: string;
+    period3?: string;
+    period4?: string;
+    presentHours: number;
+    leaveHours: number;
+    absentHours: number;
+    statusSummary: string;
+    remarks?: string;
+    isDefaultPresent?: boolean;
+    isCancelled?: boolean;
+  }>
+) {
+  const headers = [
+    '學號',
+    '學生姓名',
+    '目前班級',
+    '上課日期',
+    '當時上課班級',
+    '課程名稱',
+    '第1節',
+    '第2節',
+    '第3節',
+    '第4節',
+    '實到時數',
+    '請假時數',
+    '曠課時數',
+    '出席狀態摘要',
+    '請假/備註說明',
+  ];
+
+  const mapStatusText = (s?: string, isCancelled?: boolean) =>
+    isCancelled
+      ? '停課'
+      : s === 'present'
+      ? '出席'
+      : s === 'leave'
+      ? '請假'
+      : s === 'absent'
+      ? '缺席'
+      : '-';
+
+  const rows: (string | number | null | undefined)[][] = dailyRecords.map((r) => [
+    student.studentNumber,
+    student.name,
+    student.className || '未分班',
+    r.date,
+    r.className,
+    r.courseName,
+    mapStatusText(r.period1, r.isCancelled),
+    mapStatusText(r.period2, r.isCancelled),
+    r.periodsCount >= 3 ? mapStatusText(r.period3, r.isCancelled) : '-',
+    r.periodsCount >= 4 ? mapStatusText(r.period4, r.isCancelled) : '-',
+    r.presentHours,
+    r.leaveHours,
+    r.absentHours,
+    r.statusSummary,
+    r.remarks || '',
+  ]);
+
+  const activeRecords = dailyRecords.filter((r) => !r.isCancelled);
+  const totalPresent = activeRecords.reduce((acc, r) => acc + r.presentHours, 0);
+  const totalLeave = activeRecords.reduce((acc, r) => acc + r.leaveHours, 0);
+  const totalAbsent = activeRecords.reduce((acc, r) => acc + r.absentHours, 0);
+  const totalCompleted = totalPresent + totalLeave + totalAbsent;
+  const actualRate =
+    totalCompleted > 0 ? (Math.round((totalPresent / totalCompleted) * 1000) / 10).toFixed(1) + '%' : '—';
+  const attendanceScore =
+    totalCompleted > 0
+      ? (Math.round(((totalPresent + totalLeave * 0.5) / totalCompleted) * 1000) / 10).toFixed(1) + '分'
+      : '尚未計算';
+
+  rows.push([
+    '【全季總計】',
+    student.name,
+    student.className || '',
+    `共 ${activeRecords.length} 堂有效點名課`,
+    '-',
+    '-',
+    '-',
+    '-',
+    '-',
+    '-',
+    totalPresent,
+    totalLeave,
+    totalAbsent,
+    `實際出席率: ${actualRate}`,
+    `出席成績(請假折半): ${attendanceScore}`,
+  ]);
+
+  return { headers, rows };
 }
 
 /**
@@ -269,75 +405,104 @@ export function exportIndividualStudentAttendanceToCsv(
     statusSummary: string;
     remarks?: string;
     isDefaultPresent?: boolean;
+    isCancelled?: boolean;
   }>
 ) {
-  const headers = [
-    '學號',
-    '學生姓名',
-    '目前班級',
-    '上課日期',
-    '當時上課班級',
-    '課程名稱',
-    '第1節',
-    '第2節',
-    '第3節',
-    '第4節',
-    '實到時數',
-    '請假時數',
-    '曠課時數',
-    '出席狀態摘要',
-    '請假/備註說明',
-  ];
-
-  const mapStatusText = (s?: string) =>
-    s === 'present' ? '出席' : s === 'leave' ? '請假' : s === 'absent' ? '缺席' : '-';
-
-  const rows = dailyRecords.map((r) => [
-    student.studentNumber,
-    student.name,
-    student.className || '未分班',
-    r.date,
-    r.className,
-    r.courseName,
-    mapStatusText(r.period1),
-    mapStatusText(r.period2),
-    r.periodsCount >= 3 ? mapStatusText(r.period3) : '-',
-    r.periodsCount >= 4 ? mapStatusText(r.period4) : '-',
-    r.presentHours,
-    r.leaveHours,
-    r.absentHours,
-    r.statusSummary,
-    r.isDefaultPresent && !r.remarks ? '系統預設到課（未點名）' : (r.remarks || ''),
-  ]);
-
-  // Append summary row
-  if (dailyRecords.length > 0) {
-    const totalPresent = dailyRecords.reduce((acc, r) => acc + r.presentHours, 0);
-    const totalLeave = dailyRecords.reduce((acc, r) => acc + r.leaveHours, 0);
-    const totalAbsent = dailyRecords.reduce((acc, r) => acc + r.absentHours, 0);
-    const totalCompleted = totalPresent + totalLeave + totalAbsent;
-    const actualRate = totalCompleted > 0 ? (Math.round((totalPresent / totalCompleted) * 1000) / 10).toFixed(1) + '%' : '100%';
-    const attendanceScore = totalCompleted > 0 ? (Math.round(((totalPresent + totalLeave * 0.5) / totalCompleted) * 1000) / 10).toFixed(1) + '分' : '100分';
-
-    rows.push([
-      '【全季總計】',
-      student.name,
-      student.className || '',
-      `共 ${dailyRecords.length} 堂課`,
-      '-',
-      '-',
-      '-',
-      '-',
-      '-',
-      '-',
-      totalPresent,
-      totalLeave,
-      totalAbsent,
-      `實際出席率: ${actualRate}`,
-      `出席成績(請假折半): ${attendanceScore}`,
-    ]);
-  }
-
+  const { headers, rows } = buildIndividualStudentAttendanceCsvData(student, dailyRecords);
   const timestamp = new Date().toISOString().slice(0, 10);
   exportToCsv(`${student.studentNumber}_${student.name}_個人跨班出缺席明細總表_${timestamp}`, headers, rows);
+}
+
+/**
+ * Builds Admin Reports class summary CSV data strictly matching AdminReportsView.
+ */
+export function buildAdminReportsClassCsvData(classRows: ClassReportRow[]) {
+  const headers = [
+    '班級名稱',
+    '學期',
+    '授課教師',
+    '學生人數',
+    '已納入出席評估人數',
+    '平均出席率',
+    '已排定時數 (H)',
+    '已授課時數 (H)',
+    '學期目標時數 (H)',
+    '待點名堂數',
+    '授課進度狀態',
+    '簽證合規狀態',
+  ];
+
+  const rows = classRows.map((row) => [
+    row.cls.name,
+    row.termName,
+    row.teacherName,
+    row.studentCount,
+    row.evaluatedStudentCount,
+    formatAttendanceRate(row.averageAttendanceRate, row.evaluatedStudentCount > 0),
+    row.progress.scheduledHours,
+    row.progress.deliveredHours,
+    row.progress.targetHours > 0 ? row.progress.targetHours : '未設定',
+    row.progress.pendingAttendanceCount,
+    row.progress.progressLabel,
+    row.complianceLabel,
+  ]);
+
+  return { headers, rows };
+}
+
+export function exportAdminReportsClassSummaryToCsv(
+  classRows: ClassReportRow[],
+  filename = '全校各班級授課進度與出席統計'
+) {
+  const { headers, rows } = buildAdminReportsClassCsvData(classRows);
+  const timestamp = new Date().toISOString().slice(0, 10);
+  exportToCsv(`${filename}_${timestamp}`, headers, rows);
+}
+
+/**
+ * Builds Admin Reports student detail CSV data strictly matching StudentDetailModal & AdminReportsView.
+ */
+export function buildAdminReportsStudentCsvData(studentRows: StudentReportRow[]) {
+  const headers = [
+    '學號',
+    '姓名',
+    '英文姓名',
+    '班級',
+    '應到時數 (H)',
+    '出席時數 (H)',
+    '請假時數 (H)',
+    '缺席時數 (H)',
+    '實際出席率',
+    '出席成績評分',
+    '簽證合規狀態',
+    '學期總成績',
+    '缺項說明',
+  ];
+
+  const rows = studentRows.map((row) => [
+    row.student.studentNumber,
+    row.student.name,
+    row.student.englishName,
+    row.scopedClassName,
+    row.expectedHours,
+    row.presentHours,
+    row.leaveHours,
+    row.absentHours,
+    formatAttendanceRate(row.attendanceRate, row.hasAttendanceData),
+    formatAttendanceScore(row.attendanceScore, row.hasAttendanceData),
+    row.complianceLabel,
+    formatTotalGradeDisplay(row.effectiveGrade),
+    row.effectiveGrade.missingItems?.join('、') || '',
+  ]);
+
+  return { headers, rows };
+}
+
+export function exportAdminReportsStudentDetailToCsv(
+  studentRows: StudentReportRow[],
+  filename = '全校學員出缺勤與成績明細'
+) {
+  const { headers, rows } = buildAdminReportsStudentCsvData(studentRows);
+  const timestamp = new Date().toISOString().slice(0, 10);
+  exportToCsv(`${filename}_${timestamp}`, headers, rows);
 }

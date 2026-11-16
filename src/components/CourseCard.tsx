@@ -58,11 +58,13 @@ export const CourseCard: React.FC<CourseCardProps> = ({
   let statsDisplay = null;
   if (isCompleted && course.attendanceData) {
     const stats = calculateAttendanceStats(students, course.attendanceData, periodsCount);
-    statsDisplay = {
-      presentHours: stats.totalPresentHours,
-      totalHours: stats.totalHours,
-      rate: stats.attendanceRate,
-    };
+    if (stats.attendanceRate !== null) {
+      statsDisplay = {
+        presentHours: stats.totalPresentHours,
+        totalHours: stats.totalHours,
+        rate: stats.attendanceRate,
+      };
+    }
   }
 
   // Visual card styles based on status

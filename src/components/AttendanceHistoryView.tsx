@@ -307,7 +307,7 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
                   <span className="text-slate-600 truncate max-w-full">
                     教材：{course.textbook} • {course.studentCount} 人
                   </span>
-                  {stats ? (
+                  {stats && stats.attendanceRate !== null ? (
                     <span className="font-mono font-bold text-emerald-700">
                       出席 {stats.attendanceRate}% ({stats.totalPresentHours}/{stats.totalHours}H)
                     </span>
@@ -373,16 +373,18 @@ export const AttendanceHistoryView: React.FC<AttendanceHistoryViewProps> = ({
                 let rateBadge = null;
                 if (isCompleted && course.attendanceData) {
                   const stats = calculateAttendanceStats(studentList, course.attendanceData);
-                  rateBadge = (
-                    <div className="flex flex-col items-center space-y-0.5">
-                      <span className="font-mono font-extrabold text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                        {stats.attendanceRate}%
-                      </span>
-                      <span className="text-[10px] text-slate-500">
-                        實到 {stats.totalPresentHours} / 應到 {stats.totalHours}H
-                      </span>
-                    </div>
-                  );
+                  if (stats.attendanceRate !== null) {
+                    rateBadge = (
+                      <div className="flex flex-col items-center space-y-0.5">
+                        <span className="font-mono font-extrabold text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                          {stats.attendanceRate}%
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          實到 {stats.totalPresentHours} / 應到 {stats.totalHours}H
+                        </span>
+                      </div>
+                    );
+                  }
                 } else if (isCancelled) {
                   rateBadge = (
                     <span className="text-slate-400 text-[11px]">停課免計</span>

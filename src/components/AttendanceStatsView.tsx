@@ -59,9 +59,14 @@ export const AttendanceStatsView: React.FC<AttendanceStatsViewProps> = ({
     return students.filter(s => targetClassIds.has(s.classId) || targetClassNames.has(s.className));
   }, [students, targetClassIds, targetClassNames]);
 
-  // Warning students (< 90% or < 80%)
-  const dangerStudents = allStudents.filter((s) => s.overallAttendanceRate < 80);
-  const warningStudents = allStudents.filter((s) => s.overallAttendanceRate >= 80 && s.overallAttendanceRate < 90);
+  // Warning students (only evaluated students < 90% or < 80%)
+  const evaluatedAllStudents = allStudents.filter(
+    (s) => s.attendanceEvaluated !== false && s.overallAttendanceRate !== null && s.overallAttendanceRate !== undefined
+  );
+  const dangerStudents = evaluatedAllStudents.filter((s) => (s.overallAttendanceRate as number) < 80);
+  const warningStudents = evaluatedAllStudents.filter(
+    (s) => (s.overallAttendanceRate as number) >= 80 && (s.overallAttendanceRate as number) < 90
+  );
 
   const handleSendReminder = (studentName: string) => {
     onShowToast(`已自動寄送出缺勤警示信與輔導提醒至 ${studentName} 的註冊信箱`, 'info');
@@ -151,9 +156,12 @@ export const AttendanceStatsView: React.FC<AttendanceStatsViewProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mt-6">
           {displayedClasses.map((cls) => {
             const clsStudents = students.filter(s => s.classId === cls.id || s.className === cls.className || s.className === cls.name);
-            const avgRate = clsStudents.length > 0
-              ? Math.round((clsStudents.reduce((acc, s) => acc + (s.overallAttendanceRate || 100), 0) / clsStudents.length) * 10) / 10
-              : 100;
+            const clsEvaluated = clsStudents.filter(
+              (s) => s.attendanceEvaluated !== false && s.overallAttendanceRate !== null && s.overallAttendanceRate !== undefined
+            );
+            const avgRate: number | null = clsEvaluated.length > 0
+              ? Math.round((clsEvaluated.reduce((acc, s) => acc + (s.overallAttendanceRate || 0), 0) / clsEvaluated.length) * 10) / 10
+              : null;
 
             return (
               <div key={cls.id || cls.name} className="bg-slate-50 p-4 rounded-xl border border-slate-200">
@@ -164,16 +172,20 @@ export const AttendanceStatsView: React.FC<AttendanceStatsViewProps> = ({
                       <span className="text-[10px] text-teal-700 font-semibold">{cls.teacher} 老師</span>
                     )}
                   </div>
-                  <span className="text-xs text-slate-500">{clsStudents.length} 位學生</span>
+                  <span className="text-xs text-slate-500">
+                    {clsStudents.length} 位學生（已納入 {clsEvaluated.length} 人）
+                  </span>
                 </div>
                 <div className="mt-3 flex items-baseline space-x-2">
-                  <span className="text-3xl font-black text-teal-700 font-mono">{avgRate}%</span>
+                  <span className={`text-3xl font-black font-mono ${avgRate === null ? 'text-slate-400' : 'text-teal-700'}`}>
+                    {avgRate !== null ? `${avgRate}%` : '—'}
+                  </span>
                   <span className="text-xs font-semibold text-emerald-700">平均出席率</span>
                 </div>
                 <div className="mt-2 w-full bg-slate-200 rounded-full h-2 overflow-hidden">
                   <div
                     className="bg-teal-600 h-2 rounded-full transition-all"
-                    style={{ width: `${avgRate}%` }}
+                    style={{ width: `${avgRate ?? 0}%` }}
                   ></div>
                 </div>
               </div>
@@ -214,7 +226,7 @@ export const AttendanceStatsView: React.FC<AttendanceStatsViewProps> = ({
             </thead>
             <tbody className="divide-y divide-slate-100">
               {[...dangerStudents, ...warningStudents].map((student) => {
-                const isDanger = student.overallAttendanceRate < 80;
+                const isDanger = (student.overallAttendanceRate ?? 100) < 80;
 
                 return (
                   <tr key={student.id} className="hover:bg-slate-50/80 transition-colors">

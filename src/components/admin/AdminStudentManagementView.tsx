@@ -315,10 +315,15 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
       const matchStatus =
         selectedStatusFilter === 'ALL' || (student.enrollmentStatus || 'active') === selectedStatusFilter;
 
+      const isEvaluated =
+        student.attendanceEvaluated !== false &&
+        student.overallAttendanceRate !== null &&
+        student.overallAttendanceRate !== undefined;
       const matchRisk =
         selectedRiskFilter === 'ALL' ||
-        (selectedRiskFilter === 'warning' && student.overallAttendanceRate < 85) ||
-        (selectedRiskFilter === 'safe' && student.overallAttendanceRate >= 85);
+        (selectedRiskFilter === 'warning' && isEvaluated && (student.overallAttendanceRate as number) < 85) ||
+        (selectedRiskFilter === 'safe' && isEvaluated && (student.overallAttendanceRate as number) >= 85) ||
+        (selectedRiskFilter === 'unevaluated' && !isEvaluated);
 
       return matchSearch && matchClass && matchStatus && matchRisk;
     });
@@ -350,7 +355,9 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
       className: newForm.className || '',
       email: newForm.email || `${newForm.englishName.toLowerCase().replace(/\s+/g, '.')}@clc.student.tw`,
       phone: newForm.phone || '+886 900-000-000',
-      overallAttendanceRate: 100.0,
+      overallAttendanceRate: null,
+      attendanceEvaluated: false,
+      complianceStatus: 'unevaluated',
       totalAbsenceHours: 0,
       totalLeaveHours: 0,
       totalPresentHours: 0,
@@ -683,6 +690,7 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
               <option value="ALL">全部出席率狀態</option>
               <option value="warning">簽證預警 (&lt; 85%)</option>
               <option value="safe">出席正常 (≥ 85%)</option>
+              <option value="unevaluated">未評估 (尚無資料)</option>
             </select>
           </div>
         </div>
@@ -742,7 +750,11 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
               ) : (
                 filteredStudents.map((student) => {
                   const status = student.enrollmentStatus || 'active';
-                  const isWarning = student.overallAttendanceRate < 85;
+                  const isEvaluated =
+                    student.attendanceEvaluated !== false &&
+                    student.overallAttendanceRate !== null &&
+                    student.overallAttendanceRate !== undefined;
+                  const isWarning = isEvaluated && (student.overallAttendanceRate as number) < 85;
                   const isSelected = selectedStudentIds.has(student.id);
 
                   return (
@@ -838,11 +850,13 @@ export const AdminStudentManagementView: React.FC<AdminStudentManagementViewProp
 
                       {/* Attendance */}
                       <td className="py-3 px-3 text-right">
-                        <div className={`font-bold font-mono text-xs ${isWarning ? 'text-amber-700 underline decoration-amber-300 underline-offset-2' : 'text-[#26313B]'}`}>
-                          {student.overallAttendanceRate}%
+                        <div className={`font-bold font-mono text-xs ${!isEvaluated ? 'text-slate-400' : isWarning ? 'text-amber-700 underline decoration-amber-300 underline-offset-2' : 'text-[#26313B]'}`}>
+                          {isEvaluated ? `${student.overallAttendanceRate}%` : '—'}
                         </div>
                         <div className="text-[10px] text-slate-400">
-                          缺課 {student.totalAbsenceHours}H / 請假 {student.totalLeaveHours}H
+                          {isEvaluated
+                            ? `缺課 ${student.totalAbsenceHours}H / 請假 ${student.totalLeaveHours}H`
+                            : '尚無出席資料'}
                         </div>
                       </td>
 

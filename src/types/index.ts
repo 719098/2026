@@ -101,6 +101,7 @@ export interface Term {
   endDate: string; // "2026-10-31"
   isLocked: boolean; // 是否已封存鎖定
   isActive: boolean; // 是否啟用中
+  targetHours?: number; // 學期標準目標時數（例如 165）
   createdAt?: string;
   updatedAt?: string;
 }
@@ -236,11 +237,14 @@ export interface Student {
   email: string;
   phone: string;
   mobilePhone?: string; // 學校欄位：手機
-  overallAttendanceRate: number; // e.g. 94.5%
+  overallAttendanceRate: number | null; // e.g. 94.5%, null when no formal attendance data
+  attendanceEvaluated?: boolean; // true only when formal attendance records exist
   totalAbsenceHours: number;
   totalLeaveHours: number;
   totalPresentHours?: number;
+  totalCompletedHours?: number;
   totalRequiredHours?: number;
+  complianceStatus?: 'unevaluated' | 'compliant' | 'non_compliant';
   visaStatus?: 'safe' | 'warning' | 'danger';
   enrollmentStatus?: EnrollmentStatus; // 'active' | 'graduated' | 'suspended' | 'withdrawn'
   restToDrop?: string; // 學校欄位：休轉退註記
@@ -290,14 +294,18 @@ export interface StudentGrade {
   studentName: string;
   className: string;
   classId?: string;
-  attendanceScore: number; // 0-100, auto-calculated from attendance rate (20%)
-  quizScore: number;       // 0-100 (15%) 平時考
-  midtermScore: number;    // 0-100 (20%) 期中考
-  finalScore: number;      // 0-100 (20%) 期末考
-  homeworkScore: number;   // 0-100 (15%) 作業
-  attitudeScore: number;   // 0-100 (10%) 學習態度
-  totalScore: number;      // auto-calculated
-  isPassed?: boolean;      // >= 60 passing status
+  attendanceScore: number | null; // 0-100 when formal attendance exists; null when unevaluated
+  quizScore: number | null;       // 0-100 (15%) 平時考
+  midtermScore: number | null;    // 0-100 (20%) 期中考
+  finalScore: number | null;      // 0-100 (20%) 期末考
+  homeworkScore: number | null;   // 0-100 (15%) 作業
+  attitudeScore: number | null;   // 0-100 (10%) 學習態度
+  totalScore: number | null;      // auto-calculated or provisional normalized total; null if all items missing
+  isPassed?: boolean;             // >= 60 passing status (undefined when pending)
+  hasAttendanceData?: boolean;    // true when formal attendance exists
+  hasSavedGrade?: boolean;        // true when grade row exists in student_grades
+  isEstimated?: boolean;          // true when some weighted items are missing (暫估)
+  missingItems?: string[];        // e.g. ['出席成績', '期中考']
   updatedAt?: string;
 }
 export interface StudentGradeWeight {

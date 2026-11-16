@@ -5,6 +5,10 @@ import { Term } from '../types';
  * Converts a database record in public.terms to the frontend Term interface.
  */
 export function mapDbToTerm(row: any): Term {
+  const rawTarget = row.target_hours ?? row.default_target_hours;
+  const parsedTarget = rawTarget !== null && rawTarget !== undefined && Number(rawTarget) > 0
+    ? Number(rawTarget)
+    : undefined;
   return {
     id: String(row.id),
     name: row.name || '未命名學期',
@@ -13,6 +17,7 @@ export function mapDbToTerm(row: any): Term {
     endDate: row.end_date || '',
     isLocked: Boolean(row.is_locked),
     isActive: row.is_active !== false,
+    targetHours: parsedTarget,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

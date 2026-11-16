@@ -17,16 +17,18 @@ import {
   ShieldAlert,
   Building2
 } from 'lucide-react';
-import { Student, Teacher, CourseSession, LeaveRecord, ClassEntity, AdminNavigationTab } from '../../types';
+import { Student, Teacher, CourseSession, LeaveRecord, ClassEntity, AdminNavigationTab, Term } from '../../types';
 import { getTodayDateStr } from '../../utils/quarterScheduler';
 import { formatDateFull } from '../../utils/dateUtils';
 import { isSessionCancelledOrSuspended } from '../../utils/attendanceUtils';
+import { buildAdminReportData } from '../../utils/reportUtils';
 import { StudentAvatar } from '../StudentAvatar';
 
 interface AdminDashboardViewProps {
   students: Student[];
   teachers: Teacher[];
   classes: ClassEntity[];
+  terms?: Term[];
   allCourses: CourseSession[];
   leaves: LeaveRecord[];
   onNavigateTab: (tab: AdminNavigationTab) => void;
@@ -37,6 +39,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   students,
   teachers,
   classes,
+  terms = [],
   allCourses,
   leaves,
   onNavigateTab,
@@ -56,18 +59,29 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const todayLeaves = leaves.filter((l) => l.date === todayStr);
   const pendingLeaves = leaves.filter((l) => l.status === 'pending');
 
-  // Visa warning students (< 80% attendance rate)
-  const warningStudents = students.filter(
-    (s) => s.overallAttendanceRate < 85 && s.enrollmentStatus === 'active'
-  ).sort((a, b) => a.overallAttendanceRate - b.overallAttendanceRate);
+  // Visa warning students (only evaluated students < 85% attendance rate)
+  const warningStudents = students
+    .filter(
+      (s) =>
+        s.attendanceEvaluated !== false &&
+        s.overallAttendanceRate !== null &&
+        s.overallAttendanceRate !== undefined &&
+        s.overallAttendanceRate < 85 &&
+        s.enrollmentStatus === 'active'
+    )
+    .sort((a, b) => (a.overallAttendanceRate ?? 100) - (b.overallAttendanceRate ?? 100));
 
-  // Total completed hours in quarter
-  const totalQuarterRequired = classes.reduce((acc, c) => acc + (c.totalTargetHours || 0), 0) || 0;
-  // Estimate completed hours from level 1 class (excluding cancelled sessions)
-  const level1Completed = allCourses
-    .filter((c) => c.className.includes('初級華語一') && c.status === 'completed' && !isSessionCancelledOrSuspended(c))
-    .reduce((acc, c) => acc + c.periodsCount, 0);
-  const progressPercent = Math.min(100, Math.round((level1Completed / totalQuarterRequired) * 100));
+  const { schoolSummary } = buildAdminReportData({
+    students,
+    classes,
+    allCourses,
+    terms,
+  });
+  const totalScheduled = schoolSummary.totalScheduledHours;
+  const totalDelivered = schoolSummary.totalDeliveredHours;
+  const totalTarget = schoolSummary.totalTargetHours;
+  const progressPercent =
+    totalTarget > 0 ? Math.min(100, Math.round((totalDelivered / totalTarget) * 100)) : 0;
 
   return (
     <div className="space-y-6">
@@ -163,7 +177,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Card 4: 165-Hour Curriculum Progress */}
+        {/* Card 4: School-wide Curriculum Progress */}
         <div 
           onClick={() => onNavigateTab('admin_schedule')}
           className="bg-white rounded-xl p-4.5 border border-[#DCE2E6] shadow-2xs hover:border-[#536B7A]/40 hover:shadow-xs transition-all cursor-pointer group"
@@ -174,19 +188,35 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <TrendingUp className="w-4 h-4" />
             </div>
           </div>
-          <div className="mt-3 flex items-baseline justify-between">
-            <div className="flex items-baseline space-x-1.5">
-              <span className="text-2xl font-bold text-[#26313B]">{progressPercent}%</span>
-              <span className="text-xs text-slate-500">已授課 {level1Completed}H</span>
-            </div>
-            <span className="text-xs font-mono font-medium text-slate-400">/ {totalQuarterRequired}H</span>
-          </div>
-          <div className="w-full bg-[#E8EEF2] h-1.5 rounded-full mt-3 overflow-hidden border border-[#DCE2E6]">
-            <div 
-              className="bg-[#536B7A] h-full rounded-full transition-all duration-500" 
-              style={{ width: `${progressPercent}%` }}
-            />
-          </div>
+          {totalScheduled === 0 && totalDelivered === 0 ? (
+            <>
+              <div className="mt-3 flex items-baseline justify-between">
+                <span className="text-base font-bold text-slate-600">尚未安排課程</span>
+                <span className="text-xs font-mono text-slate-400">目標 {totalTarget > 0 ? `${totalTarget}H` : '未設定'}</span>
+              </div>
+              <div className="mt-3 pt-2 border-t border-[#F0F4F7] text-[11px] text-slate-500">
+                已排定 0H / 已授課 0H
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="mt-3 flex items-baseline justify-between">
+                <div className="flex items-baseline space-x-1.5">
+                  <span className="text-2xl font-bold text-[#26313B]">{progressPercent}%</span>
+                  <span className="text-xs text-slate-500">已授課 {totalDelivered}H</span>
+                </div>
+                <span className="text-xs font-mono font-medium text-slate-400">
+                  已排 {totalScheduled}H / 目標 {totalTarget > 0 ? `${totalTarget}H` : '未設定'}
+                </span>
+              </div>
+              <div className="w-full bg-[#E8EEF2] h-1.5 rounded-full mt-3 overflow-hidden border border-[#DCE2E6]">
+                <div 
+                  className="bg-[#536B7A] h-full rounded-full transition-all duration-500" 
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+            </>
+          )}
         </div>
       </div>
 

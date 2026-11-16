@@ -25,6 +25,7 @@ import {
   StudentGradeWeight 
 } from '../../types';
 import { getStudentEffectiveGrade, DEFAULT_GRADE_WEIGHTS } from '../../utils/gradeUtils';
+import { formatTotalGradeDisplay } from '../../utils/reportUtils';
 import { exportGradesToCsv } from '../../utils/csvExport';
 import { InfoTooltip } from '../common/InfoTooltip';
 import { BatchActionBar, BatchActionItem } from '../common/BatchActionBar';
@@ -173,10 +174,11 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
       const finalScore = grade.totalScore;
 
       let matchBand = true;
-      if (selectedGradeBandFilter === 'A') matchBand = finalScore >= 80;
-      if (selectedGradeBandFilter === 'B') matchBand = finalScore >= 70 && finalScore < 80;
-      if (selectedGradeBandFilter === 'PASS') matchBand = finalScore >= 60;
-      if (selectedGradeBandFilter === 'FAIL') matchBand = finalScore < 60;
+      if (selectedGradeBandFilter === 'A') matchBand = finalScore !== null && finalScore >= 80;
+      if (selectedGradeBandFilter === 'B') matchBand = finalScore !== null && finalScore >= 70 && finalScore < 80;
+      if (selectedGradeBandFilter === 'PASS') matchBand = finalScore !== null && finalScore >= 60;
+      if (selectedGradeBandFilter === 'FAIL') matchBand = finalScore !== null && finalScore < 60;
+      if (selectedGradeBandFilter === 'PENDING') matchBand = finalScore === null;
 
       return matchSearch && matchClass && matchWeightType && matchBand;
     });
@@ -699,6 +701,7 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
             <option value="B">良好等級 (70-79分)</option>
             <option value="PASS">及格 (60分以上)</option>
             <option value="FAIL">不及格預警 (&lt; 60分)</option>
+            <option value="PENDING">待計算 (尚無可用成績)</option>
           </select>
         </div>
       </div>
@@ -812,37 +815,77 @@ export const AdminGradesManagementView: React.FC<AdminGradesManagementViewProps>
                       </td>
 
                       <td className="py-3 px-3 text-right font-mono">
-                        <span className="font-bold text-teal-700">{grade.attendanceScore}%</span>
+                        {grade.attendanceScore !== null && grade.attendanceScore !== undefined ? (
+                          <span className="font-bold text-teal-700">{grade.attendanceScore} 分</span>
+                        ) : (
+                          <span className="text-[11px] font-sans font-semibold text-slate-400">尚未計算</span>
+                        )}
                         <span className="text-[10px] text-slate-400 block font-normal">({wAtt}%)</span>
                       </td>
 
                       <td className="py-3 px-3 text-right font-mono">
-                        <span className="font-bold text-[#26313B]">{grade.quizScore}</span>
+                        {grade.quizScore !== null && grade.quizScore !== undefined ? (
+                          <span className="font-bold text-[#26313B]">{grade.quizScore}</span>
+                        ) : (
+                          <span className="text-[11px] font-sans text-slate-400">未輸入</span>
+                        )}
                         <span className="text-[10px] text-slate-400 block font-normal">({wQuiz}%)</span>
                       </td>
 
                       <td className="py-3 px-3 text-right font-mono">
-                        <span className="font-bold text-[#26313B]">{grade.midtermScore}</span>
+                        {grade.midtermScore !== null && grade.midtermScore !== undefined ? (
+                          <span className="font-bold text-[#26313B]">{grade.midtermScore}</span>
+                        ) : (
+                          <span className="text-[11px] font-sans text-slate-400">未輸入</span>
+                        )}
                         <span className="text-[10px] text-slate-400 block font-normal">({wMid}%)</span>
                       </td>
 
                       <td className="py-3 px-3 text-right font-mono">
-                        <span className="font-bold text-[#26313B]">{grade.finalScore}</span>
+                        {grade.finalScore !== null && grade.finalScore !== undefined ? (
+                          <span className="font-bold text-[#26313B]">{grade.finalScore}</span>
+                        ) : (
+                          <span className="text-[11px] font-sans text-slate-400">未輸入</span>
+                        )}
                         <span className="text-[10px] text-slate-400 block font-normal">({wFin}%)</span>
                       </td>
 
                       <td className="py-3 px-3 text-right font-mono">
-                        <span className="font-bold text-[#26313B]">{grade.homeworkScore}</span>
+                        {grade.homeworkScore !== null && grade.homeworkScore !== undefined ? (
+                          <span className="font-bold text-[#26313B]">{grade.homeworkScore}</span>
+                        ) : (
+                          <span className="text-[11px] font-sans text-slate-400">未輸入</span>
+                        )}
                         <span className="text-[10px] text-slate-400 block font-normal">({wHw}%)</span>
                       </td>
 
                       <td className="py-3 px-3 text-right font-mono">
-                        <span className="font-bold text-[#26313B]">{grade.attitudeScore}</span>
+                        {grade.attitudeScore !== null && grade.attitudeScore !== undefined ? (
+                          <span className="font-bold text-[#26313B]">{grade.attitudeScore}</span>
+                        ) : (
+                          <span className="text-[11px] font-sans text-slate-400">未輸入</span>
+                        )}
                         <span className="text-[10px] text-slate-400 block font-normal">({wAttid}%)</span>
                       </td>
 
-                      <td className="py-3 px-3 text-right font-mono font-extrabold text-[#26313B] text-sm">
-                        {grade.totalScore}
+                      <td className="py-3 px-3 text-right font-mono text-sm">
+                        <span
+                          className={`font-extrabold ${
+                            grade.totalScore === null
+                              ? 'text-slate-400 text-xs font-sans font-semibold'
+                              : grade.isEstimated
+                              ? 'text-amber-700'
+                              : 'text-[#26313B]'
+                          }`}
+                        >
+                          {formatTotalGradeDisplay(grade)}
+                        </span>
+                        {grade.missingItems && grade.missingItems.length > 0 && (
+                          <span className="block text-[10px] font-sans font-normal text-amber-700">
+                            {grade.missingItems.slice(0, 2).join('、')}
+                            {grade.missingItems.length > 2 ? '…' : ''}
+                          </span>
+                        )}
                       </td>
 
                       {/* Action */}

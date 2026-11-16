@@ -120,7 +120,9 @@ export function getStudentClassTimeline(
       ? student.joinedAt
       : (student.admissionDate && student.admissionDate < transfers[0].date)
         ? student.admissionDate
-        : undefined;
+        : (student.registrationStartDate && student.registrationStartDate < transfers[0].date)
+          ? student.registrationStartDate
+          : undefined;
 
     if (fromStart) {
       periods.push({

@@ -15,7 +15,12 @@ import {
   UserX
 } from 'lucide-react';
 import { Student, StudentGrade, CourseSession, TransferClassRecord, StudentGradeWeight, ClassEntity, Term } from '../types';
-import { GRADE_WEIGHTS, calculateTotalGrade, calculateStudentAttendanceScore } from '../utils/gradeUtils';
+import {
+  GRADE_WEIGHTS,
+  calculateStudentAttendanceScore,
+  calculateProvisionalTotalGrade,
+} from '../utils/gradeUtils';
+import { formatAttendanceScore, formatTotalGradeDisplay } from '../utils/reportUtils';
 import { resolveStudentGradeWeight } from '../lib/gradeWeightService';
 import { exportGradesToCsv } from '../utils/csvExport';
 import { StudentAvatar } from './StudentAvatar';
@@ -107,9 +112,7 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
     );
   }, [classStudents, searchQuery]);
 
-  // Helper to dynamically calculate real attendance score from attendance records:
-  // Present = 100%, Leave = 50%, Absent = 0%
-  // Attendance Grade = Attendance Rate * 20%
+  // Helper to dynamically calculate real attendance score from attendance records (no fake 100 fallback)
   const getStudentAttendanceData = useCallback(
     (studentId: string, studentClassName?: string) => {
       const student = students.find((s) => s.id === studentId);
@@ -118,33 +121,42 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
         allCourses,
         studentClassName || currentClassName,
         student,
-        transferRecords
+        transferRecords,
+        {
+          classId: currentClassObj?.id,
+          className: studentClassName || currentClassName,
+          termId: currentClassObj?.termId || currentTermObj?.id,
+          classes: allClasses,
+          terms: allTerms,
+        }
       );
-      const score = attResult.hasRecords ? attResult.attendanceScore : (student?.overallAttendanceRate ?? 100);
       return {
         attResult,
-        attendanceScore: score,
+        attendanceScore: attResult.hasRecords ? attResult.attendanceScore : null,
       };
     },
-    [students, allCourses, currentClassName, transferRecords]
+    [students, allCourses, currentClassName, transferRecords, currentClassObj?.id, currentClassObj?.termId, currentTermObj?.id, allClasses, allTerms]
   );
 
-  // Handler for numerical input changes
+  // Handler for numerical input changes (supports clearing to null)
   const handleScoreChange = (
     studentId: string,
     studentName: string,
     field: 'quizScore' | 'midtermScore' | 'finalScore' | 'homeworkScore' | 'attitudeScore',
     valueStr: string
   ) => {
-    let val = parseFloat(valueStr);
-    if (isNaN(val)) val = 0;
-    if (val > 100) val = 100;
-    if (val < 0) val = 0;
+    let val: number | null = null;
+    if (valueStr.trim() !== '') {
+      const parsed = parseFloat(valueStr);
+      if (!isNaN(parsed)) {
+        val = Math.min(100, Math.max(0, parsed));
+      }
+    }
 
     const targetClassId = currentClassObj?.id || students.find((s) => s.id === studentId)?.classId;
     const gradeKey = targetClassId ? `${studentId}_${targetClassId}` : studentId;
 
-    const { attendanceScore } = getStudentAttendanceData(studentId, currentClassName);
+    const { attendanceScore, attResult } = getStudentAttendanceData(studentId, currentClassName);
     const weightRes = resolveStudentGradeWeight(studentId, currentClassObj?.termId, gradeWeightsMap);
 
     setLocalGrades((prev) => {
@@ -154,32 +166,40 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
         className: currentClassName,
         classId: targetClassId,
         attendanceScore,
-        quizScore: 80,
-        midtermScore: 80,
-        finalScore: 80,
-        homeworkScore: 85,
-        attitudeScore: 90,
-        totalScore: 85,
+        quizScore: null,
+        midtermScore: null,
+        finalScore: null,
+        homeworkScore: null,
+        attitudeScore: null,
+        totalScore: null,
+        hasAttendanceData: attResult.hasRecords,
+        hasSavedGrade: false,
       };
 
-      const updated = {
+      const updated: StudentGrade = {
         ...existing,
         classId: targetClassId || existing.classId,
         className: currentClassName,
-        attendanceScore, // Always enforce dynamic attendance score from records
+        attendanceScore,
+        hasAttendanceData: attResult.hasRecords,
+        hasSavedGrade: true,
         [field]: val,
       };
 
-      // Recalculate total immediately with student's resolved weights (custom or default)
-      updated.totalScore = calculateTotalGrade(
-        updated.attendanceScore,
-        updated.quizScore,
-        updated.midtermScore,
-        updated.finalScore,
-        updated.homeworkScore,
-        updated.attitudeScore,
+      const provisional = calculateProvisionalTotalGrade(
+        {
+          attendanceScore: updated.attendanceScore,
+          quizScore: updated.quizScore,
+          midtermScore: updated.midtermScore,
+          finalScore: updated.finalScore,
+          homeworkScore: updated.homeworkScore,
+          attitudeScore: updated.attitudeScore,
+        },
         weightRes.weights
       );
+      updated.totalScore = provisional.totalScore;
+      updated.isEstimated = provisional.isEstimated;
+      updated.missingItems = provisional.missingItems;
 
       return {
         ...prev,
@@ -191,21 +211,46 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
     setHasUnsavedChanges(true);
   };
 
-  // Save handler: guarantees real attendanceScore and recalculated totalScore are stored
+  // Save handler: guarantees real attendanceScore and recalculated totalScore without inventing missing scores
   const handleSave = () => {
     const syncedGrades: Record<string, StudentGrade> = { ...localGrades };
     classStudents.forEach((s) => {
       const targetClassId = currentClassObj?.id || s.classId;
       const gradeKey = targetClassId ? `${s.id}_${targetClassId}` : s.id;
-      const { attendanceScore } = getStudentAttendanceData(s.id, currentClassName);
+      const { attendanceScore, attResult } = getStudentAttendanceData(s.id, currentClassName);
       const existing = syncedGrades[gradeKey] || syncedGrades[s.id];
-      const quiz = existing ? existing.quizScore : 85;
-      const mid = existing ? existing.midtermScore : 80;
-      const fin = existing ? existing.finalScore : 85;
-      const hw = existing ? existing.homeworkScore : 90;
-      const attid = existing ? existing.attitudeScore : 90;
+
+      const quiz = existing?.quizScore ?? null;
+      const mid = existing?.midtermScore ?? null;
+      const fin = existing?.finalScore ?? null;
+      const hw = existing?.homeworkScore ?? null;
+      const attid = existing?.attitudeScore ?? null;
+
+      const hasAnyData =
+        Boolean(existing?.hasSavedGrade) ||
+        attResult.hasRecords ||
+        quiz !== null ||
+        mid !== null ||
+        fin !== null ||
+        hw !== null ||
+        attid !== null;
+
+      if (!hasAnyData) {
+        return;
+      }
+
       const weightRes = resolveStudentGradeWeight(s.id, currentClassObj?.termId, gradeWeightsMap);
-      const total = calculateTotalGrade(attendanceScore, quiz, mid, fin, hw, attid, weightRes.weights);
+      const provisional = calculateProvisionalTotalGrade(
+        {
+          attendanceScore,
+          quizScore: quiz,
+          midtermScore: mid,
+          finalScore: fin,
+          homeworkScore: hw,
+          attitudeScore: attid,
+        },
+        weightRes.weights
+      );
 
       const gradeItem: StudentGrade = {
         studentId: s.id,
@@ -218,8 +263,15 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
         finalScore: fin,
         homeworkScore: hw,
         attitudeScore: attid,
-        totalScore: total,
-        isPassed: total >= 60.0,
+        totalScore: provisional.totalScore,
+        hasAttendanceData: attResult.hasRecords,
+        hasSavedGrade: true,
+        isEstimated: provisional.isEstimated,
+        missingItems: provisional.missingItems,
+        isPassed:
+          provisional.totalScore !== null && !provisional.isEstimated
+            ? provisional.totalScore >= 60.0
+            : undefined,
         updatedAt: new Date().toISOString().substring(0, 16).replace('T', ' '),
       };
 
@@ -230,38 +282,50 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
     setLocalGrades(syncedGrades);
     onUpdateGrades(syncedGrades);
     setHasUnsavedChanges(false);
-    onShowToast(`🎉 已成功儲存【${currentClassName}】全班成績資料（已同步實際出缺席與個別權重）！`, 'success');
+    onShowToast(`🎉 已成功儲存【${currentClassName}】成績資料（已同步實際出缺席與個別權重）！`, 'success');
   };
 
-  // Class Stats Summary using dynamic attendance score and individual weights
+  // Class Stats Summary excluding pending/uncomputed students
   const classStats = useMemo(() => {
-    if (classStudents.length === 0) return { avgTotal: 0, passCount: 0, failCount: 0 };
+    if (classStudents.length === 0) return { avgTotal: null as number | null, passCount: 0, evaluatedCount: 0 };
     let sum = 0;
     let pass = 0;
-    let fail = 0;
+    let evaluatedCount = 0;
 
     classStudents.forEach((s) => {
       const targetClassId = currentClassObj?.id || s.classId;
       const gradeKey = targetClassId ? `${s.id}_${targetClassId}` : s.id;
       const { attendanceScore } = getStudentAttendanceData(s.id, currentClassName);
       const g = localGrades[gradeKey] || localGrades[s.id];
-      const quiz = g ? g.quizScore : 85;
-      const mid = g ? g.midtermScore : 80;
-      const fin = g ? g.finalScore : 85;
-      const hw = g ? g.homeworkScore : 90;
-      const attid = g ? g.attitudeScore : 90;
+      const quiz = g?.quizScore ?? null;
+      const mid = g?.midtermScore ?? null;
+      const fin = g?.finalScore ?? null;
+      const hw = g?.homeworkScore ?? null;
+      const attid = g?.attitudeScore ?? null;
       const weightRes = resolveStudentGradeWeight(s.id, currentClassObj?.termId, gradeWeightsMap);
-      const total = calculateTotalGrade(attendanceScore, quiz, mid, fin, hw, attid, weightRes.weights);
+      const provisional = calculateProvisionalTotalGrade(
+        {
+          attendanceScore,
+          quizScore: quiz,
+          midtermScore: mid,
+          finalScore: fin,
+          homeworkScore: hw,
+          attitudeScore: attid,
+        },
+        weightRes.weights
+      );
 
-      sum += total;
-      if (total >= 60) pass++;
-      else fail++;
+      if (provisional.totalScore !== null) {
+        sum += provisional.totalScore;
+        evaluatedCount++;
+        if (provisional.totalScore >= 60) pass++;
+      }
     });
 
     return {
-      avgTotal: Math.round((sum / classStudents.length) * 10) / 10,
+      avgTotal: evaluatedCount > 0 ? Math.round((sum / evaluatedCount) * 10) / 10 : null,
       passCount: pass,
-      failCount: fail,
+      evaluatedCount,
     };
   }, [classStudents, localGrades, getStudentAttendanceData, currentClassName, currentClassObj?.id, currentClassObj?.termId, gradeWeightsMap]);
 
@@ -506,11 +570,15 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
           <div className="flex flex-wrap items-center gap-2.5 sm:gap-4 text-xs font-mono">
             <div className="flex-1 sm:flex-none bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700 whitespace-nowrap">
               <span className="text-slate-400">班級平均分：</span>
-              <strong className="text-teal-400 font-bold text-sm ml-1">{classStats.avgTotal}</strong>
+              <strong className="text-teal-400 font-bold text-sm ml-1">
+                {classStats.avgTotal !== null ? classStats.avgTotal : '尚未計算'}
+              </strong>
             </div>
             <div className="flex-1 sm:flex-none bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700 whitespace-nowrap">
               <span className="text-slate-400">及格人數：</span>
-              <strong className="text-emerald-400 font-bold text-sm ml-1">{classStats.passCount} / {classStudents.length}</strong>
+              <strong className="text-emerald-400 font-bold text-sm ml-1">
+                {classStats.passCount} / {classStats.evaluatedCount}
+              </strong>
             </div>
           </div>
         </div>
@@ -614,11 +682,11 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                 const gradeKey = targetClassId ? `${student.id}_${targetClassId}` : student.id;
                 const { attResult, attendanceScore } = getStudentAttendanceData(student.id, currentClassName);
                 const existing = localGrades[gradeKey] || localGrades[student.id];
-                const quiz = existing ? existing.quizScore : 85;
-                const midterm = existing ? existing.midtermScore : 80;
-                const final = existing ? existing.finalScore : 85;
-                const homework = existing ? existing.homeworkScore : 90;
-                const attitude = existing ? existing.attitudeScore : 90;
+                const quiz = existing?.quizScore ?? null;
+                const midterm = existing?.midtermScore ?? null;
+                const final = existing?.finalScore ?? null;
+                const homework = existing?.homeworkScore ?? null;
+                const attitude = existing?.attitudeScore ?? null;
 
                 // Resolve student's exact weights matching termId, studentId, or fallback to default
                 const studentTermId = currentClassObj?.termId || currentTermObj?.id;
@@ -630,17 +698,17 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                 const studentW = weightRes.weights;
                 const isCustom = weightRes.isCustom;
 
-                const calculatedTotal = calculateTotalGrade(
-                  attendanceScore,
-                  quiz,
-                  midterm,
-                  final,
-                  homework,
-                  attitude,
+                const provisional = calculateProvisionalTotalGrade(
+                  {
+                    attendanceScore,
+                    quizScore: quiz,
+                    midtermScore: midterm,
+                    finalScore: final,
+                    homeworkScore: homework,
+                    attitudeScore: attitude,
+                  },
                   studentW
                 );
-
-                const totalScore = calculatedTotal;
 
                 const grade: StudentGrade = {
                   studentId: student.id,
@@ -653,7 +721,10 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                   finalScore: final,
                   homeworkScore: homework,
                   attitudeScore: attitude,
-                  totalScore,
+                  totalScore: provisional.totalScore,
+                  hasAttendanceData: attResult.hasRecords,
+                  isEstimated: provisional.isEstimated,
+                  missingItems: provisional.missingItems,
                   updatedAt: existing?.updatedAt,
                 };
 
@@ -712,33 +783,38 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                     {/* 1. 出席成績 (自動計算, 不可直接編輯) */}
                     <td className="py-3 px-3 text-center">
                       <div className={`inline-flex flex-col items-center justify-center px-3 py-1.5 rounded-xl border ${
-                        grade.attendanceScore >= 80
+                        grade.attendanceScore === null || !attResult.hasRecords
+                          ? 'bg-slate-50 border-slate-200 text-slate-600'
+                          : grade.attendanceScore >= 80
                           ? 'bg-teal-50/80 border-teal-200 text-teal-900'
                           : grade.attendanceScore >= 60
                           ? 'bg-amber-50/80 border-amber-200 text-amber-900'
                           : 'bg-rose-50/80 border-rose-200 text-rose-900'
                       }`}>
                         <span className="font-mono font-black text-sm">
-                          {grade.attendanceScore}%
+                          {formatAttendanceScore(grade.attendanceScore, attResult.hasRecords)}
                         </span>
                         <span className={`text-[10px] font-bold mt-0.5 ${
-                          grade.attendanceScore >= 80
+                          grade.attendanceScore === null || !attResult.hasRecords
+                            ? 'text-slate-500'
+                            : grade.attendanceScore >= 80
                             ? 'text-teal-700'
                             : grade.attendanceScore >= 60
                             ? 'text-amber-700'
                             : 'text-rose-700'
                         }`}>
-                          權重 {studentW.attendanceWeight}% (佔 {Math.round(grade.attendanceScore * (studentW.attendanceWeight / 100) * 10) / 10} 分)
+                          {grade.attendanceScore !== null && attResult.hasRecords
+                            ? `權重 ${studentW.attendanceWeight}% (佔 ${Math.round(grade.attendanceScore * (studentW.attendanceWeight / 100) * 10) / 10} 分)`
+                            : `權重 ${studentW.attendanceWeight}%`}
                         </span>
-                        {attResult.hasRecords && (
+                        {attResult.hasRecords ? (
                           <span className="text-[9px] text-slate-500 mt-0.5 whitespace-nowrap">
                             {attResult.presentPeriods > 0 && `${attResult.presentPeriods}出 `}
                             {attResult.leavePeriods > 0 && `${attResult.leavePeriods}假 `}
                             {attResult.absentPeriods > 0 && `${attResult.absentPeriods}缺`}
                           </span>
-                        )}
-                        {!attResult.hasRecords && (
-                          <span className="text-[9px] text-slate-400 mt-0.5">尚未點名</span>
+                        ) : (
+                          <span className="text-[9px] text-slate-400 mt-0.5">尚無點名紀錄</span>
                         )}
                       </div>
                     </td>
@@ -752,10 +828,11 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                           min="0"
                           max="100"
                           step="0.5"
+                          placeholder="未輸入"
                           id={`input-quiz-${student.id}`}
-                          value={grade.quizScore}
+                          value={grade.quizScore ?? ''}
                           onChange={(e) => handleScoreChange(student.id, student.name, 'quizScore', e.target.value)}
-                          className="w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+                          className="w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold text-slate-800 placeholder:text-slate-400 placeholder:font-normal bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
                         />
                         <div className="text-[10px] font-semibold text-slate-500 mt-1">
                           權重 {studentW.quizWeight}%
@@ -772,10 +849,11 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                           min="0"
                           max="100"
                           step="0.5"
+                          placeholder="未輸入"
                           id={`input-midterm-${student.id}`}
-                          value={grade.midtermScore}
+                          value={grade.midtermScore ?? ''}
                           onChange={(e) => handleScoreChange(student.id, student.name, 'midtermScore', e.target.value)}
-                          className={`w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs ${
+                          className={`w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold placeholder:text-slate-400 placeholder:font-normal bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs ${
                             studentW.midtermWeight === 0
                               ? 'border-amber-300 bg-amber-50/40 text-slate-600'
                               : 'border-slate-300 text-slate-800'
@@ -798,10 +876,11 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                           min="0"
                           max="100"
                           step="0.5"
+                          placeholder="未輸入"
                           id={`input-final-${student.id}`}
-                          value={grade.finalScore}
+                          value={grade.finalScore ?? ''}
                           onChange={(e) => handleScoreChange(student.id, student.name, 'finalScore', e.target.value)}
-                          className="w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+                          className="w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold text-slate-800 placeholder:text-slate-400 placeholder:font-normal bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
                         />
                         <div className="text-[10px] font-semibold text-slate-500 mt-1">
                           權重 {studentW.finalWeight}%
@@ -818,10 +897,11 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                           min="0"
                           max="100"
                           step="0.5"
+                          placeholder="未輸入"
                           id={`input-homework-${student.id}`}
-                          value={grade.homeworkScore}
+                          value={grade.homeworkScore ?? ''}
                           onChange={(e) => handleScoreChange(student.id, student.name, 'homeworkScore', e.target.value)}
-                          className="w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+                          className="w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold text-slate-800 placeholder:text-slate-400 placeholder:font-normal bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
                         />
                         <div className="text-[10px] font-semibold text-slate-500 mt-1">
                           權重 {studentW.homeworkWeight}%
@@ -838,10 +918,11 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                           min="0"
                           max="100"
                           step="0.5"
+                          placeholder="未輸入"
                           id={`input-attitude-${student.id}`}
-                          value={grade.attitudeScore}
+                          value={grade.attitudeScore ?? ''}
                           onChange={(e) => handleScoreChange(student.id, student.name, 'attitudeScore', e.target.value)}
-                          className="w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
+                          className="w-20 px-2 py-1.5 text-base sm:text-xs text-center font-mono font-bold text-slate-800 placeholder:text-slate-400 placeholder:font-normal bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
                         />
                         <div className="text-[10px] font-semibold text-slate-500 mt-1">
                           權重 {studentW.attitudeWeight}%
@@ -849,12 +930,24 @@ export const GradeManagementView: React.FC<GradeManagementViewProps> = ({
                       </div>
                     </td>
 
-                    {/* 總成績 (與資料庫完全一致) */}
+                    {/* 總成績 */}
                     <td className="py-3 px-4 text-center bg-slate-50/70">
                       <div className="flex flex-col items-center justify-center">
-                        <span className="font-mono font-black text-base text-slate-900">
-                          {grade.totalScore}
+                        <span className={`font-mono font-black text-base ${
+                          grade.totalScore === null
+                            ? 'text-slate-400 text-xs font-sans font-semibold'
+                            : grade.isEstimated
+                            ? 'text-amber-700'
+                            : 'text-slate-900'
+                        }`}>
+                          {formatTotalGradeDisplay(grade)}
                         </span>
+                        {grade.missingItems && grade.missingItems.length > 0 && (
+                          <span className="text-[10px] text-amber-700 mt-0.5">
+                            {grade.missingItems.slice(0, 2).join('、')}
+                            {grade.missingItems.length > 2 ? '…' : ''}
+                          </span>
+                        )}
                         {isCustom && (
                           <span className="text-[10px] font-bold mt-0.5 text-amber-700">
                             依個別權重

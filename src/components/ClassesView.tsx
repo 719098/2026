@@ -96,9 +96,17 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
     );
   });
 
-  const averageAttendance = students.length > 0
-    ? Math.round((students.reduce((acc, s) => acc + (s.overallAttendanceRate || 100), 0) / students.length) * 10) / 10
-    : 100;
+  const evaluatedStudents = students.filter(
+    (s) => s.attendanceEvaluated !== false && s.overallAttendanceRate !== null && s.overallAttendanceRate !== undefined
+  );
+  const averageAttendance: number | null =
+    evaluatedStudents.length > 0
+      ? Math.round(
+          (evaluatedStudents.reduce((acc, s) => acc + (s.overallAttendanceRate || 0), 0) /
+            evaluatedStudents.length) *
+            10
+        ) / 10
+      : null;
 
   const currentClassName = selectedClassObj?.className || selectedClassObj?.name || '班級';
 
@@ -111,9 +119,16 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
     if (filteredStudents.length === 0) return;
     const records = filteredStudents.map((s) => {
       const history = calculateStudentAttendanceHistory(s, allCourses, transferRecords);
-      const isWarning = history.attendanceRate < 90 && history.attendanceRate >= 80;
-      const isDanger = history.attendanceRate < 80;
-      const warningStatus = isDanger ? '🚨 達停修危險 (低於80%)' : isWarning ? '⚠️ 出席警示 (低於90%)' : '✅ 正常';
+      const isEvaluated = history.hasAttendanceData && history.attendanceRate !== null;
+      const isWarning = isEvaluated && (history.attendanceRate as number) < 90 && (history.attendanceRate as number) >= 80;
+      const isDanger = isEvaluated && (history.attendanceRate as number) < 80;
+      const warningStatus = !isEvaluated
+        ? '未評估（尚無出席資料）'
+        : isDanger
+        ? '🚨 達停修危險 (低於80%)'
+        : isWarning
+        ? '⚠️ 出席警示 (低於90%)'
+        : '✅ 正常';
       return {
         studentNumber: s.studentNumber,
         name: s.name,
@@ -204,13 +219,16 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
 
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
             <span className="text-xs font-semibold text-slate-500">班級平均出席率</span>
-            <div className="text-2xl font-black text-teal-700 mt-1 font-mono">
-              {averageAttendance}%
+            <div className={`text-2xl font-black mt-1 font-mono ${averageAttendance === null ? 'text-slate-500' : 'text-teal-700'}`}>
+              {averageAttendance !== null ? `${averageAttendance}%` : '—'}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5">
+              已納入 {evaluatedStudents.length}／{students.length} 人
             </div>
             <div className="w-full bg-slate-200 rounded-full h-1.5 mt-1.5 overflow-hidden">
               <div
                 className="bg-teal-600 h-1.5 rounded-full"
-                style={{ width: `${averageAttendance}%` }}
+                style={{ width: `${averageAttendance ?? 0}%` }}
               ></div>
             </div>
           </div>
@@ -277,8 +295,9 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
             <tbody className="divide-y divide-slate-100 text-xs">
               {filteredStudents.map((student, index) => {
                 const history = calculateStudentAttendanceHistory(student, allCourses, transferRecords);
-                const isWarning = history.attendanceRate < 90 && history.attendanceRate >= 80;
-                const isDanger = history.attendanceRate < 80;
+                const isEvaluated = history.hasAttendanceData && history.attendanceRate !== null;
+                const isWarning = isEvaluated && (history.attendanceRate as number) < 90 && (history.attendanceRate as number) >= 80;
+                const isDanger = isEvaluated && (history.attendanceRate as number) < 80;
 
                 return (
                   <tr
@@ -350,16 +369,16 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
                     <td className="py-3 px-4 text-center">
                       <div className="flex flex-col items-center">
                         <span className={`font-mono font-black text-sm ${
-                          isDanger ? 'text-rose-600' : isWarning ? 'text-amber-600' : 'text-emerald-700'
+                          !isEvaluated ? 'text-slate-400' : isDanger ? 'text-rose-600' : isWarning ? 'text-amber-600' : 'text-emerald-700'
                         }`}>
-                          {history.attendanceRate}%
+                          {isEvaluated ? `${history.attendanceRate}%` : '—'}
                         </span>
                         <div className="w-16 bg-slate-200 rounded-full h-1 mt-1 overflow-hidden">
                           <div
                             className={`h-1 rounded-full ${
-                              isDanger ? 'bg-rose-500' : isWarning ? 'bg-amber-500' : 'bg-emerald-500'
+                              !isEvaluated ? 'bg-slate-300' : isDanger ? 'bg-rose-500' : isWarning ? 'bg-amber-500' : 'bg-emerald-500'
                             }`}
-                            style={{ width: `${Math.min(100, history.attendanceRate)}%` }}
+                            style={{ width: `${isEvaluated ? Math.min(100, history.attendanceRate as number) : 0}%` }}
                           ></div>
                         </div>
                       </div>
@@ -367,7 +386,11 @@ export const ClassesView: React.FC<ClassesViewProps> = ({
 
                     {/* 出席警示 */}
                     <td className="py-3 px-3 text-center">
-                      {isDanger ? (
+                      {!isEvaluated ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                          未評估
+                        </span>
+                      ) : isDanger ? (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
                           ⚠️ 出席危險
                         </span>

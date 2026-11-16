@@ -262,7 +262,9 @@ export const BatchImportStudentModal: React.FC<BatchImportStudentModalProps> = (
         className: '', // Explicit requirement: do not auto-assign classes
         avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
         nationalityCode: row.nationalityCode || 'TW',
-        overallAttendanceRate: 100,
+        overallAttendanceRate: null,
+        attendanceEvaluated: false,
+        complianceStatus: 'unevaluated',
         totalAbsenceHours: 0,
         totalLeaveHours: 0,
         enrollmentStatus: 'active',

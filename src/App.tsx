@@ -488,13 +488,19 @@ export default function App() {
       let syncedStudents = data || [];
       if (data && data.length > 0) {
         syncedStudents = data.map((s) => {
-          const history = calculateStudentAttendanceHistory(s, activeSessions || [], fetchedTransfers || []);
+          const history = calculateStudentAttendanceHistory(s, activeSessions || [], fetchedTransfers || [], {
+            classes: currentClasses,
+            terms: adminTerms,
+          });
           return {
             ...s,
             overallAttendanceRate: history.attendanceRate,
+            attendanceEvaluated: history.hasAttendanceData,
             totalPresentHours: history.presentHours,
             totalLeaveHours: history.leaveHours,
             totalAbsenceHours: history.absentHours,
+            totalCompletedHours: history.completedHours,
+            complianceStatus: history.complianceStatus,
           };
         });
         setDbStudents(syncedStudents);
@@ -1527,6 +1533,7 @@ export default function App() {
                 <AdminDashboardView
                   students={dbStudents}
                   classes={adminClasses}
+                  terms={adminTerms}
                   teachers={adminTeachers}
                   allCourses={courses}
                   leaves={adminLeaves}
@@ -1666,10 +1673,12 @@ export default function App() {
                 <AdminReportsView
                   students={dbStudents}
                   classes={adminClasses}
+                  terms={adminTerms}
                   allCourses={courses}
                   allGrades={allGrades}
                   transferRecords={adminTransferRecords}
                   gradeWeightsMap={gradeWeightsMap}
+                  onSelectStudentDetail={(student) => setSelectedStudentForDetail(student)}
                 />
               )}
             </div>

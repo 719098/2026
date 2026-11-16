@@ -30,7 +30,13 @@ import {
   AttendanceAuditLog,
 } from '../types';
 import { calculateStudentAttendanceHistory } from '../utils/attendanceUtils';
-import { getStudentEffectiveGrade, calculateTotalGrade } from '../utils/gradeUtils';
+import { getStudentEffectiveGrade, calculateProvisionalTotalGrade } from '../utils/gradeUtils';
+import {
+  formatAttendanceRate,
+  formatAttendanceScore,
+  formatComplianceLabel,
+  formatTotalGradeDisplay,
+} from '../utils/reportUtils';
 import { resolveStudentGradeWeight } from '../lib/gradeWeightService';
 import { StudentAvatar } from './StudentAvatar';
 import { exportIndividualStudentAttendanceToCsv } from '../utils/csvExport';
@@ -180,8 +186,11 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
 
   // Full attendance history across student's timeline
   const history = useMemo(() => {
-    return calculateStudentAttendanceHistory(student, allCourses, transferRecords);
-  }, [student, allCourses, transferRecords]);
+    return calculateStudentAttendanceHistory(student, allCourses, transferRecords, {
+      classes,
+      terms,
+    });
+  }, [student, allCourses, transferRecords, classes, terms]);
 
   // Candidate class contexts for multi-class / multi-term grades
   const gradeClassOptions = useMemo(() => {
@@ -285,29 +294,35 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
     const eff = getStudentEffectiveGrade(
       student,
       gradesSource,
-      scopedCourses.length > 0 ? scopedCourses : allCourses,
+      scopedCourses,
       transferRecords,
       weightsSource,
       targetTermId,
       targetClassId
     );
 
-    // Ensure totalScore uses exact resolved weights
-    const exactTotal = calculateTotalGrade(
-      eff.attendanceScore,
-      eff.quizScore,
-      eff.midtermScore,
-      eff.finalScore,
-      eff.homeworkScore,
-      eff.attitudeScore,
+    const provisional = calculateProvisionalTotalGrade(
+      {
+        attendanceScore: eff.attendanceScore,
+        quizScore: eff.quizScore,
+        midtermScore: eff.midtermScore,
+        finalScore: eff.finalScore,
+        homeworkScore: eff.homeworkScore,
+        attitudeScore: eff.attitudeScore,
+      },
       resolved.weights
     );
 
     return {
       effectiveGrade: {
         ...eff,
-        totalScore: exactTotal,
-        isPassed: exactTotal >= 60.0,
+        totalScore: provisional.totalScore,
+        isEstimated: provisional.isEstimated,
+        missingItems: provisional.missingItems,
+        isPassed:
+          provisional.totalScore !== null && !provisional.isEstimated
+            ? provisional.totalScore >= 60.0
+            : undefined,
       },
       weights: resolved.weights,
       isCustom: resolved.isCustom,
@@ -388,7 +403,17 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
     });
 
     const attendanceRate =
-      expectedHours > 0 ? Math.round((presentHours / expectedHours) * 1000) / 10 : 100;
+      expectedHours > 0 ? Math.round((presentHours / expectedHours) * 1000) / 10 : null;
+    const attendanceScore =
+      expectedHours > 0
+        ? Math.round(((presentHours + leaveHours * 0.5) / expectedHours) * 1000) / 10
+        : null;
+    const complianceLabel =
+      expectedHours === 0 || attendanceRate === null
+        ? '未評估'
+        : attendanceRate >= 80
+        ? '合規'
+        : '不合規';
 
     return {
       expectedHours,
@@ -396,6 +421,8 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
       leaveHours,
       absentHours,
       attendanceRate,
+      attendanceScore,
+      complianceLabel,
       has4Periods,
     };
   }, [filteredDailyRecords]);
@@ -439,12 +466,15 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   const wHw = activeGradeContext.weights.homeworkWeight;
   const wAttid = activeGradeContext.weights.attitudeWeight;
 
-  const attendanceWeighted = effectiveGrade ? Math.round(effectiveGrade.attendanceScore * (wAtt / 100) * 100) / 100 : 0;
-  const quizWeighted = effectiveGrade ? Math.round(effectiveGrade.quizScore * (wQuiz / 100) * 100) / 100 : 0;
-  const midtermWeighted = effectiveGrade ? Math.round(effectiveGrade.midtermScore * (wMid / 100) * 100) / 100 : 0;
-  const finalWeighted = effectiveGrade ? Math.round(effectiveGrade.finalScore * (wFin / 100) * 100) / 100 : 0;
-  const homeworkWeighted = effectiveGrade ? Math.round(effectiveGrade.homeworkScore * (wHw / 100) * 100) / 100 : 0;
-  const attitudeWeighted = effectiveGrade ? Math.round(effectiveGrade.attitudeScore * (wAttid / 100) * 100) / 100 : 0;
+  const calcWeighted = (score: number | null | undefined, weight: number): number | null =>
+    score !== null && score !== undefined ? Math.round(score * (weight / 100) * 100) / 100 : null;
+
+  const attendanceWeighted = effectiveGrade ? calcWeighted(effectiveGrade.attendanceScore, wAtt) : null;
+  const quizWeighted = effectiveGrade ? calcWeighted(effectiveGrade.quizScore, wQuiz) : null;
+  const midtermWeighted = effectiveGrade ? calcWeighted(effectiveGrade.midtermScore, wMid) : null;
+  const finalWeighted = effectiveGrade ? calcWeighted(effectiveGrade.finalScore, wFin) : null;
+  const homeworkWeighted = effectiveGrade ? calcWeighted(effectiveGrade.homeworkScore, wHw) : null;
+  const attitudeWeighted = effectiveGrade ? calcWeighted(effectiveGrade.attitudeScore, wAttid) : null;
 
   const handleOpenCertModal = () => {
     const sortedDates = history.dailyRecords
@@ -748,7 +778,9 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
 
               <div
                 className={`p-3.5 rounded-2xl border shadow-2xs ${
-                  history.attendanceRate >= 90
+                  !history.hasAttendanceData || history.attendanceRate === null
+                    ? 'bg-slate-50 border-slate-200 text-slate-700'
+                    : history.attendanceRate >= 90
                     ? 'bg-teal-50 border-teal-200 text-teal-900'
                     : history.attendanceRate >= 80
                     ? 'bg-amber-50 border-amber-200 text-amber-900'
@@ -757,18 +789,26 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
               >
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold">目前實際出席率</span>
-                  <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-white/70">純到課</span>
+                  <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-white/80">
+                    {formatComplianceLabel(history.complianceStatus)}
+                  </span>
                 </div>
-                <div className="text-2xl font-black mt-0.5 font-mono">{history.attendanceRate}%</div>
+                <div className="text-2xl font-black mt-0.5 font-mono">
+                  {formatAttendanceRate(history.attendanceRate, history.hasAttendanceData)}
+                </div>
                 <span className="text-[10px] font-semibold block">
-                  {history.attendanceRate >= 90
+                  {!history.hasAttendanceData || history.attendanceRate === null
+                    ? '尚無出席資料'
+                    : history.attendanceRate >= 90
                     ? '良好'
                     : history.attendanceRate >= 80
                     ? '接近警示線'
                     : '出席率過低 (<80%)'}
                 </span>
                 <span className="text-[9px] text-slate-500 mt-1 block">
-                  實到 {history.presentHours}H ÷ 應到 {history.completedHours}H
+                  {history.hasAttendanceData
+                    ? `實到 ${history.presentHours}H ÷ 應到 ${history.completedHours}H`
+                    : '尚無正式點名紀錄'}
                 </span>
               </div>
             </div>
@@ -780,12 +820,15 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                     公式區隔
                   </span>
                   <span className="text-slate-600 font-medium">
-                    <strong>實際出席率</strong>（{history.attendanceRate}%，請假計0%）與<strong>學期出席成績</strong>（
-                    {effectiveGrade.attendanceScore}分，請假折算50%）依中心規範分開計算。
+                    <strong>實際出席率</strong>（{history.hasAttendanceData ? `${history.attendanceRate}%` : '尚無出席資料'}，請假計0%）與<strong>學期出席成績</strong>（
+                    {formatAttendanceScore(effectiveGrade.attendanceScore, effectiveGrade.hasAttendanceData)}，請假折算50%）依中心規範分開計算。
                   </span>
                 </div>
                 <div className="text-slate-500 font-mono text-[11px] self-end sm:self-auto shrink-0 bg-slate-50 px-2 py-1 rounded border border-slate-200">
-                  出席評分：<strong className="text-teal-900 font-bold">{effectiveGrade.attendanceScore} 分</strong>
+                  出席評分：
+                  <strong className="text-teal-900 font-bold">
+                    {formatAttendanceScore(effectiveGrade.attendanceScore, effectiveGrade.hasAttendanceData)}
+                  </strong>
                 </div>
               </div>
             )}
@@ -802,6 +845,11 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                     {activeGradeContext.isCustom && (
                       <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
                         個別自訂權重
+                      </span>
+                    )}
+                    {effectiveGrade.isEstimated && (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                        暫估（含缺項）
                       </span>
                     )}
                   </h3>
@@ -829,10 +877,26 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
 
                   <div className="flex items-center space-x-3 bg-slate-900 text-white px-4 py-2 rounded-xl">
                     <span className="text-xs text-slate-300 font-medium">總成績：</span>
-                    <span className="text-2xl font-black text-teal-400 font-mono">{effectiveGrade.totalScore}</span>
+                    <span className="text-xl sm:text-2xl font-black text-teal-400 font-mono">
+                      {formatTotalGradeDisplay(effectiveGrade)}
+                    </span>
                   </div>
                 </div>
               </div>
+
+              {effectiveGrade.missingItems && effectiveGrade.missingItems.length > 0 && (
+                <div className="mb-3 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 flex flex-wrap items-center gap-1.5">
+                  <span className="font-bold">缺項提示：</span>
+                  {effectiveGrade.missingItems.map((item) => (
+                    <span key={item} className="px-2 py-0.5 rounded bg-white border border-amber-200 font-semibold">
+                      {item}
+                    </span>
+                  ))}
+                  {effectiveGrade.totalScore !== null && (
+                    <span className="text-amber-700">（目前依已存在項目權重折算為暫估分數）</span>
+                  )}
+                </div>
+              )}
 
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-2.5 text-xs">
                 <div className="bg-teal-50/50 p-3 rounded-xl border border-teal-100">
@@ -841,59 +905,64 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                     <span className="text-[10px] text-teal-700 font-semibold">折算50%假單</span>
                   </div>
                   <div className="text-base font-extrabold text-teal-950 font-mono mt-1">
-                    {effectiveGrade.attendanceScore} 分
+                    {formatAttendanceScore(effectiveGrade.attendanceScore, effectiveGrade.hasAttendanceData)}
                   </div>
                   <div className="text-[11px] text-teal-700 mt-1 font-mono">
-                    {effectiveGrade.attendanceScore} × {wAtt}% = <strong className="text-teal-950 font-bold">{attendanceWeighted}</strong>
+                    {effectiveGrade.attendanceScore !== null && attendanceWeighted !== null ? (
+                      <>
+                        {effectiveGrade.attendanceScore} × {wAtt}% ={' '}
+                        <strong className="text-teal-950 font-bold">{attendanceWeighted}</strong>
+                      </>
+                    ) : (
+                      <span>尚無點名紀錄</span>
+                    )}
                   </div>
                   <div className="text-[10px] text-teal-600 mt-0.5">出席1.0 + 請假0.5</div>
                 </div>
 
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <div className="font-bold text-slate-700">平時考 ({wQuiz}%)</div>
-                  <div className="text-base font-extrabold text-slate-900 font-mono mt-1">{effectiveGrade.quizScore} 分</div>
-                  <div className="text-[11px] text-slate-600 mt-1 font-mono">
-                    {effectiveGrade.quizScore} × {wQuiz}% = <strong className="text-slate-900 font-bold">{quizWeighted}</strong>
+                {[
+                  { label: '平時考', weight: wQuiz, score: effectiveGrade.quizScore, weighted: quizWeighted },
+                  { label: '期中考', weight: wMid, score: effectiveGrade.midtermScore, weighted: midtermWeighted },
+                  { label: '期末考', weight: wFin, score: effectiveGrade.finalScore, weighted: finalWeighted },
+                  { label: '作業', weight: wHw, score: effectiveGrade.homeworkScore, weighted: homeworkWeighted },
+                  { label: '學習態度', weight: wAttid, score: effectiveGrade.attitudeScore, weighted: attitudeWeighted },
+                ].map((item) => (
+                  <div key={item.label} className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <div className="font-bold text-slate-700">
+                      {item.label} ({item.weight}%)
+                    </div>
+                    <div className="text-base font-extrabold text-slate-900 font-mono mt-1">
+                      {item.score !== null && item.score !== undefined ? `${item.score} 分` : '未輸入'}
+                    </div>
+                    <div className="text-[11px] text-slate-600 mt-1 font-mono">
+                      {item.score !== null && item.weighted !== null ? (
+                        <>
+                          {item.score} × {item.weight}% ={' '}
+                          <strong className="text-slate-900 font-bold">{item.weighted}</strong>
+                        </>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <div className="font-bold text-slate-700">期中考 ({wMid}%)</div>
-                  <div className="text-base font-extrabold text-slate-900 font-mono mt-1">{effectiveGrade.midtermScore} 分</div>
-                  <div className="text-[11px] text-slate-600 mt-1 font-mono">
-                    {effectiveGrade.midtermScore} × {wMid}% = <strong className="text-slate-900 font-bold">{midtermWeighted}</strong>
-                  </div>
-                </div>
-
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <div className="font-bold text-slate-700">期末考 ({wFin}%)</div>
-                  <div className="text-base font-extrabold text-slate-900 font-mono mt-1">{effectiveGrade.finalScore} 分</div>
-                  <div className="text-[11px] text-slate-600 mt-1 font-mono">
-                    {effectiveGrade.finalScore} × {wFin}% = <strong className="text-slate-900 font-bold">{finalWeighted}</strong>
-                  </div>
-                </div>
-
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <div className="font-bold text-slate-700">作業 ({wHw}%)</div>
-                  <div className="text-base font-extrabold text-slate-900 font-mono mt-1">{effectiveGrade.homeworkScore} 分</div>
-                  <div className="text-[11px] text-slate-600 mt-1 font-mono">
-                    {effectiveGrade.homeworkScore} × {wHw}% = <strong className="text-slate-900 font-bold">{homeworkWeighted}</strong>
-                  </div>
-                </div>
-
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <div className="font-bold text-slate-700">學習態度 ({wAttid}%)</div>
-                  <div className="text-base font-extrabold text-slate-900 font-mono mt-1">{effectiveGrade.attitudeScore} 分</div>
-                  <div className="text-[11px] text-slate-600 mt-1 font-mono">
-                    {effectiveGrade.attitudeScore} × {wAttid}% = <strong className="text-slate-900 font-bold">{attitudeWeighted}</strong>
-                  </div>
-                </div>
+                ))}
               </div>
 
               <div className="mt-3.5 bg-slate-100/80 p-2.5 rounded-xl text-xs text-slate-600 font-mono flex flex-wrap items-center justify-between gap-2">
                 <span>
-                  總分公式：{attendanceWeighted} + {quizWeighted} + {midtermWeighted} + {finalWeighted} + {homeworkWeighted} +{' '}
-                  {attitudeWeighted} = <strong className="text-slate-900">{effectiveGrade.totalScore}</strong> 分
+                  {effectiveGrade.totalScore === null ? (
+                    '總分公式：尚無可用項目可計算總成績'
+                  ) : effectiveGrade.isEstimated ? (
+                    <>
+                      暫估總分：<strong className="text-amber-700">{effectiveGrade.totalScore}</strong> 分（依已輸入項目加權比例正規化）
+                    </>
+                  ) : (
+                    <>
+                      總分公式：{attendanceWeighted ?? 0} + {quizWeighted ?? 0} + {midtermWeighted ?? 0} +{' '}
+                      {finalWeighted ?? 0} + {homeworkWeighted ?? 0} + {attitudeWeighted ?? 0} ={' '}
+                      <strong className="text-slate-900">{effectiveGrade.totalScore}</strong> 分
+                    </>
+                  )}
                 </span>
                 <span className="text-[11px] text-slate-400">更新時間：{effectiveGrade.updatedAt || '未記錄'}</span>
               </div>
@@ -1043,7 +1112,10 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                   曠課 <strong className="font-mono text-rose-700">{filteredStats.absentHours}</strong> H
                 </span>
                 <span>
-                  出席率 <strong className="font-mono text-teal-800">{filteredStats.attendanceRate}%</strong>
+                  出席率{' '}
+                  <strong className="font-mono text-teal-800">
+                    {formatAttendanceRate(filteredStats.attendanceRate, filteredStats.expectedHours > 0)}
+                  </strong>
                 </span>
               </div>
             </div>
@@ -1170,10 +1242,6 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                           <td className="py-2.5 px-3 text-slate-500 truncate max-w-[180px]" title={rec.remarks || ''}>
                             {isCancelled ? (
                               <span className="text-[11px] text-slate-500 font-medium">{rec.remarks || '停課免點名'}</span>
-                            ) : rec.isDefaultPresent && !rec.remarks ? (
-                              <span className="inline-flex items-center text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                                系統預設到課
-                              </span>
                             ) : (
                               rec.remarks || '-'
                             )}

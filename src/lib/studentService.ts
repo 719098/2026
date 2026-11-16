@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import { Student, ClassEntity, StudentGrade, TransferClassRecord, CourseSession, StudentGradeWeight } from '../types';
-import { calculateTotalGrade, calculateStudentAttendanceScore } from '../utils/gradeUtils';
+import { calculateTotalGrade, calculateProvisionalTotalGrade, calculateStudentAttendanceScore } from '../utils/gradeUtils';
 import { resolveStudentGradeWeight } from './gradeWeightService';
 import { batchResolveStudentAvatars, extractStoragePath, deleteStudentStorageFiles } from './storageService';
 import { mapDbToClass, fetchClassesFromSupabase } from './classService';
@@ -62,9 +62,11 @@ export function mapDbToStudent(row: any): Student {
     className: row.class_name || row.className || '',
     email: row.email || '',
     phone: row.mobile_phone || '',
-    overallAttendanceRate: Number(
-      row.overall_attendance_rate ?? 100
-    ),
+    overallAttendanceRate:
+      row.overall_attendance_rate !== null && row.overall_attendance_rate !== undefined
+        ? Number(row.overall_attendance_rate)
+        : null,
+    attendanceEvaluated: false,
     totalAbsenceHours: Number(
       row.total_absence_hours ?? 0
     ),
@@ -74,9 +76,11 @@ export function mapDbToStudent(row: any): Student {
     totalPresentHours: Number(
       row.total_present_hours ?? 0
     ),
+    totalCompletedHours: 0,
     totalRequiredHours: Number(
       row.total_required_hours ?? 0
     ),
+    complianceStatus: 'unevaluated',
     visaStatus: (row.visa_status || 'safe') as 'safe' | 'warning' | 'danger',
     enrollmentStatus: normalizedStatus,
     admissionDate: admissionDate,
@@ -568,21 +572,30 @@ export async function fetchStudentsFromSupabase(
   }
 
   // 4.5 Compute real actual attendance rates (Present=100%, Leave=0%, Absent=0%)
-  // STRICT RULE: Any attendance records belonging to CANCELLED, SUSPENDED, or RESCHEDULED sessions must be 100% excluded!
+  // STRICT RULE: Only formally submitted, active sessions count; unevaluated students stay null (not 100%).
   try {
-    // 1. Identify cancelled or rescheduled sessions from class_sessions
-    const { data: invalidClassSessions } = await supabase
+    // 1. Identify active vs cancelled/rescheduled sessions from class_sessions
+    const { data: allClassSessions } = await supabase
       .from('class_sessions')
       .select('id, class_id, session_date, status');
+
+    const activeClassDateSet = new Set<string>();
+    (allClassSessions || []).forEach((csRow: any) => {
+      const st = String(csRow.status || '').toUpperCase();
+      if ((st === 'NORMAL' || st === 'MAKEUP') && csRow.class_id && csRow.session_date) {
+        activeClassDateSet.add(`${csRow.class_id}_${csRow.session_date}`);
+      }
+    });
 
     const invalidKeySet = new Set<string>();
     const invalidCourseSessionIds = new Set<string>();
 
-    (invalidClassSessions || []).forEach((is: any) => {
+    (allClassSessions || []).forEach((is: any) => {
       const st = String(is.status || '').toUpperCase();
       if (st === 'CANCELLED' || st === 'SUSPENDED' || st === 'RESCHEDULED' || st === 'HOLIDAY') {
-        if (is.class_id && is.session_date) {
-          invalidKeySet.add(`${is.class_id}_${is.session_date}`);
+        const key = `${is.class_id}_${is.session_date}`;
+        if (is.class_id && is.session_date && !activeClassDateSet.has(key)) {
+          invalidKeySet.add(key);
         }
         if (is.id) {
           invalidCourseSessionIds.add(String(is.id));
@@ -590,13 +603,16 @@ export async function fetchStudentsFromSupabase(
       }
     });
 
-    // 2. Identify corresponding course_sessions row IDs
+    // 2. Identify corresponding course_sessions row IDs and exclude unsubmitted drafts or invalid dates
     const { data: courseSessions } = await supabase
       .from('course_sessions')
-      .select('id, class_id, session_date');
+      .select('id, class_id, session_date, is_attendance_submitted');
 
     (courseSessions || []).forEach((cs: any) => {
-      if (invalidKeySet.has(`${cs.class_id}_${cs.session_date}`)) {
+      if (
+        invalidKeySet.has(`${cs.class_id}_${cs.session_date}`) ||
+        cs.is_attendance_submitted !== true
+      ) {
         invalidCourseSessionIds.add(String(cs.id));
       }
     });
@@ -605,9 +621,8 @@ export async function fetchStudentsFromSupabase(
       .from('attendance_records')
       .select('session_id, student_id, period_1, period_2, period_3, period_4');
     if (attRecs && attRecs.length > 0) {
-      // Exclude attendance records from cancelled or rescheduled sessions
       const validAttRecs = attRecs.filter(
-        (r: any) => !r.session_id || !invalidCourseSessionIds.has(String(r.session_id))
+        (r: any) => r.session_id && !invalidCourseSessionIds.has(String(r.session_id))
       );
 
       const studentAttStats: Record<string, { present: number; leave: number; absent: number }> = {};
@@ -630,31 +645,42 @@ export async function fetchStudentsFromSupabase(
         if (stat) {
           const totalPeriods = stat.present + stat.leave + stat.absent;
           if (totalPeriods > 0) {
-            // Actual Attendance Rate: (Present / totalPeriods) * 100%
-            s.overallAttendanceRate = Math.round((stat.present / totalPeriods) * 1000) / 10;
+            const rate = Math.round((stat.present / totalPeriods) * 1000) / 10;
+            s.overallAttendanceRate = rate;
+            s.attendanceEvaluated = true;
             s.totalPresentHours = stat.present;
             s.totalLeaveHours = stat.leave;
             s.totalAbsenceHours = stat.absent;
+            s.totalCompletedHours = totalPeriods;
+            s.complianceStatus = rate >= 80 ? 'compliant' : 'non_compliant';
           } else {
-            s.overallAttendanceRate = 100;
+            s.overallAttendanceRate = null;
+            s.attendanceEvaluated = false;
             s.totalPresentHours = 0;
             s.totalLeaveHours = 0;
             s.totalAbsenceHours = 0;
+            s.totalCompletedHours = 0;
+            s.complianceStatus = 'unevaluated';
           }
         } else {
-          // No attendance records yet -> maintain standard initial 100%
-          s.overallAttendanceRate = 100;
+          s.overallAttendanceRate = null;
+          s.attendanceEvaluated = false;
           s.totalPresentHours = 0;
           s.totalLeaveHours = 0;
           s.totalAbsenceHours = 0;
+          s.totalCompletedHours = 0;
+          s.complianceStatus = 'unevaluated';
         }
       });
     } else {
       students.forEach((s) => {
-        s.overallAttendanceRate = 100;
+        s.overallAttendanceRate = null;
+        s.attendanceEvaluated = false;
         s.totalPresentHours = 0;
         s.totalLeaveHours = 0;
         s.totalAbsenceHours = 0;
+        s.totalCompletedHours = 0;
+        s.complianceStatus = 'unevaluated';
       });
     }
   } catch (e) {
@@ -1147,31 +1173,46 @@ export async function fetchStudentGradesFromSupabase(
         const classObj = (r.class_id ? classMap.get(String(r.class_id)) : null) || 
           classes.find((c) => c.id === student?.classId || c.name === student?.className);
 
-        // Dynamic Attendance Score based on real attendance records & exclusion of cancelled sessions
-        let att = student?.overallAttendanceRate !== undefined ? student.overallAttendanceRate : Number(r.attendance_score ?? 100);
-        if (allCourses && allCourses.length > 0) {
+        // Dynamic Attendance Score based on real formal attendance records (never defaults to 100 when unrecorded)
+        let att: number | null = null;
+        let hasAttData = false;
+        if (allCourses !== undefined) {
           const attResult = calculateStudentAttendanceScore(
             studentId,
             allCourses,
             classObj?.name || student?.className,
             student,
-            transferRecords
+            transferRecords,
+            r.class_id ? { classId: String(r.class_id) } : undefined
           );
           att = attResult.attendanceScore;
+          hasAttData = attResult.hasRecords;
+        } else if (student?.attendanceEvaluated && student.overallAttendanceRate !== null && student.overallAttendanceRate !== undefined) {
+          att = student.overallAttendanceRate;
+          hasAttData = true;
         }
 
-        const quiz = Number(r.quiz_score ?? 85);
-        const mid = Number(r.midterm_score ?? 80);
-        const fin = Number(r.final_score ?? 85);
-        const hw = Number(r.homework_score ?? 90);
-        const attid = Number(r.attitude_score ?? 90);
+        const quiz = r.quiz_score !== null && r.quiz_score !== undefined ? Number(r.quiz_score) : null;
+        const mid = r.midterm_score !== null && r.midterm_score !== undefined ? Number(r.midterm_score) : null;
+        const fin = r.final_score !== null && r.final_score !== undefined ? Number(r.final_score) : null;
+        const hw = r.homework_score !== null && r.homework_score !== undefined ? Number(r.homework_score) : null;
+        const attid = r.attitude_score !== null && r.attitude_score !== undefined ? Number(r.attitude_score) : null;
 
         const classTermId = classObj?.termId || (classObj as any)?.term_id;
         const weightRes = resolveStudentGradeWeight(studentId, classTermId, customWeightsMap);
-        const customWeight = weightRes.isCustom ? weightRes.weights : undefined;
-        const computedTotal = calculateTotalGrade(att, quiz, mid, fin, hw, attid, customWeight);
-        const total = computedTotal;
-        const isPassed = total >= 60.0;
+        const provisional = calculateProvisionalTotalGrade(
+          {
+            attendanceScore: att,
+            quizScore: quiz,
+            midtermScore: mid,
+            finalScore: fin,
+            homeworkScore: hw,
+            attitudeScore: attid,
+          },
+          weightRes.weights
+        );
+        const total = provisional.totalScore;
+        const isPassed = total !== null && !provisional.isEstimated ? total >= 60.0 : undefined;
 
         const gradeItem: StudentGrade = {
           studentId: studentId,
@@ -1186,6 +1227,10 @@ export async function fetchStudentGradesFromSupabase(
           attitudeScore: attid,
           totalScore: total,
           isPassed,
+          hasAttendanceData: hasAttData,
+          hasSavedGrade: true,
+          isEstimated: provisional.isEstimated,
+          missingItems: provisional.missingItems,
           updatedAt: r.updated_at ? r.updated_at.substring(0, 16).replace('T', ' ') : undefined,
         };
 
@@ -1194,10 +1239,6 @@ export async function fetchStudentGradesFromSupabase(
           gradeMap[`${studentId}_${r.class_id}`] = gradeItem;
         }
 
-        // Determine if this row should become or overwrite the primary gradeMap[studentId]:
-        // 1. If gradeMap[studentId] does not exist yet -> set it
-        // 2. If current row matches student's active classId -> ALWAYS takes priority and locks in
-        // 3. If previous entry does NOT match student's active classId and current doesn't either, keep newer updated_at
         const existingPrimary = gradeMap[studentId];
         const isCurrentClass = Boolean(student?.classId && String(r.class_id) === String(student.classId));
         const wasExistingCurrentClass = Boolean(student?.classId && existingPrimary?.classId && String(existingPrimary.classId) === String(student.classId));
@@ -1206,69 +1247,15 @@ export async function fetchStudentGradesFromSupabase(
           gradeMap[studentId] = gradeItem;
         }
 
-        // Only sync attendance_score to DB on the student's active current class record if supabase is authenticated
-        if (isCurrentClass && Number(r.attendance_score) !== att && supabase) {
+        // Only sync attendance_score to DB when formal attendance data actually exists
+        if (isCurrentClass && hasAttData && att !== null && Number(r.attendance_score) !== att && total !== null && supabase) {
           supabase
             .from('student_grades')
-            .update({ attendance_score: att, total_score: computedTotal, is_passed: computedTotal >= 60.0 })
+            .update({ attendance_score: att, total_score: total, is_passed: total >= 60.0 })
             .eq('id', r.id)
             .then(() => {}, () => {});
         }
       });
-    }
-
-    // Ensure all active students have grade entries initialized in database
-    for (const s of students) {
-      if (!gradeMap[s.id]) {
-        let att = s.overallAttendanceRate ?? 100;
-        if (allCourses && allCourses.length > 0) {
-          const attResult = calculateStudentAttendanceScore(
-            s.id,
-            allCourses,
-            s.className,
-            s,
-            transferRecords
-          );
-          att = attResult.attendanceScore;
-        }
-
-        const quiz = 85;
-        const mid = 80;
-        const fin = 85;
-        const hw = 90;
-        const attid = 90;
-        const sClass = classes.find((c) => c.id === s.classId || c.name === s.className);
-        const sTermId = sClass?.termId;
-        const weightRes = resolveStudentGradeWeight(s.id, sTermId, customWeightsMap);
-        const customWeight = weightRes.isCustom ? weightRes.weights : undefined;
-        const total = calculateTotalGrade(att, quiz, mid, fin, hw, attid, customWeight);
-
-        const initialGrade: StudentGrade = {
-          studentId: s.id,
-          studentName: s.name,
-          className: s.className || '',
-          classId: s.classId,
-          attendanceScore: att,
-          quizScore: quiz,
-          midtermScore: mid,
-          finalScore: fin,
-          homeworkScore: hw,
-          attitudeScore: attid,
-          totalScore: total,
-          isPassed: total >= 60.0,
-          updatedAt: new Date().toISOString().substring(0, 16).replace('T', ' '),
-        };
-
-        gradeMap[s.id] = initialGrade;
-        if (s.classId) {
-          gradeMap[`${s.id}_${s.classId}`] = initialGrade;
-        }
-
-        // Only trigger DB persistence if student has a valid class assigned
-        if (s.classId && isValidUuid(s.classId)) {
-          saveStudentGradeToSupabase(initialGrade, s.classId);
-        }
-      }
     }
 
     return gradeMap;
@@ -1325,18 +1312,18 @@ export async function saveStudentGradeToSupabase(
       return { success: true, error: null };
     }
 
-    const totalScore = Number(grade.totalScore ?? 85);
+    const totalScore = Number(grade.totalScore ?? 0);
     const isPassed = totalScore >= 60.0;
 
     const payload: Record<string, any> = {
       student_id: grade.studentId,
       class_id: targetClassId,
-      attendance_score: Number(grade.attendanceScore ?? 100),
-      quiz_score: Number(grade.quizScore ?? 85),
-      midterm_score: Number(grade.midtermScore ?? 80),
-      final_score: Number(grade.finalScore ?? 85),
-      homework_score: Number(grade.homeworkScore ?? 90),
-      attitude_score: Number(grade.attitudeScore ?? 90),
+      attendance_score: grade.attendanceScore !== null && grade.attendanceScore !== undefined ? Number(grade.attendanceScore) : 0,
+      quiz_score: grade.quizScore !== null && grade.quizScore !== undefined ? Number(grade.quizScore) : 0,
+      midterm_score: grade.midtermScore !== null && grade.midtermScore !== undefined ? Number(grade.midtermScore) : 0,
+      final_score: grade.finalScore !== null && grade.finalScore !== undefined ? Number(grade.finalScore) : 0,
+      homework_score: grade.homeworkScore !== null && grade.homeworkScore !== undefined ? Number(grade.homeworkScore) : 0,
+      attitude_score: grade.attitudeScore !== null && grade.attitudeScore !== undefined ? Number(grade.attitudeScore) : 0,
       total_score: totalScore,
       is_passed: isPassed,
       updated_at: new Date().toISOString(),
